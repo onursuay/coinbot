@@ -1,4 +1,4 @@
-import { ok } from "@/lib/api-helpers";
+import { ok, fail } from "@/lib/api-helpers";
 import { setBotStatus } from "@/lib/engines/bot-orchestrator";
 import { getCurrentUserId } from "@/lib/auth";
 
@@ -6,6 +6,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST() {
-  await setBotStatus(getCurrentUserId(), "paused", "manual_pause");
-  return ok({ status: "paused" });
+  try {
+    await setBotStatus(getCurrentUserId(), "paused", "manual_pause");
+    return ok({ status: "paused" });
+  } catch (e: any) {
+    return fail(e?.message ?? "Pause başarısız", 500);
+  }
 }

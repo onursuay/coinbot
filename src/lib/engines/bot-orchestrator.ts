@@ -28,7 +28,8 @@ const PAPER_BALANCE = 1000;
 async function loadSettings(userId: string) {
   if (!supabaseConfigured()) return null;
   const sb = supabaseAdmin();
-  const { data } = await sb.from("bot_settings").select("*").eq("user_id", userId).maybeSingle();
+  const { data, error } = await sb.from("bot_settings").select("*").eq("user_id", userId).maybeSingle();
+  if (error) throw new Error(`bot_settings okunamadı: ${error.message}`);
   if (data) return data;
   const insert = {
     user_id: userId,
@@ -46,7 +47,8 @@ async function loadSettings(userId: string) {
     max_open_positions: env.maxOpenPositions,
     min_risk_reward_ratio: env.minRiskRewardRatio,
   };
-  const { data: created } = await sb.from("bot_settings").insert(insert).select().single();
+  const { data: created, error: insertErr } = await sb.from("bot_settings").insert(insert).select().single();
+  if (insertErr) throw new Error(`bot_settings oluşturulamadı: ${insertErr.message}`);
   return created;
 }
 
@@ -55,13 +57,32 @@ export async function getBotState(userId: string) {
 }
 
 export async function setBotStatus(userId: string, status: BotStatus, reason?: string) {
-  if (!supabaseConfigured()) return null;
+  if (!supabaseConfigured()) {
+    throw new Error("Supabase yapılandırılmamış — bot status güncellenemiyor");
+  }
+  // Ensure a settings row exists with all required defaults before mutating status.
+  await loadSettings(userId);
+
   const sb = supabaseAdmin();
-  const { data } = await sb
+  const patch: Record<string, unknown> = {
+    bot_status: status,
+    kill_switch_active: status === "kill_switch",
+  };
+  const { data, error } = await sb
     .from("bot_settings")
-    .upsert({ user_id: userId, bot_status: status, kill_switch_active: status === "kill_switch" }, { onConflict: "user_id" })
+    .update(patch)
+    .eq("user_id", userId)
     .select()
     .single();
+
+  if (error) {
+    await botLog({
+      userId, level: "error", eventType: "bot_status_error",
+      message: `setBotStatus(${status}) hata: ${error.message}`,
+    });
+    throw new Error(`bot_settings güncellenemedi: ${error.message}`);
+  }
+
   await botLog({
     userId, level: status === "kill_switch" ? "warn" : "info",
     eventType: `bot_${status}`,

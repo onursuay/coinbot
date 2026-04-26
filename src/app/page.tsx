@@ -31,6 +31,8 @@ export default function HomePage() {
   const [busy, setBusy] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [lastTick, setLastTick] = useState<TickResult | null>(null);
+  const [lastStartResponse, setLastStartResponse] = useState<any>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
 
   const addToast = (t: Omit<Toast, "id">) => {
     const id = ++toastId;
@@ -61,8 +63,13 @@ export default function HomePage() {
     setBusy(true);
     try {
       const res = await fetch(path, { method: "POST" }).then((r) => r.json());
-      if (res.ok) addToast({ type: "success", message: `${label} başarılı`, detail: res.data?.status });
-      else addToast({ type: "error", message: `${label} hatası`, detail: res.error });
+      if (path.endsWith("/start")) setLastStartResponse(res);
+      if (res.ok) {
+        const newStatus = (res.data?.status ?? "").toString().toUpperCase();
+        addToast({ type: "success", message: `${label} başarılı`, detail: newStatus ? `Status: ${newStatus}` : undefined });
+      } else {
+        addToast({ type: "error", message: `${label} hatası`, detail: res.error });
+      }
       await refresh();
     } catch (e: any) {
       addToast({ type: "error", message: `${label} hatası`, detail: e?.message });
@@ -72,6 +79,15 @@ export default function HomePage() {
   };
 
   const runTick = async () => {
+    const currentStatus = status?.debug?.botStatus ?? status?.bot?.bot_status;
+    if (currentStatus !== "running") {
+      addToast({
+        type: "info",
+        message: "Bot stopped. Start bot first.",
+        detail: `Mevcut durum: ${(currentStatus ?? "stopped").toUpperCase()}`,
+      });
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/bot/tick", { method: "POST" }).then((r) => r.json());
@@ -240,6 +256,30 @@ export default function HomePage() {
           </table>
           <Link href="/paper-trades" className="text-accent text-sm mt-2 inline-block">Tüm işlemler →</Link>
         </section>
+      </div>
+
+      <div className="card">
+        <button
+          className="text-xs text-muted hover:text-accent w-full text-left flex items-center justify-between"
+          onClick={() => setDebugOpen((v) => !v)}
+        >
+          <span>Debug {debugOpen ? "▾" : "▸"}</span>
+          <span className="text-muted">
+            {(status?.debug?.botStatus ?? "—").toString().toUpperCase()} • src:{status?.debug?.source ?? "—"} • row:{status?.debug?.hasSettingsRow ? "yes" : "no"}
+          </span>
+        </button>
+        {debugOpen && (
+          <pre className="text-xs text-muted bg-bg-soft border border-border rounded-lg p-3 mt-2 overflow-x-auto">
+{JSON.stringify({
+  statusSource: status?.debug?.source,
+  hasSettingsRow: status?.debug?.hasSettingsRow,
+  botStatus: status?.debug?.botStatus,
+  liveTrading: status?.liveTrading,
+  openPositions: status?.openPositions,
+  lastStartResponse,
+}, null, 2)}
+          </pre>
+        )}
       </div>
 
       <div className="card">
