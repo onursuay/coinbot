@@ -71,6 +71,30 @@ export class OkxAdapter implements ExchangeAdapter {
     });
   }
 
+  async getAllTickers(): Promise<Ticker[]> {
+    const json = await fetchJson<any>(`${BASE}/api/v5/market/tickers?instType=SWAP`);
+    const arr: any[] = json?.data ?? [];
+    return arr
+      .filter((d: any) => String(d.instId).endsWith("-USDT-SWAP"))
+      .map((d: any): Ticker => {
+        const last = Number(d.last ?? 0);
+        const bid = Number(d.bidPx ?? last);
+        const ask = Number(d.askPx ?? last);
+        const mid = bid && ask ? (bid + ask) / 2 : last || 1;
+        return {
+          symbol: toCanonical(d.instId),
+          lastPrice: last, bid, ask,
+          spread: mid > 0 ? Math.max(0, (ask - bid) / mid) : 0,
+          volume24h: Number(d.vol24h ?? 0),
+          quoteVolume24h: Number(d.volCcy24h ?? 0),
+          high24h: Number(d.high24h ?? last),
+          low24h: Number(d.low24h ?? last),
+          changePercent24h: last && Number(d.open24h) ? ((last - Number(d.open24h)) / Number(d.open24h)) * 100 : 0,
+          timestamp: Date.now(),
+        };
+      });
+  }
+
   async getTicker(symbol: string): Promise<Ticker> {
     const json = await fetchJson<any>(`${BASE}/api/v5/market/ticker?instId=${inst(symbol)}`);
     const d = json?.data?.[0] ?? {};

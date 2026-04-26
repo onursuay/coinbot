@@ -8,6 +8,7 @@ import { evaluateRisk } from "./risk-engine";
 import { generateSignal } from "./signal-engine";
 import { getAdapter } from "@/lib/exchanges/exchange-factory";
 import { getDailyStatus } from "./daily-target";
+import { getUniverseSlice, type ScanUniverse } from "./symbol-universe";
 import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
@@ -21,6 +22,10 @@ export interface TickResult {
   rejectedSignals: { symbol: string; reason: string }[];
   errors: { symbol: string; error: string }[];
   durationMs: number;
+  totalUniverseSymbols?: number;
+  prefilteredSymbols?: number;
+  deeplyAnalyzedSymbols?: number;
+  nextCursor?: string;
 }
 
 const PAPER_BALANCE = 1000;
@@ -46,6 +51,15 @@ async function loadSettings(userId: string) {
     daily_profit_target_usd: env.dailyProfitTargetUsd,
     max_open_positions: env.maxOpenPositions,
     min_risk_reward_ratio: env.minRiskRewardRatio,
+    scan_universe: "all_futures",
+    min_24h_volume_usd: 500_000,
+    max_spread_percent: 0.1,
+    max_funding_rate_abs: 0.003,
+    max_symbols_per_tick: 50,
+    max_concurrent_requests: 5,
+    kline_limit: 200,
+    scanner_timeframe: "5m",
+    scanner_cursor: "0",
   };
 
   // Fetch all rows (single-tenant: at most 1 row) — avoids UUID .eq() PostgREST cast issues.
@@ -153,7 +167,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
   const exchange = settings.active_exchange as ExchangeName;
   const adapter = getAdapter(exchange);
-  const tf: Timeframe = opts?.timeframe ?? "15m";
+  const tf: Timeframe = opts?.timeframe ?? (settings.scanner_timeframe as Timeframe) ?? "5m";
 
   if (!supabaseConfigured()) {
     result.reason = "Supabase yapılandırılmamış";
@@ -166,20 +180,45 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   // Sweep SL/TP on open paper trades first
   await evaluateOpenTrades(userId);
 
-  const { data: watched } = await sb
-    .from("watched_symbols")
-    .select("symbol")
-    .eq("user_id", userId)
-    .eq("exchange_name", exchange)
-    .eq("market_type", "futures")
-    .eq("is_active", true);
+  // Get symbol universe (cursor-based batch rotation across all futures)
+  let symbols: string[];
+  let universeTotal = 0;
+  let universePrefiltered = 0;
+  let tickerMap: Record<string, any> = {};
+  let nextCursor = "0";
 
-  const symbols: string[] =
-    opts?.symbols && opts.symbols.length > 0
-      ? opts.symbols
-      : watched?.map((w) => w.symbol) ?? ["BTC/USDT", "ETH/USDT", "SOL/USDT"];
+  if (opts?.symbols && opts.symbols.length > 0) {
+    symbols = opts.symbols;
+  } else {
+    try {
+      const scanMode = (settings.scan_universe as ScanUniverse) ?? "all_futures";
+      const cursor = settings.scanner_cursor ?? "0";
+      const universe = await getUniverseSlice({
+        exchange,
+        scanMode,
+        min24hVolumeUsd: Number(settings.min_24h_volume_usd ?? 500_000),
+        maxSpreadPct: Number(settings.max_spread_percent ?? 0.1),
+        maxFundingRateAbs: Number(settings.max_funding_rate_abs ?? 0.003),
+        maxSymbolsPerTick: Number(settings.max_symbols_per_tick ?? 50),
+        cursor,
+      });
+      symbols = universe.batchSymbols;
+      universeTotal = universe.totalSymbols;
+      universePrefiltered = universe.preFilteredCount;
+      tickerMap = universe.tickerMap;
+      nextCursor = universe.nextCursor;
+
+      // Persist cursor for next tick
+      await sb.from("bot_settings").update({ scanner_cursor: nextCursor }).limit(1);
+    } catch {
+      symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
+    }
+  }
 
   result.scannedSymbols = symbols;
+  result.totalUniverseSymbols = universeTotal;
+  result.prefilteredSymbols = universePrefiltered;
+  result.nextCursor = nextCursor;
 
   const daily = await getDailyStatus(userId, PAPER_BALANCE);
   if (daily.targetHit) {
@@ -209,15 +248,16 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   }
 
   let btcKlines: any[] = [];
-  try { btcKlines = await adapter.getKlines("BTC/USDT", tf, 250); } catch { /* non-fatal */ }
+  try { btcKlines = await adapter.getKlines("BTC/USDT", tf, 200); } catch { /* non-fatal */ }
 
-  await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbols.length} sembol taranıyor (${tf})` });
+  await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbols.length} sembol taranıyor (${tf}) universe=${universeTotal} prefiltered=${universePrefiltered}` });
 
   for (const symbol of symbols) {
     try {
+      const preTicker = tickerMap[symbol];
       const [klines, ticker, info, funding] = await Promise.all([
-        adapter.getKlines(symbol, tf, 250),
-        adapter.getTicker(symbol),
+        adapter.getKlines(symbol, tf, 200),
+        preTicker ? Promise.resolve(preTicker) : adapter.getTicker(symbol),
         adapter.getExchangeInfo(symbol),
         adapter.getFundingRate(symbol),
       ]);
@@ -315,11 +355,12 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   }
 
   result.ok = true;
+  result.deeplyAnalyzedSymbols = symbols.length;
   result.durationMs = Date.now() - start;
 
   await botLog({
     userId, exchange, eventType: "tick_completed",
-    message: `Tick tamamlandı — tarandı=${symbols.length} sinyal=${result.generatedSignals.length} açıldı=${result.openedPaperTrades.length} red=${result.rejectedSignals.length} hata=${result.errors.length} (${result.durationMs}ms)`,
+    message: `Tick tamamlandı — universe=${universeTotal} prefilter=${universePrefiltered} tarandı=${symbols.length} sinyal=${result.generatedSignals.length} açıldı=${result.openedPaperTrades.length} red=${result.rejectedSignals.length} hata=${result.errors.length} cursor=${nextCursor} (${result.durationMs}ms)`,
     metadata: summary(result),
   });
 
@@ -328,11 +369,14 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
 function summary(r: TickResult) {
   return {
+    universe: r.totalUniverseSymbols,
+    prefiltered: r.prefilteredSymbols,
     scanned: r.scannedSymbols.length,
     generated: r.generatedSignals.length,
     opened: r.openedPaperTrades.length,
     rejected: r.rejectedSignals.length,
     errors: r.errors.length,
+    nextCursor: r.nextCursor,
     durationMs: r.durationMs,
   };
 }

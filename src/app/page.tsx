@@ -334,18 +334,18 @@ function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?
 function SystemConfigCard({ envCheck, status }: { envCheck: any; status: any }) {
   if (!envCheck) return null;
   const missingList = [...(envCheck.missing ?? []), ...(envCheck.empty ?? [])];
-  const supabaseOk = !missingList.some((k: string) => k.startsWith("NEXT_PUBLIC_SUPABASE") || k === "SUPABASE_SERVICE_ROLE_KEY");
-  const credOk = !missingList.includes("CREDENTIAL_ENCRYPTION_KEY");
+  const connectionOk = !missingList.some((k: string) => k.startsWith("NEXT_PUBLIC_SUPABASE") || k === "SUPABASE_SERVICE_ROLE_KEY");
+  const securityOk = !missingList.includes("CREDENTIAL_ENCRYPTION_KEY");
   const cfg = envCheck.effectiveConfig ?? {};
   return (
     <div className={`card border ${envCheck.ok ? "" : "border-danger/50"}`}>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="font-semibold">System Config Status</h2>
+        <h2 className="font-semibold">System Status</h2>
         {!envCheck.ok && <span className="tag-danger text-xs">CONFIG INCOMPLETE</span>}
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-        <ConfigRow label="Supabase" value={supabaseOk ? "Configured" : "Missing"} ok={supabaseOk} />
-        <ConfigRow label="Credential Encryption" value={credOk ? "Configured" : "Missing"} ok={credOk} />
+        <ConfigRow label="Connection" value={connectionOk ? "Connected" : "Error"} ok={connectionOk} />
+        <ConfigRow label="Security" value={securityOk ? "Active" : "Error"} ok={securityOk} />
         <ConfigRow label="Live Trading" value={cfg.liveTrading ? "Enabled" : "Disabled"} ok={!cfg.liveTrading} />
         <ConfigRow label="Default Leverage" value={`${cfg.maxLeverage ?? 3}x`} ok />
         <ConfigRow label="Max Allowed Leverage" value={`${cfg.maxAllowedLeverage ?? 5}x`} ok />
@@ -353,18 +353,12 @@ function SystemConfigCard({ envCheck, status }: { envCheck: any; status: any }) 
       </div>
       {!envCheck.ok && (
         <div className="mt-3 rounded-lg border border-danger/50 bg-danger/10 px-3 py-2 text-sm text-danger">
-          Vercel environment variables are missing or empty. Go to Vercel → Project Settings → Environment Variables.
-          <div className="mt-1 text-xs opacity-80">Eksik: {missingList.join(", ")}</div>
+          System configuration is incomplete. Please contact support.
         </div>
       )}
       {envCheck.warnings?.length > 0 && (
         <div className="mt-2 text-xs text-warning">
           {envCheck.warnings.join(" • ")}
-        </div>
-      )}
-      {status?.debug?.botStatus && (
-        <div className="mt-2 text-xs text-muted">
-          DB row: {status.debug.hasSettingsRow ? "yes" : "no"} • source: {status.debug.source} • status: {status.debug.botStatus}
         </div>
       )}
     </div>

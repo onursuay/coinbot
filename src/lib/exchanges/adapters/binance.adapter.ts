@@ -70,6 +70,25 @@ export class BinanceAdapter implements ExchangeAdapter {
     }));
   }
 
+  async getAllTickers(): Promise<Ticker[]> {
+    const arr = await fetchJson<any[]>(`${FAPI}/fapi/v1/ticker/24hr`);
+    return (arr ?? [])
+      .filter((t: any) => String(t.symbol).endsWith("USDT"))
+      .map((t: any): Ticker => {
+        const last = Number(t.lastPrice ?? 0);
+        return {
+          symbol: toCanonical(t.symbol),
+          lastPrice: last, bid: last, ask: last, spread: 0,
+          volume24h: Number(t.volume ?? 0),
+          quoteVolume24h: Number(t.quoteVolume ?? 0),
+          high24h: Number(t.highPrice ?? last),
+          low24h: Number(t.lowPrice ?? last),
+          changePercent24h: Number(t.priceChangePercent ?? 0),
+          timestamp: Date.now(),
+        };
+      });
+  }
+
   async getTicker(symbol: string): Promise<Ticker> {
     const r = raw(symbol);
     const [t, book] = await Promise.all([

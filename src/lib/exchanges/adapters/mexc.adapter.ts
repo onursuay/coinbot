@@ -95,6 +95,28 @@ export class MexcAdapter implements ExchangeAdapter {
     return parseMexcKlines(d, limit, timeframe);
   }
 
+  async getAllTickers(): Promise<Ticker[]> {
+    const json = await fetchJson<any>(`${FUTURES_BASE}/api/v1/contract/ticker`);
+    const arr = Array.isArray(json?.data) ? json.data : [];
+    return arr.map((d: any): Ticker => {
+      const last = Number(d.lastPrice ?? d.fairPrice ?? 0);
+      const bid = Number(d.bid1 ?? last);
+      const ask = Number(d.ask1 ?? last);
+      const mid = bid && ask ? (bid + ask) / 2 : last || 1;
+      return {
+        symbol: fromMexcContract(d.symbol),
+        lastPrice: last, bid, ask,
+        spread: mid > 0 ? Math.max(0, (ask - bid) / mid) : 0,
+        volume24h: Number(d.volume24 ?? 0),
+        quoteVolume24h: Number(d.amount24 ?? 0),
+        high24h: Number(d.high24Price ?? last),
+        low24h: Number(d.lower24Price ?? last),
+        changePercent24h: Number(d.riseFallRate ?? 0) * 100,
+        timestamp: Date.now(),
+      };
+    });
+  }
+
   async getTicker(symbol: string): Promise<Ticker> {
     const contract = toMexcContract(symbol);
     const json = await fetchJson<any>(`${FUTURES_BASE}/api/v1/contract/ticker?symbol=${contract}`);

@@ -68,6 +68,30 @@ export class BybitAdapter implements ExchangeAdapter {
     });
   }
 
+  async getAllTickers(): Promise<Ticker[]> {
+    const json = await fetchJson<any>(`${BASE}/v5/market/tickers?category=linear`);
+    const arr: any[] = json?.result?.list ?? [];
+    return arr
+      .filter((d: any) => String(d.symbol).endsWith("USDT"))
+      .map((d: any): Ticker => {
+        const last = Number(d.lastPrice ?? 0);
+        const bid = Number(d.bid1Price ?? last);
+        const ask = Number(d.ask1Price ?? last);
+        const mid = bid && ask ? (bid + ask) / 2 : last || 1;
+        return {
+          symbol: toCanonical(d.symbol),
+          lastPrice: last, bid, ask,
+          spread: mid > 0 ? Math.max(0, (ask - bid) / mid) : 0,
+          volume24h: Number(d.volume24h ?? 0),
+          quoteVolume24h: Number(d.turnover24h ?? 0),
+          high24h: Number(d.highPrice24h ?? last),
+          low24h: Number(d.lowPrice24h ?? last),
+          changePercent24h: Number(d.price24hPcnt ?? 0) * 100,
+          timestamp: Date.now(),
+        };
+      });
+  }
+
   async getTicker(symbol: string): Promise<Ticker> {
     const json = await fetchJson<any>(`${BASE}/v5/market/tickers?category=linear&symbol=${raw(symbol)}`);
     const d = json?.result?.list?.[0] ?? {};

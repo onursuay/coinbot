@@ -111,6 +111,7 @@ export interface ExchangeAdapter {
 
   // Symbol catalog
   getSymbols(): Promise<string[]>;
+  getAllTickers(): Promise<Ticker[]>;
   getFuturesSymbols(): Promise<FuturesSymbolInfo[]>;
   getExchangeInfo(symbol: string): Promise<FuturesSymbolInfo | null>;
   getMinOrderSize(symbol: string): Promise<number>;
