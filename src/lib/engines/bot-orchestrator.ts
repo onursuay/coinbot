@@ -48,17 +48,17 @@ async function loadSettings(userId: string) {
     min_risk_reward_ratio: env.minRiskRewardRatio,
   };
 
-  const { data: existing, error: readErr } = await sb
+  // Fetch all rows (single-tenant: at most 1 row) — avoids UUID .eq() PostgREST cast issues.
+  const { data: rows, error: readErr } = await sb
     .from("bot_settings")
     .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
+    .limit(1);
   if (readErr) throw new Error(`bot_settings okunamadı: ${readErr.message}`);
+  const existing = rows?.[0] ?? null;
   if (existing) return existing;
 
-  // Plain INSERT — never overwrite via upsert from this codepath.
-  // If a row already exists (race / RLS visibility quirk), duplicate-key error
-  // is caught and we re-select instead of clobbering bot_status back to 'stopped'.
+  // No row exists — insert with defaults (bot_status: stopped).
+  // On duplicate key (race condition), re-fetch.
   const { data: created, error: insertErr } = await sb
     .from("bot_settings")
     .insert(insert)
@@ -72,13 +72,13 @@ async function loadSettings(userId: string) {
     throw new Error(`bot_settings yazılamadı: ${insertErr.message}`);
   }
 
-  const { data: retry, error: retryErr } = await sb
+  // Row appeared between our read and insert — fetch it now.
+  const { data: retryRows, error: retryErr } = await sb
     .from("bot_settings")
     .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
+    .limit(1);
   if (retryErr) throw new Error(`bot_settings re-read hatası: ${retryErr.message}`);
-  return retry;
+  return retryRows?.[0] ?? null;
 }
 
 export async function getBotState(userId: string) {
