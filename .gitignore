@@ -8,4 +8,6 @@ out
 *.log
 .vercel
 .tsbuildinfo
+*.tsbuildinfo
+tsconfig.tsbuildinfo
 next-env.d.ts
