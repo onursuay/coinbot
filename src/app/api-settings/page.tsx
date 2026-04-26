@@ -1,0 +1,111 @@
+"use client";
+import { useEffect, useState } from "react";
+
+const EXCHANGES = ["mexc", "binance", "okx", "bybit"] as const;
+
+export default function ApiSettings() {
+  const [supported, setSupported] = useState<any[]>([]);
+  const [connected, setConnected] = useState<any[]>([]);
+  const [form, setForm] = useState({ exchange: "mexc", apiKey: "", apiSecret: "", apiPassphrase: "" });
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async () => {
+    const [s, c] = await Promise.all([
+      fetch("/api/exchanges/supported").then((r) => r.json()),
+      fetch("/api/exchanges/connected").then((r) => r.json()),
+    ]);
+    if (s.ok) setSupported(s.data);
+    if (c.ok) setConnected(c.data);
+  };
+  useEffect(() => { refresh(); }, []);
+
+  const connect = async () => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/exchanges/connect", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(form),
+      }).then((r) => r.json());
+      if (!res.ok) alert(res.error);
+      else { setForm({ exchange: form.exchange, apiKey: "", apiSecret: "", apiPassphrase: "" }); await refresh(); }
+    } finally { setBusy(false); }
+  };
+  const validate = async (exchange: string) => {
+    const res = await fetch("/api/exchanges/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ exchange }) }).then((r) => r.json());
+    alert(res.ok ? `${exchange} erişilebilir.` : `Doğrulama hatası: ${res.error}`);
+    refresh();
+  };
+  const setActive = async (exchange: string) => {
+    const res = await fetch("/api/exchanges/set-active", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ exchange }) }).then((r) => r.json());
+    if (!res.ok) alert(res.error); else refresh();
+  };
+  const disconnect = async (exchange: string) => {
+    if (!confirm(`${exchange} bağlantısı silinsin mi?`)) return;
+    const res = await fetch(`/api/exchanges/disconnect?exchange=${exchange}`, { method: "DELETE" }).then((r) => r.json());
+    if (!res.ok) alert(res.error); else refresh();
+  };
+
+  const sel = supported.find((x) => x.slug === form.exchange);
+  const requiresPassphrase = sel?.requires_passphrase || form.exchange === "okx";
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-xl font-semibold">API Settings</h1>
+
+      <div className="card text-sm text-warning space-y-1">
+        <div>⚠ API key oluştururken <b>Withdrawal</b> iznini AÇMAYIN.</div>
+        <div>⚠ Mümkünse <b>IP whitelist</b> kullanın (sunucu IP'leri için Vercel docs'a bakın).</div>
+        <div>⚠ Trade izni olan API key'ler risk içerir; live trading varsayılan kapalıdır.</div>
+      </div>
+
+      <section className="card grid md:grid-cols-2 gap-3">
+        <div>
+          <div className="label">Exchange</div>
+          <select className="input" value={form.exchange} onChange={(e) => setForm({ ...form, exchange: e.target.value })}>
+            {EXCHANGES.map((e) => <option key={e} value={e}>{e.toUpperCase()}</option>)}
+          </select>
+        </div>
+        <div />
+        <div>
+          <div className="label">API Key</div>
+          <input className="input" autoComplete="off" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} />
+        </div>
+        <div>
+          <div className="label">API Secret</div>
+          <input className="input" type="password" autoComplete="off" value={form.apiSecret} onChange={(e) => setForm({ ...form, apiSecret: e.target.value })} />
+        </div>
+        {requiresPassphrase && (
+          <div className="md:col-span-2">
+            <div className="label">API Passphrase (OKX)</div>
+            <input className="input" type="password" autoComplete="off" value={form.apiPassphrase} onChange={(e) => setForm({ ...form, apiPassphrase: e.target.value })} />
+          </div>
+        )}
+        <div className="md:col-span-2">
+          <button className="btn-primary" onClick={connect} disabled={busy || !form.apiKey || !form.apiSecret}>Bağlan</button>
+        </div>
+      </section>
+
+      <section className="card">
+        <h2 className="font-semibold mb-2">Bağlı Borsalar</h2>
+        <table className="t">
+          <thead><tr><th>Exchange</th><th>API Key</th><th>Active</th><th>Last Validated</th><th></th></tr></thead>
+          <tbody>
+            {connected.length === 0 && <tr><td colSpan={5} className="text-muted">henüz bağlı borsa yok</td></tr>}
+            {connected.map((c) => (
+              <tr key={c.id}>
+                <td>{c.exchange_name.toUpperCase()}</td>
+                <td className="font-mono">{c.masked_key}</td>
+                <td>{c.is_active ? <span className="tag-success">active</span> : <span className="tag-muted">inactive</span>}</td>
+                <td className="text-xs text-muted">{c.last_validated_at ?? "—"}</td>
+                <td className="flex gap-2">
+                  <button className="btn-ghost text-xs" onClick={() => validate(c.exchange_name)}>Validate</button>
+                  <button className="btn-ghost text-xs" onClick={() => setActive(c.exchange_name)}>Set Active</button>
+                  <button className="btn-danger text-xs" onClick={() => disconnect(c.exchange_name)}>Disconnect</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
