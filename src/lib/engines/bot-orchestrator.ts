@@ -48,9 +48,6 @@ async function loadSettings(userId: string) {
     min_risk_reward_ratio: env.minRiskRewardRatio,
   };
 
-  // Plain upsert (default = ON CONFLICT DO UPDATE on user_id) + select returns the canonical row.
-  // We only set bot_status='stopped' if the row didn't exist, so we don't clobber an existing
-  // running state — read first, only insert defaults if missing.
   const { data: existing, error: readErr } = await sb
     .from("bot_settings")
     .select("*")
@@ -59,13 +56,29 @@ async function loadSettings(userId: string) {
   if (readErr) throw new Error(`bot_settings okunamadı: ${readErr.message}`);
   if (existing) return existing;
 
+  // Plain INSERT — never overwrite via upsert from this codepath.
+  // If a row already exists (race / RLS visibility quirk), duplicate-key error
+  // is caught and we re-select instead of clobbering bot_status back to 'stopped'.
   const { data: created, error: insertErr } = await sb
     .from("bot_settings")
-    .upsert(insert, { onConflict: "user_id" })
+    .insert(insert)
     .select()
     .single();
-  if (insertErr) throw new Error(`bot_settings yazılamadı: ${insertErr.message}`);
-  return created;
+
+  if (!insertErr) return created;
+
+  const isDuplicate = (insertErr as any)?.code === "23505" || /duplicate key/i.test(insertErr.message ?? "");
+  if (!isDuplicate) {
+    throw new Error(`bot_settings yazılamadı: ${insertErr.message}`);
+  }
+
+  const { data: retry, error: retryErr } = await sb
+    .from("bot_settings")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (retryErr) throw new Error(`bot_settings re-read hatası: ${retryErr.message}`);
+  return retry;
 }
 
 export async function getBotState(userId: string) {
