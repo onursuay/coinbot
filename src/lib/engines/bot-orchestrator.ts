@@ -57,7 +57,7 @@ async function loadSettings(userId: string) {
     max_funding_rate_abs: 0.003,
     max_symbols_per_tick: 50,
     max_concurrent_requests: 5,
-    kline_limit: 200,
+    kline_limit: 250,
     scanner_timeframe: "5m",
     scanner_cursor: "0",
   };
@@ -248,7 +248,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   }
 
   let btcKlines: any[] = [];
-  try { btcKlines = await adapter.getKlines("BTC/USDT", tf, 200); } catch { /* non-fatal */ }
+  try { btcKlines = await adapter.getKlines("BTC/USDT", tf, 250); } catch { /* non-fatal */ }
 
   await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbols.length} sembol taranıyor (${tf}) universe=${universeTotal} prefiltered=${universePrefiltered}` });
 
@@ -256,7 +256,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     try {
       const preTicker = tickerMap[symbol];
       const [klines, ticker, info, funding] = await Promise.all([
-        adapter.getKlines(symbol, tf, 200),
+        adapter.getKlines(symbol, tf, 250),
         preTicker ? Promise.resolve(preTicker) : adapter.getTicker(symbol),
         adapter.getExchangeInfo(symbol),
         adapter.getFundingRate(symbol),

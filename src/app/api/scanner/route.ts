@@ -14,7 +14,7 @@ const DEFAULTS = {
   maxFundingRateAbs: 0.003,
   maxSymbolsPerTick: 50,
   maxConcurrentRequests: 5,
-  klineLimit: 200,
+  klineLimit: 250,
 };
 
 async function loadWatchlist(exchange: ExchangeName): Promise<string[]> {

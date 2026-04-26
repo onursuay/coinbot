@@ -59,7 +59,7 @@ export async function scanMarket(opts: {
 }): Promise<ScanResult> {
   const tf: Timeframe = opts.timeframe ?? "5m";
   const concurrency = Math.max(1, opts.concurrency ?? 5);
-  const klineLimit = Math.max(50, opts.klineLimit ?? 200);
+  const klineLimit = Math.max(220, opts.klineLimit ?? 250);
   const adapter = getAdapter(opts.exchange);
   const rows: ScanRow[] = [];
 
