@@ -39,7 +39,7 @@ export default function ScannerPage() {
           <select className="input w-32" value={exchange} onChange={(e) => setExchange(e.target.value as any)}>
             {EXCHANGES.map((x) => <option key={x} value={x}>{x.toUpperCase()}</option>)}
           </select>
-          <button className="btn-primary" onClick={run} disabled={loading}>{loading ? "Tarıyor..." : "Yeniden Tara"}</button>
+          <button className="btn-primary whitespace-nowrap px-4" onClick={run} disabled={loading}>{loading ? "Tarıyor..." : "Yeniden Tara"}</button>
         </div>
       </div>
 
