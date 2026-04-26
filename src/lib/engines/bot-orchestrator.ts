@@ -12,7 +12,18 @@ import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
 
-const PAPER_BALANCE = 1000; // virtual balance for paper risk sizing
+export interface TickResult {
+  ok: boolean;
+  reason?: string;
+  scannedSymbols: string[];
+  generatedSignals: { symbol: string; type: string; score: number }[];
+  openedPaperTrades: { symbol: string; direction: string; entryPrice: number }[];
+  rejectedSignals: { symbol: string; reason: string }[];
+  errors: { symbol: string; error: string }[];
+  durationMs: number;
+}
+
+const PAPER_BALANCE = 1000;
 
 async function loadSettings(userId: string) {
   if (!supabaseConfigured()) return null;
@@ -40,18 +51,17 @@ async function loadSettings(userId: string) {
 }
 
 export async function getBotState(userId: string) {
-  const settings = await loadSettings(userId);
-  return settings;
+  return loadSettings(userId);
 }
 
 export async function setBotStatus(userId: string, status: BotStatus, reason?: string) {
   if (!supabaseConfigured()) return null;
   const sb = supabaseAdmin();
-  const { data } = await sb.from("bot_settings").upsert({
-    user_id: userId,
-    bot_status: status,
-    kill_switch_active: status === "kill_switch",
-  }, { onConflict: "user_id" }).select().single();
+  const { data } = await sb
+    .from("bot_settings")
+    .upsert({ user_id: userId, bot_status: status, kill_switch_active: status === "kill_switch" }, { onConflict: "user_id" })
+    .select()
+    .single();
   await botLog({
     userId, level: status === "kill_switch" ? "warn" : "info",
     eventType: `bot_${status}`,
@@ -63,50 +73,95 @@ export async function setBotStatus(userId: string, status: BotStatus, reason?: s
   return data;
 }
 
-export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; symbols?: string[] }) {
+export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; symbols?: string[] }): Promise<TickResult> {
+  const start = Date.now();
+  const result: TickResult = {
+    ok: false,
+    scannedSymbols: [],
+    generatedSignals: [],
+    openedPaperTrades: [],
+    rejectedSignals: [],
+    errors: [],
+    durationMs: 0,
+  };
+
+  await botLog({ userId, eventType: "tick_started", message: "Tick başladı" });
+
   const settings = await loadSettings(userId);
   if (!settings) {
-    return { ok: false, reason: "Supabase yapılandırılmamış" };
+    result.reason = "Supabase yapılandırılmamış";
+    result.durationMs = Date.now() - start;
+    await botLog({ userId, level: "error", eventType: "tick_failed", message: result.reason });
+    return result;
   }
   if (settings.bot_status !== "running") {
-    return { ok: false, reason: `Bot durumu: ${settings.bot_status}` };
+    result.reason = `Bot durumu: ${settings.bot_status}`;
+    result.durationMs = Date.now() - start;
+    await botLog({ userId, eventType: "tick_skipped", message: result.reason });
+    return result;
   }
-
-  // Sweep open paper trades for SL/TP first.
-  await evaluateOpenTrades(userId);
 
   const exchange = settings.active_exchange as ExchangeName;
   const adapter = getAdapter(exchange);
   const tf: Timeframe = opts?.timeframe ?? "15m";
 
+  if (!supabaseConfigured()) {
+    result.reason = "Supabase yapılandırılmamış";
+    result.durationMs = Date.now() - start;
+    return result;
+  }
+
   const sb = supabaseAdmin();
-  const { data: watched } = await sb.from("watched_symbols")
-    .select("symbol").eq("user_id", userId).eq("exchange_name", exchange)
-    .eq("market_type", "futures").eq("is_active", true);
-  const symbols = (opts?.symbols && opts.symbols.length > 0)
-    ? opts.symbols
-    : (watched?.map((w) => w.symbol) ?? ["BTC/USDT", "ETH/USDT", "SOL/USDT"]);
+
+  // Sweep SL/TP on open paper trades first
+  await evaluateOpenTrades(userId);
+
+  const { data: watched } = await sb
+    .from("watched_symbols")
+    .select("symbol")
+    .eq("user_id", userId)
+    .eq("exchange_name", exchange)
+    .eq("market_type", "futures")
+    .eq("is_active", true);
+
+  const symbols: string[] =
+    opts?.symbols && opts.symbols.length > 0
+      ? opts.symbols
+      : watched?.map((w) => w.symbol) ?? ["BTC/USDT", "ETH/USDT", "SOL/USDT"];
+
+  result.scannedSymbols = symbols;
 
   const daily = await getDailyStatus(userId, PAPER_BALANCE);
   if (daily.targetHit) {
-    await botLog({ userId, eventType: "daily_target_hit", message: "Günlük kâr hedefi tamamlandı — yeni işlem yok" });
-    return { ok: true, opened: 0, reason: "daily_target_hit" };
+    result.ok = true;
+    result.reason = "daily_target_hit";
+    result.durationMs = Date.now() - start;
+    await botLog({ userId, eventType: "tick_completed", message: "Tick tamamlandı — günlük hedef doldu, işlem yok", metadata: { ...summary(result) } });
+    return result;
   }
   if (daily.lossLimitHit) {
     await setBotStatus(userId, "paused", "daily_loss_limit_hit");
-    return { ok: true, opened: 0, reason: "daily_loss_limit_hit" };
+    result.reason = "daily_loss_limit_hit";
+    result.durationMs = Date.now() - start;
+    await botLog({ userId, level: "warn", eventType: "tick_completed", message: "Tick — günlük zarar limiti, bot duraklatıldı" });
+    return result;
   }
 
-  const { data: openPositions } = await sb.from("paper_trades")
-    .select("id").eq("user_id", userId).eq("status", "open");
-  const openCount = openPositions?.length ?? 0;
+  const { data: openPos } = await sb.from("paper_trades").select("id").eq("user_id", userId).eq("status", "open");
+  let openCount = openPos?.length ?? 0;
+
   if (openCount >= settings.max_open_positions) {
-    return { ok: true, opened: 0, reason: "max_open_positions" };
+    result.ok = true;
+    result.reason = "max_open_positions";
+    result.durationMs = Date.now() - start;
+    await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}) doldu` });
+    return result;
   }
 
-  let opened = 0;
   let btcKlines: any[] = [];
-  try { btcKlines = await adapter.getKlines("BTC/USDT", tf, 250); } catch { /* optional */ }
+  try { btcKlines = await adapter.getKlines("BTC/USDT", tf, 250); } catch { /* non-fatal */ }
+
+  await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbols.length} sembol taranıyor (${tf})` });
 
   for (const symbol of symbols) {
     try {
@@ -116,43 +171,54 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         adapter.getExchangeInfo(symbol),
         adapter.getFundingRate(symbol),
       ]);
+
       const sig = generateSignal({ symbol, timeframe: tf, klines, ticker, funding, btcKlines });
 
       // Persist signal for audit
       await sb.from("signals").insert({
-        user_id: userId, exchange_name: exchange, market_type: "futures", margin_mode: settings.margin_mode,
-        symbol, timeframe: tf, signal_type: sig.signalType, signal_score: sig.score,
+        user_id: userId, exchange_name: exchange, market_type: "futures",
+        margin_mode: settings.margin_mode, symbol, timeframe: tf,
+        signal_type: sig.signalType, signal_score: sig.score,
         entry_price: sig.entryPrice, stop_loss: sig.stopLoss, take_profit: sig.takeProfit,
         risk_reward_ratio: sig.riskRewardRatio, reasons: sig.reasons,
         rejected_reason: sig.rejectedReason ?? null,
       });
 
-      if (sig.signalType !== "LONG" && sig.signalType !== "SHORT") continue;
+      if (sig.signalType !== "LONG" && sig.signalType !== "SHORT") {
+        const rejReason = sig.rejectedReason ?? sig.reasons[0] ?? sig.signalType;
+        result.rejectedSignals.push({ symbol, reason: rejReason });
+        await botLog({
+          userId, exchange, eventType: "signal_rejected",
+          message: `${symbol} ${sig.signalType} — ${rejReason}`,
+          metadata: { score: sig.score, features: sig.features },
+        });
+        continue;
+      }
+
+      result.generatedSignals.push({ symbol, type: sig.signalType, score: sig.score });
+      await botLog({
+        userId, exchange, eventType: "signal_generated",
+        message: `${symbol} ${sig.signalType} skor=${sig.score} — ${sig.reasons[0] ?? ""}`,
+        metadata: { score: sig.score, entryPrice: sig.entryPrice },
+      });
+
       if (!sig.entryPrice || !sig.stopLoss || !sig.takeProfit) continue;
 
       const liq = await adapter.getEstimatedLiquidationPrice({
-        symbol, direction: sig.signalType, entryPrice: sig.entryPrice, leverage: settings.max_leverage, marginMode: "isolated",
+        symbol, direction: sig.signalType, entryPrice: sig.entryPrice,
+        leverage: settings.max_leverage, marginMode: "isolated",
       });
 
       const risk = evaluateRisk({
         accountBalanceUsd: PAPER_BALANCE,
-        symbol,
-        direction: sig.signalType,
-        entryPrice: sig.entryPrice,
-        stopLoss: sig.stopLoss,
-        takeProfit: sig.takeProfit,
-        signalScore: sig.score,
-        marketSpread: ticker.spread,
-        recentLossStreak: 0,
-        openPositionCount: openCount + opened,
-        dailyRealizedPnlUsd: daily.realizedPnlUsd,
-        weeklyRealizedPnlUsd: daily.realizedPnlUsd,
-        dailyTargetHit: daily.targetHit,
-        conservativeMode: false,
+        symbol, direction: sig.signalType,
+        entryPrice: sig.entryPrice, stopLoss: sig.stopLoss, takeProfit: sig.takeProfit,
+        signalScore: sig.score, marketSpread: ticker.spread,
+        recentLossStreak: 0, openPositionCount: openCount,
+        dailyRealizedPnlUsd: daily.realizedPnlUsd, weeklyRealizedPnlUsd: daily.realizedPnlUsd,
+        dailyTargetHit: daily.targetHit, conservativeMode: false,
         killSwitchActive: settings.kill_switch_active,
-        webSocketHealthy: true,
-        apiHealthy: true,
-        dataFresh: true,
+        webSocketHealthy: true, apiHealthy: true, dataFresh: true,
         fundingRate: funding?.rate,
         estimatedLiquidationPrice: liq,
         exchangeMaxLeverage: info?.maxLeverage,
@@ -161,16 +227,18 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         exchangeTickSize: info?.tickSize,
         marginMode: "isolated",
       });
+
       if (!risk.allowed) {
+        result.rejectedSignals.push({ symbol, reason: `Risk: ${risk.reason}` });
         await botLog({
           userId, exchange, eventType: "risk_blocked",
-          message: `${symbol} ${sig.signalType} reddedildi: ${risk.reason}`,
-          metadata: { violations: risk.ruleViolations, signalScore: sig.score },
+          message: `${symbol} ${sig.signalType} risk engine reddetti: ${risk.reason}`,
+          metadata: { violations: risk.ruleViolations },
         });
         continue;
       }
 
-      await openPaperTrade({
+      const trade = await openPaperTrade({
         userId, exchange, symbol, direction: sig.signalType,
         entryPrice: sig.entryPrice, stopLoss: sig.stopLoss, takeProfit: sig.takeProfit,
         leverage: risk.leverage, positionSize: risk.positionSize, marginUsed: risk.marginUsed,
@@ -178,11 +246,43 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         marginMode: "isolated", estimatedLiquidationPrice: risk.estimatedLiquidationPrice ?? null,
         signalScore: sig.score, entryReason: sig.reasons.join(" • "),
       });
-      opened++;
-      if (openCount + opened >= settings.max_open_positions) break;
+
+      result.openedPaperTrades.push({
+        symbol, direction: sig.signalType, entryPrice: sig.entryPrice,
+      });
+      await botLog({
+        userId, exchange, eventType: "paper_trade_opened",
+        message: `${sig.signalType} ${symbol} @ ${sig.entryPrice} lev=${risk.leverage}x skor=${sig.score}`,
+        metadata: { tradeId: trade?.id },
+      });
+      openCount++;
+      if (openCount >= settings.max_open_positions) break;
     } catch (e: any) {
-      await botLog({ userId, exchange, level: "error", eventType: "tick_error", message: `${symbol}: ${e?.message ?? e}` });
+      const msg = e?.message ?? String(e);
+      result.errors.push({ symbol, error: msg });
+      await botLog({ userId, exchange, level: "error", eventType: "tick_error", message: `${symbol}: ${msg}` });
     }
   }
-  return { ok: true, opened };
+
+  result.ok = true;
+  result.durationMs = Date.now() - start;
+
+  await botLog({
+    userId, exchange, eventType: "tick_completed",
+    message: `Tick tamamlandı — tarandı=${symbols.length} sinyal=${result.generatedSignals.length} açıldı=${result.openedPaperTrades.length} red=${result.rejectedSignals.length} hata=${result.errors.length} (${result.durationMs}ms)`,
+    metadata: summary(result),
+  });
+
+  return result;
+}
+
+function summary(r: TickResult) {
+  return {
+    scanned: r.scannedSymbols.length,
+    generated: r.generatedSignals.length,
+    opened: r.openedPaperTrades.length,
+    rejected: r.rejectedSignals.length,
+    errors: r.errors.length,
+    durationMs: r.durationMs,
+  };
 }

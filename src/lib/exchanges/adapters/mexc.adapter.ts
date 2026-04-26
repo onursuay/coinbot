@@ -76,28 +76,23 @@ export class MexcAdapter implements ExchangeAdapter {
   async getTickSize(symbol: string): Promise<number> { return (await this.getExchangeInfo(symbol))?.tickSize ?? 0.01; }
   async getStepSize(symbol: string): Promise<number> { return (await this.getExchangeInfo(symbol))?.stepSize ?? 0.0001; }
 
-  async getKlines(symbol: string, timeframe: Timeframe, limit = 200): Promise<Kline[]> {
+  async getKlines(symbol: string, timeframe: Timeframe, limit = 250): Promise<Kline[]> {
     const tf = TF_TO_MEXC[timeframe];
     const contract = toMexcContract(symbol);
-    const json = await fetchJson<any>(`${FUTURES_BASE}/api/v1/contract/kline/${contract}?interval=${tf}`);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const durationSec = Math.ceil((limit * intervalToMs(timeframe)) / 1000);
+    const startSec = nowSec - durationSec;
+    const url = `${FUTURES_BASE}/api/v1/contract/kline/${contract}?interval=${tf}&start=${startSec}&end=${nowSec}`;
+    const json = await fetchJson<any>(url);
     const d = json?.data;
-    if (!d || !Array.isArray(d.time)) return [];
-    const out: Kline[] = [];
-    const len = d.time.length;
-    const start = Math.max(0, len - limit);
-    for (let i = start; i < len; i++) {
-      const openMs = Number(d.time[i]) * 1000;
-      out.push({
-        openTime: openMs,
-        open: Number(d.open[i]),
-        high: Number(d.high[i]),
-        low: Number(d.low[i]),
-        close: Number(d.close[i]),
-        volume: Number(d.vol?.[i] ?? 0),
-        closeTime: openMs + intervalToMs(timeframe) - 1,
-      });
+    if (!d || !Array.isArray(d.time) || d.time.length === 0) {
+      // Fallback: try without time range (some symbols may not support range params)
+      const fallback = await fetchJson<any>(`${FUTURES_BASE}/api/v1/contract/kline/${contract}?interval=${tf}`).catch(() => null);
+      const fd = fallback?.data;
+      if (!fd || !Array.isArray(fd.time) || fd.time.length === 0) return [];
+      return parseMexcKlines(fd, limit, timeframe);
     }
-    return out;
+    return parseMexcKlines(d, limit, timeframe);
   }
 
   async getTicker(symbol: string): Promise<Ticker> {
@@ -181,6 +176,29 @@ export class MexcAdapter implements ExchangeAdapter {
   async validateApiCredentials(): Promise<CredentialValidation> {
     return { ok: false, reason: "Credential validation runs in API route with encrypted secrets" };
   }
+}
+
+function parseMexcKlines(d: any, limit: number, timeframe: Timeframe): Kline[] {
+  const len = d.time.length;
+  const start = Math.max(0, len - limit);
+  const out: Kline[] = [];
+  for (let i = start; i < len; i++) {
+    const openMs = Number(d.time[i]) * 1000;
+    if (!Number.isFinite(openMs) || openMs <= 0) continue;
+    const o = Number(d.open?.[i] ?? NaN);
+    const h = Number(d.high?.[i] ?? NaN);
+    const l = Number(d.low?.[i] ?? NaN);
+    const c = Number(d.close?.[i] ?? NaN);
+    const v = Number(d.vol?.[i] ?? d.amount?.[i] ?? 0);
+    if (![o, h, l, c].every(Number.isFinite)) continue;
+    out.push({
+      openTime: openMs,
+      open: o, high: h, low: l, close: c,
+      volume: Number.isFinite(v) ? v : 0,
+      closeTime: openMs + intervalToMs(timeframe) - 1,
+    });
+  }
+  return out;
 }
 
 function intervalToMs(tf: Timeframe): number {

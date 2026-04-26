@@ -20,13 +20,21 @@ export function ema(values: number[], period: number): number[] {
   let prev = NaN;
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
+    if (!Number.isFinite(v)) { out.push(NaN); continue; }
     if (i < period - 1) { out.push(NaN); continue; }
     if (i === period - 1) {
-      let s = 0; for (let j = 0; j < period; j++) s += values[j];
+      let s = 0;
+      let valid = true;
+      for (let j = 0; j < period; j++) {
+        if (!Number.isFinite(values[j])) { valid = false; break; }
+        s += values[j];
+      }
+      if (!valid) { out.push(NaN); continue; }
       prev = s / period;
       out.push(prev);
       continue;
     }
+    if (!Number.isFinite(prev)) { out.push(NaN); continue; }
     prev = v * k + prev * (1 - k);
     out.push(prev);
   }
@@ -57,10 +65,14 @@ export function rsi(values: number[], period = 14): number[] {
 export function macd(values: number[], fast = 12, slow = 26, signalP = 9) {
   const ef = ema(values, fast);
   const es = ema(values, slow);
-  const macdLine = values.map((_, i) => (Number.isFinite(ef[i]) && Number.isFinite(es[i]) ? ef[i] - es[i] : NaN));
+  const macdLine = values.map((_, i) =>
+    Number.isFinite(ef[i]) && Number.isFinite(es[i]) ? ef[i] - es[i] : NaN,
+  );
   const valid = macdLine.map((v) => (Number.isFinite(v) ? v : 0));
   const signal = ema(valid, signalP).map((v, i) => (Number.isFinite(macdLine[i]) ? v : NaN));
-  const hist = macdLine.map((v, i) => (Number.isFinite(v) && Number.isFinite(signal[i]) ? v - signal[i] : NaN));
+  const hist = macdLine.map((v, i) =>
+    Number.isFinite(v) && Number.isFinite(signal[i]) ? v - signal[i] : NaN,
+  );
   return { macd: macdLine, signal, hist };
 }
 
@@ -81,17 +93,26 @@ export function bollinger(values: number[], period = 20, mult = 2) {
 export function atr(klines: Kline[], period = 14): number[] {
   const trs: number[] = [];
   for (let i = 0; i < klines.length; i++) {
-    if (i === 0) { trs.push(klines[i].high - klines[i].low); continue; }
+    const k = klines[i];
+    if (!Number.isFinite(k.high) || !Number.isFinite(k.low) || !Number.isFinite(k.close)) {
+      trs.push(NaN);
+      continue;
+    }
+    if (i === 0) { trs.push(k.high - k.low); continue; }
     const prev = klines[i - 1].close;
-    const tr = Math.max(klines[i].high - klines[i].low, Math.abs(klines[i].high - prev), Math.abs(klines[i].low - prev));
-    trs.push(tr);
+    if (!Number.isFinite(prev)) { trs.push(k.high - k.low); continue; }
+    trs.push(Math.max(k.high - k.low, Math.abs(k.high - prev), Math.abs(k.low - prev)));
   }
-  // Wilder smoothing
   const out: number[] = new Array(klines.length).fill(NaN);
   if (trs.length < period) return out;
-  let s = 0; for (let i = 0; i < period; i++) s += trs[i];
+  let s = 0, validCount = 0;
+  for (let i = 0; i < period; i++) {
+    if (Number.isFinite(trs[i])) { s += trs[i]; validCount++; }
+  }
+  if (validCount < period) return out;
   out[period - 1] = s / period;
   for (let i = period; i < trs.length; i++) {
+    if (!Number.isFinite(out[i - 1]) || !Number.isFinite(trs[i])) continue;
     out[i] = (out[i - 1] * (period - 1) + trs[i]) / period;
   }
   return out;
@@ -111,18 +132,20 @@ export function volumeMA(klines: Kline[], period = 20): number[] {
   return sma(klines.map((k) => k.volume), period);
 }
 
-// Find recent swing high/low using fractal-like rule.
 export function recentSwing(klines: Kline[], lookback = 30): { swingHigh: number; swingLow: number } {
   const slice = klines.slice(-Math.max(5, lookback));
   let high = -Infinity, low = Infinity;
-  for (const k of slice) { if (k.high > high) high = k.high; if (k.low < low) low = k.low; }
+  for (const k of slice) {
+    if (Number.isFinite(k.high) && k.high > high) high = k.high;
+    if (Number.isFinite(k.low) && k.low < low) low = k.low;
+  }
   return { swingHigh: high, swingLow: low };
 }
 
-// Wick anomaly: latest candle wick > 2x body relative to prior median.
 export function wickAnomaly(klines: Kline[]): boolean {
   if (klines.length < 5) return false;
   const last = klines[klines.length - 1];
+  if (!Number.isFinite(last.high) || !Number.isFinite(last.low)) return false;
   const body = Math.abs(last.close - last.open);
   const upperWick = last.high - Math.max(last.open, last.close);
   const lowerWick = Math.min(last.open, last.close) - last.low;
@@ -130,8 +153,8 @@ export function wickAnomaly(klines: Kline[]): boolean {
   return upperWick > 2 * body || lowerWick > 2 * body;
 }
 
-// Trend strength score 0-100 from EMA stack and slope.
 export function trendStrengthScore(closes: number[]): number {
+  if (closes.length < 200) return 0;
   const e20 = ema(closes, 20).at(-1) ?? NaN;
   const e50 = ema(closes, 50).at(-1) ?? NaN;
   const e200 = ema(closes, 200).at(-1) ?? NaN;
@@ -141,25 +164,29 @@ export function trendStrengthScore(closes: number[]): number {
   if (last > e20) score += 8; else score -= 8;
   if (e20 > e50) score += 12; else score -= 12;
   if (e50 > e200) score += 15; else score -= 15;
-  // slope of EMA20 over last 5
   const e20s = ema(closes, 20);
-  const slope = (e20s.at(-1)! - e20s.at(-6)!) / Math.max(1e-9, Math.abs(e20s.at(-6)!));
-  score += Math.max(-15, Math.min(15, slope * 1000));
-  return Math.max(0, Math.min(100, score));
+  const v1 = e20s.at(-1)!;
+  const v6 = e20s.at(-6)!;
+  if (Number.isFinite(v1) && Number.isFinite(v6) && Math.abs(v6) > 1e-9) {
+    const slope = (v1 - v6) / Math.abs(v6);
+    score += Math.max(-15, Math.min(15, slope * 1000));
+  }
+  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
+// Adjusted for 5m–15m timeframes: major coins have ATR/close ~0.1–0.4% on 5m.
 export function volatilityScore(klines: Kline[]): number {
-  const a = atr(klines).at(-1) ?? NaN;
+  const a = atr(klines, 14).at(-1) ?? NaN;
   const last = klines.at(-1)?.close ?? NaN;
   if (!Number.isFinite(a) || !Number.isFinite(last) || last === 0) return 0;
   const pct = (a / last) * 100;
-  // sweet spot 0.5%–2.5% per candle for selected timeframes.
-  if (pct < 0.2) return 20;
-  if (pct < 0.5) return 50;
-  if (pct < 1.5) return 90;
-  if (pct < 2.5) return 75;
-  if (pct < 4) return 45;
-  return 15;
+  if (pct < 0.03) return 5;   // dead market
+  if (pct < 0.08) return 30;  // very low — scalp edge-case
+  if (pct < 0.5)  return 70;  // normal for 5m/15m on majors
+  if (pct < 2.0)  return 90;  // sweet spot for 1h/4h or volatile 5m
+  if (pct < 4.0)  return 60;  // elevated, still tradeable
+  if (pct < 7.0)  return 30;  // high risk
+  return 10;                   // too volatile
 }
 
 export function volumeConfirmationScore(klines: Kline[]): number {

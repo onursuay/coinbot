@@ -1,12 +1,15 @@
-import { ok } from "@/lib/api-helpers";
+import { ok, fail } from "@/lib/api-helpers";
 import { tickBot } from "@/lib/engines/bot-orchestrator";
 import { getCurrentUserId } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Manual single-tick endpoint (suitable for cron / external scheduler).
 export async function POST() {
-  const result = await tickBot(getCurrentUserId());
-  return ok(result);
+  try {
+    const result = await tickBot(getCurrentUserId());
+    return ok(result);
+  } catch (e: any) {
+    return fail(e?.message ?? "Tick başarısız", 500);
+  }
 }
