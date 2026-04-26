@@ -48,14 +48,24 @@ async function loadSettings(userId: string) {
     min_risk_reward_ratio: env.minRiskRewardRatio,
   };
 
-  const { error: upsertErr } = await sb
+  // Plain upsert (default = ON CONFLICT DO UPDATE on user_id) + select returns the canonical row.
+  // We only set bot_status='stopped' if the row didn't exist, so we don't clobber an existing
+  // running state — read first, only insert defaults if missing.
+  const { data: existing, error: readErr } = await sb
     .from("bot_settings")
-    .upsert(insert, { onConflict: "user_id", ignoreDuplicates: true });
-  if (upsertErr) throw new Error(`bot_settings upsert hatası: ${upsertErr.message}`);
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (readErr) throw new Error(`bot_settings okunamadı: ${readErr.message}`);
+  if (existing) return existing;
 
-  const { data, error } = await sb.from("bot_settings").select("*").eq("user_id", userId).maybeSingle();
-  if (error) throw new Error(`bot_settings okunamadı: ${error.message}`);
-  return data ?? null;
+  const { data: created, error: insertErr } = await sb
+    .from("bot_settings")
+    .upsert(insert, { onConflict: "user_id" })
+    .select()
+    .single();
+  if (insertErr) throw new Error(`bot_settings yazılamadı: ${insertErr.message}`);
+  return created;
 }
 
 export async function getBotState(userId: string) {
