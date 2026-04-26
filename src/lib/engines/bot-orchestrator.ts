@@ -28,9 +28,9 @@ const PAPER_BALANCE = 1000;
 async function loadSettings(userId: string) {
   if (!supabaseConfigured()) return null;
   const sb = supabaseAdmin();
-  const { data, error } = await sb.from("bot_settings").select("*").eq("user_id", userId).maybeSingle();
-  if (error) throw new Error(`bot_settings okunamadı: ${error.message}`);
-  if (data) return data;
+
+  // Use upsert with ignoreDuplicates so a conflicting row never causes a hard error.
+  // We always re-select afterwards to return the canonical row regardless of insert/conflict.
   const insert = {
     user_id: userId,
     active_exchange: env.defaultActiveExchange,
@@ -47,9 +47,15 @@ async function loadSettings(userId: string) {
     max_open_positions: env.maxOpenPositions,
     min_risk_reward_ratio: env.minRiskRewardRatio,
   };
-  const { data: created, error: insertErr } = await sb.from("bot_settings").insert(insert).select().single();
-  if (insertErr) throw new Error(`bot_settings oluşturulamadı: ${insertErr.message}`);
-  return created;
+
+  const { error: upsertErr } = await sb
+    .from("bot_settings")
+    .upsert(insert, { onConflict: "user_id", ignoreDuplicates: true });
+  if (upsertErr) throw new Error(`bot_settings upsert hatası: ${upsertErr.message}`);
+
+  const { data, error } = await sb.from("bot_settings").select("*").eq("user_id", userId).maybeSingle();
+  if (error) throw new Error(`bot_settings okunamadı: ${error.message}`);
+  return data ?? null;
 }
 
 export async function getBotState(userId: string) {
