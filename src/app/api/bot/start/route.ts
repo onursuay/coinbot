@@ -43,7 +43,7 @@ export async function POST() {
     min_risk_reward_ratio: env.minRiskRewardRatio,
   };
 
-  const { data, error } = await sb
+  const { data: upserted, error } = await sb
     .from("bot_settings")
     .upsert(payload, { onConflict: "user_id" })
     .select()
@@ -53,6 +53,25 @@ export async function POST() {
     return fail(`bot_settings upsert hatası: ${error.message}`, 500);
   }
 
+  // Verify by re-reading the row (defensive: catches read-after-write edge cases).
+  const { data: verified, error: verifyErr } = await sb
+    .from("bot_settings")
+    .select("bot_status,trading_mode,active_exchange,kill_switch_active,max_leverage,max_allowed_leverage")
+    .eq("user_id", userId)
+    .single();
+
+  if (verifyErr) {
+    return fail(`bot_settings verify hatası: ${verifyErr.message}`, 500);
+  }
+
+  if (verified?.bot_status !== "running") {
+    return fail(
+      `Upsert sonrası bot_status='${verified?.bot_status}' bekleniyordu='running'. Olası RLS/trigger.`,
+      500,
+      { upserted, verified }
+    );
+  }
+
   await botLog({
     userId,
     eventType: "bot_running",
@@ -60,8 +79,9 @@ export async function POST() {
   });
 
   return ok({
-    status: (data?.bot_status ?? "running").toString().toUpperCase(),
-    hasSettingsRow: Boolean(data),
-    settings: data,
+    status: verified.bot_status.toUpperCase(),
+    hasSettingsRow: true,
+    settings: upserted,
+    verified,
   });
 }

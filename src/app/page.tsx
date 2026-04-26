@@ -43,12 +43,13 @@ export default function HomePage() {
   const [envCheck, setEnvCheck] = useState<any>(null);
 
   const refresh = async () => {
+    const noCache: RequestInit = { cache: "no-store" };
     const [a, b, c, d, e] = await Promise.all([
-      fetch("/api/bot/status").then((r) => r.json()).catch(() => null),
-      fetch("/api/paper-trades/performance").then((r) => r.json()).catch(() => null),
-      fetch("/api/signals?limit=10").then((r) => r.json()).catch(() => null),
-      fetch("/api/paper-trades?limit=20").then((r) => r.json()).catch(() => null),
-      fetch("/api/system/env-check").then((r) => r.json()).catch(() => null),
+      fetch("/api/bot/status", noCache).then((r) => r.json()).catch(() => null),
+      fetch("/api/paper-trades/performance", noCache).then((r) => r.json()).catch(() => null),
+      fetch("/api/signals?limit=10", noCache).then((r) => r.json()).catch(() => null),
+      fetch("/api/paper-trades?limit=20", noCache).then((r) => r.json()).catch(() => null),
+      fetch("/api/system/env-check", noCache).then((r) => r.json()).catch(() => null),
     ]);
     if (a?.ok) setStatus(a.data);
     if (b?.ok) setPerf(b.data);
