@@ -40,17 +40,21 @@ export default function HomePage() {
     setTimeout(() => setToasts((prev) => prev.filter((x) => x.id !== id)), 8000);
   };
 
+  const [envCheck, setEnvCheck] = useState<any>(null);
+
   const refresh = async () => {
-    const [a, b, c, d] = await Promise.all([
+    const [a, b, c, d, e] = await Promise.all([
       fetch("/api/bot/status").then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/performance").then((r) => r.json()).catch(() => null),
       fetch("/api/signals?limit=10").then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades?limit=20").then((r) => r.json()).catch(() => null),
+      fetch("/api/system/env-check").then((r) => r.json()).catch(() => null),
     ]);
     if (a?.ok) setStatus(a.data);
     if (b?.ok) setPerf(b.data);
     if (c?.ok) setSignals(c.data ?? []);
     if (d?.ok) setPaper(d.data);
+    if (e?.ok) setEnvCheck(e.data);
   };
 
   useEffect(() => {
@@ -60,6 +64,14 @@ export default function HomePage() {
   }, []);
 
   const act = async (path: string, label: string) => {
+    if (path.endsWith("/start") && envCheck && !envCheck.ok) {
+      addToast({
+        type: "error",
+        message: "Supabase env missing. Configure Vercel environment variables first.",
+        detail: [...(envCheck.missing ?? []), ...(envCheck.empty ?? [])].join(", "),
+      });
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch(path, { method: "POST" }).then((r) => r.json());
@@ -79,11 +91,21 @@ export default function HomePage() {
   };
 
   const runTick = async () => {
-    const currentStatus = status?.debug?.botStatus ?? status?.bot?.bot_status;
+    if (envCheck && !envCheck.ok) {
+      addToast({
+        type: "error",
+        message: "Supabase env missing. Tick skipped.",
+        detail: [...(envCheck.missing ?? []), ...(envCheck.empty ?? [])].join(", "),
+      });
+      return;
+    }
+    const dbgStatus = (status?.debug?.botStatus ?? "").toString().toLowerCase();
+    const rawStatus = status?.bot?.bot_status;
+    const currentStatus = dbgStatus || rawStatus;
     if (currentStatus !== "running") {
       addToast({
         type: "info",
-        message: "Bot stopped. Start bot first.",
+        message: "Bot stopped. Press Start first.",
         detail: `Mevcut durum: ${(currentStatus ?? "stopped").toUpperCase()}`,
       });
       return;
@@ -202,6 +224,9 @@ export default function HomePage() {
         <Kpi label="Open Positions" value={String(status?.openPositions ?? 0)} sub={`max ${status?.config?.maxAllowedLeverage ?? 5}x lev`} />
       </div>
 
+      {/* System Config Status */}
+      <SystemConfigCard envCheck={envCheck} status={status} />
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <section className="card">
           <h2 className="font-semibold mb-3">Latest Signals</h2>
@@ -301,6 +326,55 @@ function Kpi({ label, value, sub, accent }: { label: string; value: string; sub?
       <div className="label">{label}</div>
       <div className={`kpi ${accent === "success" ? "text-success" : accent === "danger" ? "text-danger" : ""}`}>{value}</div>
       {sub && <div className="text-xs text-muted mt-1">{sub}</div>}
+    </div>
+  );
+}
+
+function SystemConfigCard({ envCheck, status }: { envCheck: any; status: any }) {
+  if (!envCheck) return null;
+  const missingList = [...(envCheck.missing ?? []), ...(envCheck.empty ?? [])];
+  const supabaseOk = !missingList.some((k: string) => k.startsWith("NEXT_PUBLIC_SUPABASE") || k === "SUPABASE_SERVICE_ROLE_KEY");
+  const credOk = !missingList.includes("CREDENTIAL_ENCRYPTION_KEY");
+  const cfg = envCheck.effectiveConfig ?? {};
+  return (
+    <div className={`card border ${envCheck.ok ? "" : "border-danger/50"}`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold">System Config Status</h2>
+        {!envCheck.ok && <span className="tag-danger text-xs">CONFIG INCOMPLETE</span>}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+        <ConfigRow label="Supabase" value={supabaseOk ? "Configured" : "Missing"} ok={supabaseOk} />
+        <ConfigRow label="Credential Encryption" value={credOk ? "Configured" : "Missing"} ok={credOk} />
+        <ConfigRow label="Live Trading" value={cfg.liveTrading ? "Enabled" : "Disabled"} ok={!cfg.liveTrading} />
+        <ConfigRow label="Default Leverage" value={`${cfg.maxLeverage ?? 3}x`} ok />
+        <ConfigRow label="Max Allowed Leverage" value={`${cfg.maxAllowedLeverage ?? 5}x`} ok />
+        <ConfigRow label="Hard Cap" value={`${cfg.hardCap ?? 5}x`} ok />
+      </div>
+      {!envCheck.ok && (
+        <div className="mt-3 rounded-lg border border-danger/50 bg-danger/10 px-3 py-2 text-sm text-danger">
+          Vercel environment variables are missing or empty. Go to Vercel → Project Settings → Environment Variables.
+          <div className="mt-1 text-xs opacity-80">Eksik: {missingList.join(", ")}</div>
+        </div>
+      )}
+      {envCheck.warnings?.length > 0 && (
+        <div className="mt-2 text-xs text-warning">
+          {envCheck.warnings.join(" • ")}
+        </div>
+      )}
+      {status?.debug?.botStatus && (
+        <div className="mt-2 text-xs text-muted">
+          DB row: {status.debug.hasSettingsRow ? "yes" : "no"} • source: {status.debug.source} • status: {status.debug.botStatus}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConfigRow({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+  return (
+    <div className="flex items-center justify-between bg-bg-soft border border-border rounded-lg px-3 py-2">
+      <span className="text-muted text-xs">{label}</span>
+      <span className={`text-xs font-medium ${ok ? "text-success" : "text-danger"}`}>{value}</span>
     </div>
   );
 }

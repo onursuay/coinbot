@@ -71,10 +71,39 @@ supabase db push   # supabase/migrations/0001_init.sql
 
 1. Repo'yu GitHub'a push edin.
 2. Vercel'de yeni proje, framework Next.js.
-3. Env değişkenlerini Vercel dashboard'a girin (özellikle `SUPABASE_SERVICE_ROLE_KEY` ve `CREDENTIAL_ENCRYPTION_KEY` — `.env` dosyasını commit etmeyin).
+3. Aşağıdaki "Vercel Environment Variables" bölümündeki tüm değişkenleri **Production** environment'ında ekleyin.
 4. Deploy.
 
 > Edge runtime kullanılmaz; tüm API route'ları `runtime = "nodejs"` ile çalışır (Node `crypto` ve fetch için gerekli).
+
+### Vercel Environment Variables
+
+Aşağıdaki değişkenleri Vercel → Project Settings → Environment Variables altında **Production** (ve istenirse Preview) environment'ına ekleyin:
+
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | ✅ | — | Supabase Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | — | anon public API key |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | — | service_role secret (sensitive) |
+| `CREDENTIAL_ENCRYPTION_KEY` | ✅ | — | 32+ char random secret for AES-256-GCM |
+| `LIVE_TRADING` | recommended | `false` | Hard gate; never enable without auditing |
+| `DEFAULT_TRADING_MODE` | optional | `paper` | `paper` \| `live` |
+| `DEFAULT_MARKET_TYPE` | optional | `futures` | `futures` \| `spot` |
+| `DEFAULT_MARGIN_MODE` | optional | `isolated` | `isolated` \| `cross` |
+| `DEFAULT_ACTIVE_EXCHANGE` | optional | `mexc` | `mexc` \| `binance` \| `okx` \| `bybit` |
+| `MAX_LEVERAGE` | recommended | `3` | Clamped to `MAX_ALLOWED_LEVERAGE` |
+| `MAX_ALLOWED_LEVERAGE` | recommended | `5` | Hard-clamped to system cap (5x) |
+| `MAX_RISK_PER_TRADE_PERCENT` | optional | `1` | |
+| `MAX_DAILY_LOSS_PERCENT` | optional | `5` | |
+| `MAX_WEEKLY_LOSS_PERCENT` | optional | `10` | |
+| `DAILY_PROFIT_TARGET_USD` | optional | `20` | |
+| `MAX_DAILY_PROFIT_TARGET_USD` | optional | `50` | Upper bound |
+| `MAX_OPEN_POSITIONS` | optional | `2` | |
+| `MIN_RISK_REWARD_RATIO` | optional | `2` | |
+
+> **After changing environment variables in Vercel, redeploy the project.** Mevcut deployment yeni env değerlerini otomatik almaz — Deployments → `...` → Redeploy.
+
+Runtime kontrolü: `GET /api/system/env-check` eksik/boş değişkenleri ve effective config'i döner. Dashboard'da "System Config Status" kartı bu sonucu görsel olarak gösterir.
 
 ---
 

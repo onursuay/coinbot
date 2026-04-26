@@ -1,25 +1,67 @@
 import { ok, fail } from "@/lib/api-helpers";
-import { getBotState, setBotStatus } from "@/lib/engines/bot-orchestrator";
 import { getCurrentUserId } from "@/lib/auth";
-import { supabaseConfigured } from "@/lib/supabase/server";
+import { supabaseAdmin, supabaseConfigured } from "@/lib/supabase/server";
+import { botLog } from "@/lib/logger";
+import { env, SYSTEM_HARD_LEVERAGE_CAP } from "@/lib/env";
+import { checkEnv } from "@/lib/env-validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST() {
+  const envCheck = checkEnv();
   if (!supabaseConfigured()) {
-    return fail("Supabase yapılandırılmamış — env değişkenlerini kontrol et", 500);
-  }
-  try {
-    const userId = getCurrentUserId();
-    await setBotStatus(userId, "running", "manual_start");
-    const state = await getBotState(userId);
-    return ok({
-      status: state?.bot_status ?? "running",
-      hasSettingsRow: Boolean(state),
-      settings: state,
+    return fail("Supabase env missing. Configure Vercel environment variables first.", 500, {
+      missing: envCheck.missing,
+      empty: envCheck.empty,
     });
-  } catch (e: any) {
-    return fail(e?.message ?? "Bot başlatılamadı", 500);
   }
+
+  const userId = getCurrentUserId();
+  const sb = supabaseAdmin();
+
+  // Comprehensive defaults — written on every Start so the row is always sane.
+  // bot_status stays lowercase to match orchestrator/type system; UI uppercases for display.
+  const maxAllowed = Math.min(env.maxAllowedLeverage, SYSTEM_HARD_LEVERAGE_CAP);
+  const maxLev = Math.min(env.maxLeverage, maxAllowed);
+
+  const payload = {
+    user_id: userId,
+    bot_status: "running",
+    trading_mode: "paper",
+    market_type: "futures",
+    margin_mode: "isolated",
+    active_exchange: env.defaultActiveExchange || "mexc",
+    kill_switch_active: false,
+    max_leverage: maxLev,
+    max_allowed_leverage: maxAllowed,
+    risk_per_trade_percent: env.maxRiskPerTradePercent,
+    max_daily_loss_percent: env.maxDailyLossPercent,
+    max_weekly_loss_percent: env.maxWeeklyLossPercent,
+    daily_profit_target_usd: env.dailyProfitTargetUsd,
+    max_open_positions: env.maxOpenPositions,
+    min_risk_reward_ratio: env.minRiskRewardRatio,
+  };
+
+  const { data, error } = await sb
+    .from("bot_settings")
+    .upsert(payload, { onConflict: "user_id" })
+    .select()
+    .single();
+
+  if (error) {
+    return fail(`bot_settings upsert hatası: ${error.message}`, 500);
+  }
+
+  await botLog({
+    userId,
+    eventType: "bot_running",
+    message: "Bot status -> running: manual_start",
+  });
+
+  return ok({
+    status: (data?.bot_status ?? "running").toString().toUpperCase(),
+    hasSettingsRow: Boolean(data),
+    settings: data,
+  });
 }
