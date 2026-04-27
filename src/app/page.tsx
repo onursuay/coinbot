@@ -342,6 +342,9 @@ export default function HomePage() {
       {/* ===== Scanner Visibility ===== */}
       <ScannerVisibilityCard diagnostics={diagnostics} open={scannerOpen} onToggle={() => setScannerOpen((v) => !v)} />
 
+      {/* ===== Dinamik Evren Özeti ===== */}
+      <DynamicUniverseCard diagnostics={diagnostics} />
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Kpi label="Günlük Kâr/Zarar" value={fmtUsd(daily?.realizedPnlUsd ?? 0)} accent={(daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
         <Kpi label="Günlük Hedef" value={fmtUsd(daily?.dailyTargetUsd ?? 20)} sub={daily?.targetHit ? "Hedef tamam!" : `Kalan ${fmtUsd(distance)}`} />
@@ -714,6 +717,46 @@ function PaperE2ECard({ e2e }: { e2e: any }) {
         <p className="text-xs text-muted mt-1">
           Kontrol: {new Date(e2e.lastCheckedAt).toLocaleTimeString("tr-TR")}
         </p>
+      )}
+    </div>
+  );
+}
+
+function DynamicUniverseCard({ diagnostics }: { diagnostics: any }) {
+  const stats = diagnostics?.tick_stats;
+  if (!stats) return null;
+
+  const opportunity = stats.dynamicOpportunityCandidates ?? 0;
+  const pool = stats.dynamicCandidates ?? 0;
+  const eliminated = stats.dynamicEliminatedLowSignal ?? 0;
+  const lowVol = stats.dynamicRejectedLowVolume ?? 0;
+  const weakMom = stats.dynamicRejectedWeakMomentum ?? 0;
+  const pumpDump = stats.dynamicRejectedPumpDump ?? 0;
+  const stable = stats.dynamicRejectedStablecoin ?? 0;
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold">Dinamik Evren Özeti</h2>
+        <Link href="/scanner" className="text-xs text-accent">Detay →</Link>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+        <Stat label="Core (sabit)" value="10" />
+        <Stat label="Dinamik Fırsat Adayı" value={String(opportunity)} accent={opportunity > 0 ? "accent" : undefined} />
+        <Stat label="Aday Havuzu" value={String(pool)} />
+        <Stat label="Elenen Sinyal Yok" value={String(eliminated)} />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm mt-2">
+        <Stat label="Düşük Hacim" value={String(lowVol)} />
+        <Stat label="Zayıf Momentum" value={String(weakMom)} />
+        <Stat label="Pump/Dump" value={String(pumpDump)} />
+        <Stat label="Stablecoin/Sentetik" value={String(stable)} />
+      </div>
+      {opportunity === 0 && pool === 0 && (
+        <p className="text-xs text-muted mt-2">Worker henüz tarama yapmadı. Bot başlatıldığında veriler gelir.</p>
+      )}
+      {opportunity === 0 && pool > 0 && (
+        <p className="text-xs text-muted mt-2">Aday havuzu dolu ama sinyal potansiyeli olan dynamic coin yok — tarayıcı sadece 10 core gösteriyor.</p>
       )}
     </div>
   );

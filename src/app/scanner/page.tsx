@@ -164,12 +164,12 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* Dynamic universe stats — always shown when stats exist; 0 opportunity candidates is valid */}
+      {/* Dynamic universe — short summary only. Full breakdown lives on the main Panel. */}
       {stats && (
-        <div className="card py-2 text-xs space-y-2">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-center">
+        <div className="card py-2 text-xs">
+          <div className="grid grid-cols-3 gap-3 text-center">
             <div>
-              <div className="text-muted">Core (sabit)</div>
+              <div className="text-muted">Core</div>
               <div className="font-semibold tabular-nums">10</div>
             </div>
             <div>
@@ -179,51 +179,13 @@ export default function ScannerPage() {
               </div>
             </div>
             <div>
-              <div className="text-muted">Aday Havuzu (ön filtre)</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.dynamicCandidates ?? 0}</div>
-            </div>
-            <div>
-              <div className="text-muted">Elenen Sinyal Yok</div>
+              <div className="text-muted">Elenen</div>
               <div className="font-semibold tabular-nums text-muted">{stats.dynamicEliminatedLowSignal ?? 0}</div>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-center border-t border-border pt-2">
-            <div>
-              <div className="text-muted">Yetersiz Likidite</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedInsufficientDepth ?? 0}</div>
-            </div>
-            <div>
-              <div className="text-muted">Veri Yok</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedNoData ?? 0}</div>
-            </div>
-            <div>
-              <div className="text-muted">Düşük Hacim</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedLowVolume ?? 0}</div>
-            </div>
-            <div>
-              <div className="text-muted">Yüksek Spread</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedHighSpread ?? 0}</div>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 text-center border-t border-border pt-2">
-            <div>
-              <div className="text-muted">Zayıf Momentum</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedWeakMomentum ?? 0}</div>
-            </div>
-            <div>
-              <div className="text-muted">Pump/Dump</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedPumpDump ?? 0}</div>
-            </div>
-            <div>
-              <div className="text-muted">Stablecoin/Sentetik</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedStablecoin ?? 0}</div>
-            </div>
-          </div>
-          {(stats.dynamicOpportunityCandidates ?? 0) === 0 && (
-            <p className="text-center text-muted pt-1">
-              Kaliteli dinamik fırsat adayı yok — tarayıcı yalnızca 10 core coin gösteriyor. Bu beklenen davranıştır.
-            </p>
-          )}
+          <p className="text-center text-muted pt-2">
+            Detaylı dinamik evren kırılımı için <Link href="/" className="text-accent">Panel</Link>&apos;e bakın.
+          </p>
         </div>
       )}
 
