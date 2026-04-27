@@ -29,7 +29,7 @@ export async function calculateStrategyHealth(userId: string): Promise<StrategyH
   const sb = supabaseAdmin();
   const { data: trades } = await sb
     .from("paper_trades")
-    .select("pnl_usd, close_reason, risk_reward_ratio, entry_price, stop_loss, take_profit, direction, closed_at")
+    .select("pnl, exit_reason, risk_reward_ratio, entry_price, stop_loss, take_profit, direction, closed_at")
     .eq("user_id", userId)
     .not("closed_at", "is", null)
     .order("closed_at", { ascending: true })
@@ -42,7 +42,7 @@ export async function calculateStrategyHealth(userId: string): Promise<StrategyH
   let consecutiveLosses = 0, currentStreak = 0;
 
   for (const t of trades) {
-    const pnl = Number(t.pnl_usd ?? 0);
+    const pnl = Number(t.pnl ?? 0);
     if (pnl >= 0) {
       wins++;
       grossProfit += pnl;
@@ -57,7 +57,7 @@ export async function calculateStrategyHealth(userId: string): Promise<StrategyH
     runningLoss = pnl < 0 ? runningLoss + Math.abs(pnl) : 0;
     if (runningLoss > maxDrawdown) maxDrawdown = runningLoss;
 
-    const reason = (t.close_reason ?? "").toLowerCase();
+    const reason = (t.exit_reason ?? "").toLowerCase();
     if (reason.includes("stop") || reason.includes("sl")) slHits++;
     if (reason.includes("take") || reason.includes("tp")) tpHits++;
 

@@ -23,6 +23,12 @@ export interface OpenPaperTradeInput {
   estimatedLiquidationPrice?: number | null;
   signalScore?: number;
   entryReason?: string;
+  tier?: string;
+  spreadPercent?: number;
+  atrPercent?: number;
+  fundingRate?: number;
+  signalConfidence?: number;
+  riskPercent?: number;
 }
 
 const FEE_RATE = 0.0004;       // 4 bps per side (taker)
@@ -53,6 +59,13 @@ export async function openPaperTrade(input: OpenPaperTradeInput) {
       estimated_liquidation_price: input.estimatedLiquidationPrice ?? null,
       signal_score: input.signalScore ?? null,
       entry_reason: input.entryReason ?? null,
+      tier: input.tier ?? null,
+      spread_percent: input.spreadPercent ?? null,
+      atr_percent: input.atrPercent ?? null,
+      funding_rate: input.fundingRate ?? null,
+      is_paper: true,
+      signal_confidence: input.signalConfidence ?? null,
+      risk_percent: input.riskPercent ?? null,
       fees_estimated: input.entryPrice * input.positionSize * FEE_RATE,
       slippage_estimated: input.entryPrice * input.positionSize * SLIPPAGE_RATE,
       status: "open",

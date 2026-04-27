@@ -159,7 +159,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     await botLog({ userId, level: "error", eventType: "tick_failed", message: result.reason });
     return result;
   }
-  if (settings.bot_status !== "running") {
+  const isRunning = ["running", "running_paper", "running_live"].includes(settings.bot_status ?? "");
+  if (!isRunning) {
     result.reason = `Bot durumu: ${settings.bot_status}`;
     result.durationMs = Date.now() - start;
     await botLog({ userId, eventType: "tick_skipped", message: result.reason });
@@ -377,6 +378,12 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         riskAmount: risk.riskAmount, riskRewardRatio: risk.riskRewardRatio,
         marginMode: "isolated", estimatedLiquidationPrice: risk.estimatedLiquidationPrice ?? null,
         signalScore: sig.score, entryReason: sig.reasons.join(" • "),
+        tier: tierResult.effectiveTier,
+        spreadPercent: ticker.spread * 100,
+        atrPercent: typeof sig.features.atrPctOfClose === "number" ? sig.features.atrPctOfClose : undefined,
+        fundingRate: funding?.rate ?? undefined,
+        signalConfidence: sig.score,
+        riskPercent: env.maxRiskPerTradePercent,
       });
 
       result.openedPaperTrades.push({

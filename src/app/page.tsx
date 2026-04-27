@@ -60,6 +60,7 @@ export default function HomePage() {
   const [workerHealth, setWorkerHealth] = useState<WorkerHealth | null>(null);
   const [strategyHealth, setStrategyHealth] = useState<StrategyHealth | null>(null);
   const [hardLiveAllowed, setHardLiveAllowed] = useState<boolean>(false);
+  const [liveReadiness, setLiveReadiness] = useState<any>(null);
 
   const addToast = (t: Omit<Toast, "id">) => {
     const id = ++toastId;
@@ -69,7 +70,7 @@ export default function HomePage() {
 
   const refresh = async () => {
     const noCache: RequestInit = { cache: "no-store" };
-    const [a, b, c, d, e, f, g] = await Promise.all([
+    const [a, b, c, d, e, f, g, h] = await Promise.all([
       fetch("/api/bot/status", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/performance", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/signals?limit=10", noCache).then((r) => r.json()).catch(() => null),
@@ -77,6 +78,7 @@ export default function HomePage() {
       fetch("/api/system/env-check", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/heartbeat", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/strategy-health", noCache).then((r) => r.json()).catch(() => null),
+      fetch("/api/bot/live-readiness", noCache).then((r) => r.json()).catch(() => null),
     ]);
     if (a?.ok) {
       setStatus(a.data);
@@ -88,6 +90,7 @@ export default function HomePage() {
     if (e?.ok) setEnvCheck(e.data);
     if (f?.ok) setWorkerHealth(f.data);
     if (g?.ok) setStrategyHealth(g.data);
+    if (h?.ok) setLiveReadiness(h.data);
   };
 
   useEffect(() => {
@@ -368,10 +371,49 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* ===== Live Readiness ===== */}
+      {liveReadiness && (
+        <div className={`card border ${liveReadiness.ready ? "border-success/40" : "border-warning/30"}`}>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">Live Readiness</h2>
+            <span className={`text-xs font-semibold px-2 py-1 rounded-full ${liveReadiness.ready ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
+              {liveReadiness.ready ? "HAZIR" : "HENÜZ HAZIR DEĞİL"}
+            </span>
+          </div>
+          {/* Progress bar for paper trade count */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between text-xs text-muted mb-1">
+              <span>Paper Trades</span>
+              <span>{liveReadiness.paperTradesCompleted} / {liveReadiness.paperTradesRequired}</span>
+            </div>
+            <div className="w-full bg-bg-soft rounded-full h-2">
+              <div
+                className={`h-2 rounded-full transition-all ${liveReadiness.paperTradesCompleted >= liveReadiness.paperTradesRequired ? "bg-success" : "bg-accent"}`}
+                style={{ width: `${Math.min(100, (liveReadiness.paperTradesCompleted / liveReadiness.paperTradesRequired) * 100)}%` }}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+            {liveReadiness.checks?.map((c: any) => (
+              <div key={c.name} className={`bg-bg-soft border rounded-lg px-3 py-2 ${c.passed ? "border-success/30" : "border-danger/30"}`}>
+                <div className="text-xs text-muted">{c.name}</div>
+                <div className={`text-sm font-semibold ${c.passed ? "text-success" : "text-danger"}`}>{c.value}</div>
+                <div className="text-xs text-muted">gereken: {c.required}</div>
+              </div>
+            ))}
+          </div>
+          {liveReadiness.blockers?.length > 0 && (
+            <div className="mt-2 text-xs text-warning">
+              Engeller: {liveReadiness.blockers.join(" • ")}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* System Config Status */}
       <SystemConfigCard envCheck={envCheck} status={status} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <section className="card">
           <h2 className="font-semibold mb-3">Son Sinyaller</h2>
           <table className="t">
@@ -402,7 +444,7 @@ export default function HomePage() {
         </section>
 
         <section className="card">
-          <h2 className="font-semibold mb-3">Açık Paper Pozisyonlar</h2>
+          <h2 className="font-semibold mb-3">Açık Pozisyonlar ({paper.open.length})</h2>
           <table className="t">
             <thead><tr><th>Sym</th><th>Yön</th><th>Lev</th><th>Entry</th><th>SL</th><th>TP</th></tr></thead>
             <tbody>
@@ -422,6 +464,22 @@ export default function HomePage() {
             </tbody>
           </table>
           <Link href="/paper-trades" className="text-accent text-sm mt-2 inline-block">Tüm işlemler →</Link>
+        </section>
+
+        <section className="card">
+          <h2 className="font-semibold mb-3">Son Reddedilen Sinyaller</h2>
+          {lastTick?.rejectedSignals && lastTick.rejectedSignals.length > 0 ? (
+            <div className="space-y-1">
+              {lastTick.rejectedSignals.slice(0, 8).map((s, i) => (
+                <div key={i} className="text-xs text-muted flex items-center gap-2">
+                  <span className="font-medium text-slate-300">{s.symbol}</span>
+                  <span className="truncate">{s.reason}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted">Reddedilen sinyal yok</p>
+          )}
         </section>
       </div>
 
