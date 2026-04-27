@@ -33,8 +33,7 @@ export async function POST(req: Request) {
     return fail(`Şifreleme hatası: ${e?.message ?? "CREDENTIAL_ENCRYPTION_KEY eksik"}`, 500);
   }
 
-  // Deactivate all others, then activate the new one.
-  await supabaseAdmin().from("exchange_credentials").update({ is_active: false });
+  await supabaseAdmin().from("exchange_credentials").update({ is_active: false }).neq("exchange_name", "");
 
   const row = {
     user_id: userId,
@@ -54,9 +53,8 @@ export async function POST(req: Request) {
     .single();
   if (error) return fail(error.message, 500);
 
-  // Sync bot_settings active exchange.
   await supabaseAdmin().from("bot_settings")
-    .update({ active_exchange: parsed.exchange });
+    .update({ active_exchange: parsed.exchange }).neq("id", "00000000-0000-0000-0000-000000000000");
 
   return ok(data);
 }
