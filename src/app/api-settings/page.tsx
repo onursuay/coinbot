@@ -8,6 +8,7 @@ export default function ApiSettings() {
   const [connected, setConnected] = useState<any[]>([]);
   const [form, setForm] = useState({ exchange: "mexc", apiKey: "", apiSecret: "", apiPassphrase: "" });
   const [busy, setBusy] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const refresh = async () => {
     const [s, c] = await Promise.all([
@@ -21,13 +22,23 @@ export default function ApiSettings() {
 
   const connect = async () => {
     setBusy(true);
+    setConnectError(null);
     try {
-      const res = await fetch("/api/exchanges/connect", {
+      const r = await fetch("/api/exchanges/connect", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(form),
-      }).then((r) => r.json());
-      if (!res.ok) alert(res.error);
-      else { setForm({ exchange: form.exchange, apiKey: "", apiSecret: "", apiPassphrase: "" }); await refresh(); }
-    } finally { setBusy(false); }
+      });
+      const res = await r.json().catch(() => ({ ok: false, error: `Sunucu hatası (HTTP ${r.status})` }));
+      if (!res.ok) {
+        setConnectError(res.error ?? "Bilinmeyen hata");
+      } else {
+        setForm({ exchange: form.exchange, apiKey: "", apiSecret: "", apiPassphrase: "" });
+        await refresh();
+      }
+    } catch (e: any) {
+      setConnectError(e?.message ?? "Bağlantı hatası");
+    } finally {
+      setBusy(false);
+    }
   };
   const validate = async (exchange: string) => {
     const res = await fetch("/api/exchanges/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ exchange }) }).then((r) => r.json());
@@ -80,8 +91,11 @@ export default function ApiSettings() {
             <input className="input" type="password" autoComplete="off" value={form.apiPassphrase} onChange={(e) => setForm({ ...form, apiPassphrase: e.target.value })} />
           </div>
         )}
-        <div>
-          <button className="btn-primary" onClick={connect} disabled={busy || !form.apiKey || !form.apiSecret}>Bağlan</button>
+        <div className="flex items-center gap-3">
+          <button className="btn-primary" onClick={connect} disabled={busy || !form.apiKey || !form.apiSecret}>
+            {busy ? "Bağlanıyor..." : "Bağlan"}
+          </button>
+          {connectError && <span className="text-sm text-danger">{connectError}</span>}
         </div>
       </section>
 

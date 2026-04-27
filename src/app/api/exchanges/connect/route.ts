@@ -22,12 +22,23 @@ export async function POST(req: Request) {
   if (!SUPPORTED_EXCHANGES.includes(parsed.exchange)) return fail("Borsa desteklenmiyor", 400);
   const userId = getCurrentUserId();
 
+  let api_key_encrypted: string;
+  let api_secret_encrypted: string;
+  let api_passphrase_encrypted: string | null;
+  try {
+    api_key_encrypted = encryptSecret(parsed.apiKey);
+    api_secret_encrypted = encryptSecret(parsed.apiSecret);
+    api_passphrase_encrypted = parsed.apiPassphrase ? encryptSecret(parsed.apiPassphrase) : null;
+  } catch (e: any) {
+    return fail(`Şifreleme hatası: ${e?.message ?? "CREDENTIAL_ENCRYPTION_KEY eksik"}`, 500);
+  }
+
   const row = {
     user_id: userId,
     exchange_name: parsed.exchange,
-    api_key_encrypted: encryptSecret(parsed.apiKey),
-    api_secret_encrypted: encryptSecret(parsed.apiSecret),
-    api_passphrase_encrypted: parsed.apiPassphrase ? encryptSecret(parsed.apiPassphrase) : null,
+    api_key_encrypted,
+    api_secret_encrypted,
+    api_passphrase_encrypted,
     permissions: {},
     is_active: false,
     last_validated_at: null,
