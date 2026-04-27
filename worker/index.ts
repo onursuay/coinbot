@@ -76,7 +76,35 @@ async function tickLoop() {
       }
       const userId = getCurrentUserId();
       const result = await tickBot(userId);
-      console.log(`[tick] ok=${result.ok} scanned=${result.scannedSymbols.length} signals=${result.generatedSignals.length} opened=${result.openedPaperTrades.length} duration=${result.durationMs}ms`);
+
+      // Structured tick log
+      const ts = new Date().toISOString();
+      const statusIcon = result.ok ? "✅" : "⏭ ";
+      const modeTag = mode.mode === "live" ? "[LIVE]" : "[paper]";
+      console.log(
+        `${ts} ${statusIcon} ${modeTag} tick | ` +
+        `universe=${result.totalUniverseSymbols ?? "?"} ` +
+        `prefilter=${result.prefilteredSymbols ?? "?"} ` +
+        `scanned=${result.scannedSymbols.length} ` +
+        `signals=${result.generatedSignals.length} ` +
+        `rejected=${result.rejectedSignals.length} ` +
+        `opened=${result.openedPaperTrades.length} ` +
+        `errors=${result.errors.length} ` +
+        `| ${result.durationMs}ms` +
+        (result.reason ? ` | skip: ${result.reason}` : "")
+      );
+      if (result.openedPaperTrades.length > 0) {
+        for (const t of result.openedPaperTrades) {
+          console.log(`  → OPENED: ${t.direction} ${t.symbol} @ ${t.entryPrice}`);
+        }
+      }
+      if (result.rejectedSignals.length > 0) {
+        const top = result.rejectedSignals.slice(0, 5).map((r) => `${r.symbol}(${r.reason})`).join(", ");
+        console.log(`  ↳ rejected: ${top}${result.rejectedSignals.length > 5 ? ` +${result.rejectedSignals.length - 5} more` : ""}`);
+      }
+      if (result.errors.length > 0) {
+        console.error(`  ⚠ errors: ${result.errors.map((e) => `${e.symbol}:${e.error}`).join(", ")}`);
+      }
     } catch (e: any) {
       console.error("[tick] failed:", e?.message ?? e);
       await recordHeartbeat({

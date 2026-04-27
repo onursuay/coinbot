@@ -14,6 +14,20 @@ import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
 
+export interface ScanDetail {
+  symbol: string;
+  tier: string;
+  spreadPercent: number;
+  atrPercent: number;
+  fundingRate: number;
+  signalType: string;
+  signalScore: number;
+  rejectReason: string | null;
+  riskAllowed: boolean | null;
+  riskRejectReason: string | null;
+  opened: boolean;
+}
+
 export interface TickResult {
   ok: boolean;
   reason?: string;
@@ -22,6 +36,7 @@ export interface TickResult {
   openedPaperTrades: { symbol: string; direction: string; entryPrice: number }[];
   rejectedSignals: { symbol: string; reason: string }[];
   errors: { symbol: string; error: string }[];
+  scanDetails: ScanDetail[];
   durationMs: number;
   totalUniverseSymbols?: number;
   prefilteredSymbols?: number;
@@ -147,6 +162,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     openedPaperTrades: [],
     rejectedSignals: [],
     errors: [],
+    scanDetails: [],
     durationMs: 0,
   };
 
@@ -255,6 +271,20 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbols.length} sembol taranıyor (${tf}) universe=${universeTotal} prefiltered=${universePrefiltered}` });
 
   for (const symbol of symbols) {
+    const detail: ScanDetail = {
+      symbol,
+      tier: classifyTier(symbol),
+      spreadPercent: 0,
+      atrPercent: 0,
+      fundingRate: 0,
+      signalType: "UNKNOWN",
+      signalScore: 0,
+      rejectReason: null,
+      riskAllowed: null,
+      riskRejectReason: null,
+      opened: false,
+    };
+
     try {
       const preTicker = tickerMap[symbol];
       const [klines, ticker, info, funding] = await Promise.all([
@@ -264,7 +294,13 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         adapter.getFundingRate(symbol),
       ]);
 
+      detail.spreadPercent = ticker.spread * 100;
+      detail.fundingRate = funding?.rate ?? 0;
+
       const sig = generateSignal({ symbol, timeframe: tf, klines, ticker, funding, btcKlines });
+      detail.signalType = sig.signalType;
+      detail.signalScore = sig.score;
+      detail.atrPercent = typeof sig.features.atrPctOfClose === "number" ? sig.features.atrPctOfClose : 0;
 
       // Persist signal for audit
       await sb.from("signals").insert({
@@ -278,12 +314,14 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
       if (sig.signalType !== "LONG" && sig.signalType !== "SHORT") {
         const rejReason = sig.rejectedReason ?? sig.reasons[0] ?? sig.signalType;
+        detail.rejectReason = rejReason;
         result.rejectedSignals.push({ symbol, reason: rejReason });
         await botLog({
           userId, exchange, eventType: "signal_rejected",
           message: `${symbol} ${sig.signalType} — ${rejReason}`,
           metadata: { score: sig.score, features: sig.features },
         });
+        result.scanDetails.push(detail);
         continue;
       }
 
@@ -294,7 +332,11 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         metadata: { score: sig.score, entryPrice: sig.entryPrice },
       });
 
-      if (!sig.entryPrice || !sig.stopLoss || !sig.takeProfit) continue;
+      if (!sig.entryPrice || !sig.stopLoss || !sig.takeProfit) {
+        detail.rejectReason = "entry/SL/TP eksik";
+        result.scanDetails.push(detail);
+        continue;
+      }
 
       // ── WHITELIST + TIER GATE ── (auto-trade only allowed for whitelisted symbols)
       const allowedSymbols: string[] = Array.isArray(settings.allowed_symbols) && settings.allowed_symbols.length > 0
@@ -304,34 +346,42 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       const inDbWhitelist = allowedSymbols.length === 0 || allowedSymbols.includes(symbolNorm) || allowedSymbols.includes(symbol);
       const inTierWhitelist = isAutoTradeAllowed(symbol);
       if (!inTierWhitelist || !inDbWhitelist) {
-        result.rejectedSignals.push({ symbol, reason: "Whitelist dışı (tier/db)" });
+        const wlReason = "Whitelist dışı (tier/db)";
+        detail.rejectReason = wlReason;
+        result.rejectedSignals.push({ symbol, reason: wlReason });
         await botLog({
           userId, exchange, eventType: "whitelist_blocked",
           message: `${symbol} otomatik işlem whitelist dışı`,
           metadata: { tier: classifyTier(symbol), dbWhitelist: allowedSymbols.length },
         });
+        result.scanDetails.push(detail);
         continue;
       }
 
       // ── DYNAMIC TIER DOWNGRADE ── (live market conditions can demote/reject)
       const tierResult = applyDynamicDowngrade(symbol, {
         spreadPercent: ticker.spread * 100,
-        atrPercent: typeof sig.features.atrPctOfClose === "number" ? sig.features.atrPctOfClose : 0,
+        atrPercent: detail.atrPercent,
         fundingRatePercent: Math.abs((funding?.rate ?? 0) * 100),
-        orderbookDepthUsdt: 0, // not yet computed at this layer; risk-engine handles
+        orderbookDepthUsdt: 0,
         volume24hUsdt: ticker.quoteVolume24h,
-        btcDirectionAligned: undefined, // signal-engine already incorporates BTC trend
+        btcDirectionAligned: undefined,
       });
+      detail.tier = tierResult.effectiveTier;
+
       if (tierResult.rejected) {
-        result.rejectedSignals.push({ symbol, reason: `Tier reject: ${tierResult.reasons.join(", ")}` });
+        const tierReason = `Tier reject: ${tierResult.reasons.join(", ")}`;
+        detail.rejectReason = tierReason;
+        result.rejectedSignals.push({ symbol, reason: tierReason });
         await botLog({
           userId, exchange, eventType: "tier_blocked",
           message: `${symbol} tier reddetti: ${tierResult.reasons.join(", ")}`,
           metadata: { tier: tierResult.originalTier, effective: tierResult.effectiveTier },
         });
+        result.scanDetails.push(detail);
         continue;
       }
-      // Use tier-policy max leverage as upper cap for risk engine
+
       const tierLeverageCap = Math.min(tierResult.policy.maxLeverage, settings.max_leverage ?? 3);
 
       const liq = await adapter.getEstimatedLiquidationPrice({
@@ -361,13 +411,19 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         marginMode: "isolated",
       });
 
+      detail.riskAllowed = risk.allowed;
+      detail.riskRejectReason = risk.allowed ? null : (risk.reason ?? null);
+
       if (!risk.allowed) {
-        result.rejectedSignals.push({ symbol, reason: `Risk: ${risk.reason}` });
+        const riskReason = `Risk: ${risk.reason}`;
+        detail.rejectReason = riskReason;
+        result.rejectedSignals.push({ symbol, reason: riskReason });
         await botLog({
           userId, exchange, eventType: "risk_blocked",
           message: `${symbol} ${sig.signalType} risk engine reddetti: ${risk.reason}`,
           metadata: { violations: risk.ruleViolations },
         });
+        result.scanDetails.push(detail);
         continue;
       }
 
@@ -380,12 +436,13 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         signalScore: sig.score, entryReason: sig.reasons.join(" • "),
         tier: tierResult.effectiveTier,
         spreadPercent: ticker.spread * 100,
-        atrPercent: typeof sig.features.atrPctOfClose === "number" ? sig.features.atrPctOfClose : undefined,
+        atrPercent: detail.atrPercent,
         fundingRate: funding?.rate ?? undefined,
         signalConfidence: sig.score,
         riskPercent: env.maxRiskPerTradePercent,
       });
 
+      detail.opened = true;
       result.openedPaperTrades.push({
         symbol, direction: sig.signalType, entryPrice: sig.entryPrice,
       });
@@ -394,11 +451,14 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         message: `${sig.signalType} ${symbol} @ ${sig.entryPrice} lev=${risk.leverage}x skor=${sig.score}`,
         metadata: { tradeId: trade?.id },
       });
+      result.scanDetails.push(detail);
       openCount++;
       if (openCount >= settings.max_open_positions) break;
     } catch (e: any) {
       const msg = e?.message ?? String(e);
+      detail.rejectReason = `Hata: ${msg}`;
       result.errors.push({ symbol, error: msg });
+      result.scanDetails.push(detail);
       await botLog({ userId, exchange, level: "error", eventType: "tick_error", message: `${symbol}: ${msg}` });
     }
   }
@@ -406,6 +466,26 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   result.ok = true;
   result.deeplyAnalyzedSymbols = symbols.length;
   result.durationMs = Date.now() - start;
+
+  // Persist last tick summary for diagnostics endpoint
+  const lastTickSummary = {
+    at: new Date().toISOString(),
+    universe: universeTotal,
+    prefiltered: universePrefiltered,
+    scanned: symbols.length,
+    signals: result.generatedSignals.length,
+    opened: result.openedPaperTrades.length,
+    rejected: result.rejectedSignals.length,
+    errors: result.errors.length,
+    durationMs: result.durationMs,
+    scanDetails: result.scanDetails.slice(0, 50), // cap at 50 to limit JSONB size
+    lastOpenedTrade: result.openedPaperTrades[0] ?? null,
+    topRejectReasons: result.rejectedSignals.slice(0, 10).map((r) => `${r.symbol}: ${r.reason}`),
+  };
+  await sb.from("bot_settings").update({
+    last_tick_at: lastTickSummary.at,
+    last_tick_summary: lastTickSummary,
+  }).limit(1);
 
   await botLog({
     userId, exchange, eventType: "tick_completed",

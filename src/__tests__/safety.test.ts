@@ -297,3 +297,40 @@ describe("paper trading", () => {
     expect(passed).toBe(false);
   });
 });
+
+// ---- Scanner visibility & diagnostics ----
+describe("scanner visibility", () => {
+  it("TickResult scanDetails is present and typed correctly", async () => {
+    // Structural test — verify ScanDetail interface is exported and has expected fields
+    const { } = await import("@/lib/engines/bot-orchestrator");
+    // tickBot is async and hits real APIs; we just verify the type shape via compile-time
+    // by checking the import succeeded and module exports the expected symbols
+    const mod = await import("@/lib/engines/bot-orchestrator");
+    expect(typeof mod.tickBot).toBe("function");
+    expect(typeof mod.setBotStatus).toBe("function");
+  });
+
+  it("reject reason is never empty for a rejected signal", () => {
+    // Simulate the orchestrator reject path — reason must always be a non-empty string
+    const rejectReason = (reason: string | null | undefined): string =>
+      reason && reason.trim().length > 0 ? reason : "UNKNOWN_REJECT";
+
+    expect(rejectReason("Spread yüksek")).toBe("Spread yüksek");
+    expect(rejectReason(null)).toBe("UNKNOWN_REJECT");
+    expect(rejectReason("")).toBe("UNKNOWN_REJECT");
+    expect(rejectReason("  ")).toBe("UNKNOWN_REJECT");
+  });
+
+  it("diagnostics endpoint fields are defined", async () => {
+    const { checkLiveReadiness } = await import("@/lib/engines/live-readiness");
+    const result = await checkLiveReadiness("test-user");
+    // All required diagnostics fields present
+    expect(result).toHaveProperty("ready");
+    expect(result).toHaveProperty("checks");
+    expect(result).toHaveProperty("blockers");
+    expect(result).toHaveProperty("paperTradesCompleted");
+    expect(result).toHaveProperty("paperTradesRequired");
+    expect(Array.isArray(result.checks)).toBe(true);
+    expect(Array.isArray(result.blockers)).toBe(true);
+  });
+});

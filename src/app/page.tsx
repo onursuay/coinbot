@@ -61,6 +61,8 @@ export default function HomePage() {
   const [strategyHealth, setStrategyHealth] = useState<StrategyHealth | null>(null);
   const [hardLiveAllowed, setHardLiveAllowed] = useState<boolean>(false);
   const [liveReadiness, setLiveReadiness] = useState<any>(null);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   const addToast = (t: Omit<Toast, "id">) => {
     const id = ++toastId;
@@ -70,7 +72,7 @@ export default function HomePage() {
 
   const refresh = async () => {
     const noCache: RequestInit = { cache: "no-store" };
-    const [a, b, c, d, e, f, g, h] = await Promise.all([
+    const [a, b, c, d, e, f, g, h, i] = await Promise.all([
       fetch("/api/bot/status", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/performance", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/signals?limit=10", noCache).then((r) => r.json()).catch(() => null),
@@ -79,6 +81,7 @@ export default function HomePage() {
       fetch("/api/bot/heartbeat", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/strategy-health", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/live-readiness", noCache).then((r) => r.json()).catch(() => null),
+      fetch("/api/bot/diagnostics", noCache).then((r) => r.json()).catch(() => null),
     ]);
     if (a?.ok) {
       setStatus(a.data);
@@ -91,6 +94,7 @@ export default function HomePage() {
     if (f?.ok) setWorkerHealth(f.data);
     if (g?.ok) setStrategyHealth(g.data);
     if (h?.ok) setLiveReadiness(h.data);
+    if (i?.ok) setDiagnostics(i.data);
   };
 
   useEffect(() => {
@@ -333,6 +337,9 @@ export default function HomePage() {
           )}
         </div>
       )}
+
+      {/* ===== Scanner Visibility ===== */}
+      <ScannerVisibilityCard diagnostics={diagnostics} open={scannerOpen} onToggle={() => setScannerOpen((v) => !v)} />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Kpi label="Daily PnL" value={fmtUsd(daily?.realizedPnlUsd ?? 0)} accent={(daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
@@ -605,6 +612,108 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
     <div className="bg-bg-soft border border-border rounded-lg px-3 py-2 text-center">
       <div className="label">{label}</div>
       <div className={`text-lg font-semibold ${cls}`}>{value}</div>
+    </div>
+  );
+}
+
+function ScannerVisibilityCard({ diagnostics, open, onToggle }: { diagnostics: any; open: boolean; onToggle: () => void }) {
+  const details: any[] = diagnostics?.scan_details ?? [];
+  const stats = diagnostics?.tick_stats;
+  const lastTickAt = diagnostics?.last_tick_at;
+  const ageLabel = lastTickAt
+    ? `${Math.round((Date.now() - new Date(lastTickAt).getTime()) / 1000)}s önce`
+    : "—";
+
+  return (
+    <div className="card">
+      <button
+        className="w-full text-left flex items-center justify-between"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-3">
+          <span className="font-semibold">Scanner Görünürlüğü</span>
+          {stats && (
+            <span className="text-xs text-muted">
+              {stats.scanned} tarandı · {stats.signals} sinyal · {stats.opened} açıldı · {stats.rejected} reddedildi · {stats.durationMs}ms
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <span>Son tick: {ageLabel}</span>
+          <span>{open ? "▾" : "▸"}</span>
+        </div>
+      </button>
+
+      {open && (
+        <div className="mt-3">
+          {details.length === 0 ? (
+            <p className="text-sm text-muted py-2">Henüz tarama verisi yok — Tick Çalıştır ile başlatın.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="t w-full text-xs">
+                <thead>
+                  <tr>
+                    <th>Sembol</th>
+                    <th>Tier</th>
+                    <th>Sinyal</th>
+                    <th>Skor</th>
+                    <th>Spread%</th>
+                    <th>ATR%</th>
+                    <th>Funding</th>
+                    <th>Risk</th>
+                    <th>Durum</th>
+                    <th>Red Sebebi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {details.map((d, i) => (
+                    <tr key={i} className={d.opened ? "bg-success/5" : ""}>
+                      <td className="font-medium">{d.symbol}</td>
+                      <td>
+                        <span className={`text-xs ${d.tier === "TIER_1" ? "text-success" : d.tier === "TIER_2" ? "text-accent" : d.tier === "TIER_3" ? "text-warning" : "text-danger"}`}>
+                          {d.tier}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`tag-${d.signalType === "LONG" ? "success" : d.signalType === "SHORT" ? "danger" : "muted"}`}>
+                          {d.signalType}
+                        </span>
+                      </td>
+                      <td>{d.signalScore > 0 ? d.signalScore : "—"}</td>
+                      <td className={d.spreadPercent > 0.1 ? "text-warning" : ""}>{d.spreadPercent > 0 ? d.spreadPercent.toFixed(3) : "—"}</td>
+                      <td className={d.atrPercent > 5 ? "text-warning" : ""}>{d.atrPercent > 0 ? d.atrPercent.toFixed(2) : "—"}</td>
+                      <td className={Math.abs(d.fundingRate) > 0.003 ? "text-warning" : ""}>{d.fundingRate !== 0 ? (d.fundingRate * 100).toFixed(4) + "%" : "—"}</td>
+                      <td>
+                        {d.riskAllowed === null ? <span className="text-muted">—</span>
+                          : d.riskAllowed ? <span className="text-success">✓</span>
+                          : <span className="text-danger">✗</span>}
+                      </td>
+                      <td>
+                        {d.opened
+                          ? <span className="text-success font-semibold">AÇILDI</span>
+                          : <span className="text-muted">—</span>}
+                      </td>
+                      <td className="text-muted max-w-xs truncate" title={d.rejectReason ?? ""}>
+                        {d.rejectReason ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Top reject reasons summary */}
+          {(diagnostics?.last_rejected_signals ?? []).length > 0 && (
+            <div className="mt-3 space-y-1">
+              <div className="text-xs font-medium text-muted mb-1">En sık ret sebepleri:</div>
+              {diagnostics.last_rejected_signals.slice(0, 5).map((r: string, i: number) => (
+                <div key={i} className="text-xs text-muted">• {r}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
