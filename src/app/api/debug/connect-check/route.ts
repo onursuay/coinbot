@@ -29,24 +29,11 @@ export async function GET() {
     checks.exchange_credentials_table = `✗ ${e?.message ?? "bağlanamadı"}`;
   }
 
-  // Test set-active update directly
   try {
-    const { error: e1, count: c1 } = await supabaseAdmin()
-      .from("exchange_credentials")
-      .update({ is_active: false })
-      .neq("exchange_name", "")
-      .select();
-    checks.update_deactivate = e1 ? `✗ ${e1.message}` : `✓ çalıştı`;
-  } catch (e: any) {
-    checks.update_deactivate = `✗ ${e?.message}`;
-  }
-
-  try {
-    const { error } = await supabaseAdmin()
-      .from("exchange_credentials")
-      .select("id")
-      .limit(1);
-    checks.encryption = error ? `✗ ${error.message}` : "✓ çalışıyor";
+    const { encryptSecret, decryptSecret } = await import("@/lib/crypto");
+    const enc = encryptSecret("test-value-12345");
+    const dec = decryptSecret(enc);
+    checks.encryption = dec === "test-value-12345" ? "✓ çalışıyor" : "✗ şifre çözme hatalı";
   } catch (e: any) {
     checks.encryption = `✗ ${e?.message ?? "şifreleme hatası"}`;
   }
