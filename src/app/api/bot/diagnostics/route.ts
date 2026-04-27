@@ -27,6 +27,11 @@ const EMPTY_TICK_STATS = {
   universe: 0, prefiltered: 0, scanned: 0,
   lowVolumeRejected: 0,
   signals: 0, rejected: 0, opened: 0, errors: 0, durationMs: 0,
+  dynamicCandidates: 0,
+  dynamicRejectedLowVolume: 0,
+  dynamicRejectedStablecoin: 0,
+  dynamicRejectedHighSpread: 0,
+  dynamicRejectedPumpDump: 0,
 };
 
 export async function GET() {
@@ -157,6 +162,11 @@ export async function GET() {
         opened: tickSummary.opened ?? 0,
         errors: tickSummary.errors ?? 0,
         durationMs: tickSummary.durationMs ?? 0,
+        dynamicCandidates: tickSummary.dynamicCandidates ?? 0,
+        dynamicRejectedLowVolume: tickSummary.dynamicRejectedLowVolume ?? 0,
+        dynamicRejectedStablecoin: tickSummary.dynamicRejectedStablecoin ?? 0,
+        dynamicRejectedHighSpread: tickSummary.dynamicRejectedHighSpread ?? 0,
+        dynamicRejectedPumpDump: tickSummary.dynamicRejectedPumpDump ?? 0,
       } : EMPTY_TICK_STATS,
       scan_details: tickSummary?.scanDetails ?? [],
       tick_identity: tickSummary ? {

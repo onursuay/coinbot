@@ -115,6 +115,9 @@ export const env = {
     apiKey: str(process.env.LLM_API_KEY, ""),
   },
 
+  // ── Dynamic Universe v2 ──
+  dynamicAnalysisLimit: num(process.env.DYNAMIC_ANALYSIS_LIMIT, 30),
+
   // ── Worker identity (for heartbeat) ──
   workerId: str(process.env.WORKER_ID, "vercel-default"),
 

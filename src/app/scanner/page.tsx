@@ -13,10 +13,16 @@ interface TickStats {
   opened: number;
   errors: number;
   durationMs: number;
+  dynamicCandidates?: number;
+  dynamicRejectedLowVolume?: number;
+  dynamicRejectedStablecoin?: number;
+  dynamicRejectedHighSpread?: number;
+  dynamicRejectedPumpDump?: number;
 }
 
 interface ScanRow {
   symbol: string;
+  coinClass?: "CORE" | "DYNAMIC";
   tier: string;
   spreadPercent: number;
   atrPercent: number;
@@ -152,6 +158,32 @@ export default function ScannerPage() {
         </div>
       )}
 
+      {/* Dynamic universe stats */}
+      {stats && (stats.dynamicCandidates ?? 0) > 0 && (
+        <div className="card grid grid-cols-5 gap-3 text-center py-2 text-xs">
+          <div>
+            <div className="text-muted">Dinamik Aday</div>
+            <div className="font-semibold tabular-nums text-accent">{stats.dynamicCandidates ?? 0}</div>
+          </div>
+          <div>
+            <div className="text-muted">Dyn. Düşük Hac.</div>
+            <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedLowVolume ?? 0}</div>
+          </div>
+          <div>
+            <div className="text-muted">Dyn. Stablecoin</div>
+            <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedStablecoin ?? 0}</div>
+          </div>
+          <div>
+            <div className="text-muted">Dyn. Spread</div>
+            <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedHighSpread ?? 0}</div>
+          </div>
+          <div>
+            <div className="text-muted">Dyn. Pump/Dump</div>
+            <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedPumpDump ?? 0}</div>
+          </div>
+        </div>
+      )}
+
       {/* No data */}
       {!data && !loading && (
         <div className="card text-muted text-sm text-center py-8">
@@ -172,6 +204,7 @@ export default function ScannerPage() {
             <thead>
               <tr>
                 <th>Sembol</th>
+                <th>Sınıf</th>
                 <th>Kademe</th>
                 <th>Spread</th>
                 <th>ATR%</th>
@@ -189,6 +222,11 @@ export default function ScannerPage() {
                     <Link className="text-accent" href={`/coins/${encodeURIComponent(r.symbol)}?exchange=${exchange}`}>
                       {r.symbol}
                     </Link>
+                  </td>
+                  <td>
+                    <span className={`tag-${r.coinClass === "DYNAMIC" ? "accent" : "muted"}`}>
+                      {r.coinClass ?? "CORE"}
+                    </span>
                   </td>
                   <td>
                     <span className={`tag-${r.tier === "TIER_1" ? "success" : r.tier === "TIER_2" ? "accent" : "muted"}`}>

@@ -9,7 +9,8 @@ import { generateSignal } from "./signal-engine";
 import { getAdapter } from "@/lib/exchanges/exchange-factory";
 import { getDailyStatus } from "./daily-target";
 import { getUniverseSlice, type ScanUniverse } from "./symbol-universe";
-import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist } from "@/lib/risk-tiers";
+import { selectDynamicCandidates, type DynamicCandidateResult } from "@/lib/engines/dynamic-universe";
+import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist, getTierPolicy } from "@/lib/risk-tiers";
 import { calculateStrategyHealth } from "./strategy-health";
 import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
@@ -17,6 +18,7 @@ export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
 
 export interface ScanDetail {
   symbol: string;
+  coinClass?: "CORE" | "DYNAMIC";
   tier: string;
   spreadPercent: number;
   atrPercent: number;
@@ -49,6 +51,11 @@ export interface TickResult {
   // Counted but never added to scanDetails — keeps the table clean.
   lowVolumePrefilterRejected?: number;
   nextCursor?: string;
+  dynamicCandidatesCount?: number;
+  dynamicRejectedLowVolume?: number;
+  dynamicRejectedStablecoin?: number;
+  dynamicRejectedHighSpread?: number;
+  dynamicRejectedPumpDump?: number;
 }
 
 const PAPER_BALANCE = 1000;
@@ -226,6 +233,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   const exchange = settings.active_exchange as ExchangeName;
   const adapter = getAdapter(exchange);
   const tf: Timeframe = opts?.timeframe ?? (settings.scanner_timeframe as Timeframe) ?? "5m";
+  const DYNAMIC_ANALYSIS_LIMIT = env.dynamicAnalysisLimit;
+  const coreSet = new Set(tierWhitelist());
 
   if (!supabaseConfigured()) {
     result.reason = "Supabase yapılandırılmamış";
@@ -244,6 +253,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   let universePrefiltered = 0;
   let tickerMap: Record<string, any> = {};
   let nextCursor = "0";
+  let dynamicResult: DynamicCandidateResult | null = null;
 
   if (opts?.symbols && opts.symbols.length > 0) {
     symbols = opts.symbols;
@@ -262,13 +272,25 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         // All whitelist coins (TIER_1+2+3) pinned to every tick — never missed by cursor rotation
         prioritySymbols: tierWhitelist(),
       });
-      symbols = universe.batchSymbols;
       universeTotal = universe.totalSymbols;
       universePrefiltered = universe.preFilteredCount;
       tickerMap = universe.tickerMap;
       nextCursor = universe.nextCursor;
 
-      // Persist cursor for next tick
+      // Dynamic Universe v2: quality-select candidates from full symbol list
+      dynamicResult = selectDynamicCandidates({
+        allSymbols: universe.allSymbols,
+        tickerMap,
+        coreSet,
+        maxCandidates: DYNAMIC_ANALYSIS_LIMIT,
+        minVolume24hUsd: 50_000_000,
+        maxSpreadPct: 0.2,
+        maxPriceChangePct: 25,
+      });
+
+      // Batch = 10 core coins + up to DYNAMIC_ANALYSIS_LIMIT dynamic candidates
+      symbols = [...tierWhitelist(), ...dynamicResult.candidates];
+
       await sb.from("bot_settings").update({ scanner_cursor: nextCursor }).eq("user_id", userId);
     } catch {
       symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
@@ -279,6 +301,11 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   result.totalUniverseSymbols = universeTotal;
   result.prefilteredSymbols = universePrefiltered;
   result.nextCursor = nextCursor;
+  result.dynamicCandidatesCount = dynamicResult?.candidates.length ?? 0;
+  result.dynamicRejectedLowVolume = dynamicResult?.rejectedLowVolume ?? 0;
+  result.dynamicRejectedStablecoin = dynamicResult?.rejectedStablecoin ?? 0;
+  result.dynamicRejectedHighSpread = dynamicResult?.rejectedHighSpread ?? 0;
+  result.dynamicRejectedPumpDump = dynamicResult?.rejectedPumpDump ?? 0;
 
   const daily = await getDailyStatus(userId, PAPER_BALANCE);
   if (daily.targetHit) {
@@ -325,37 +352,30 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   try { btcKlines = await adapter.getKlines("BTC/USDT", tf, 250); } catch { /* non-fatal */ }
 
   // ── Pre-gate: tier whitelist + volume ──
-  // Only TIER_1/2/3 coins (BTC, ETH, SOL, BNB, XRP, LTC, AVAX, LINK, ADA, DOGE)
-  // are eligible for analysis. REJECTED tier coins are skipped before any
-  // expensive klines/orderbook/ticker fetches.
-  // All 10 whitelist coins bypass the volume check — pinned to every tick.
+  // Core coins always pass. Dynamic candidates are already quality-filtered.
+  // Symbols not in either set (e.g. from opts.symbols) run the legacy filter.
   const ANALYSIS_MIN_VOLUME_USDT = 5_000_000;
-  const priorityPinSet = new Set(tierWhitelist());
+  const dynamicCandidateSet = new Set(dynamicResult?.candidates ?? []);
   let lowVolumeSkipped = 0;
   let nonWhitelistSkipped = 0;
   const symbolsToAnalyze = symbols.filter((sym) => {
-    if (priorityPinSet.has(sym)) return true;
-    // Tier whitelist: REJECTED tier (anything outside TIER_1/2/3) → skip silently
-    if (!isAutoTradeAllowed(sym)) {
-      nonWhitelistSkipped++;
-      return false;
-    }
-    // Volume check for TIER_3 coins (priority pins already returned above)
+    if (coreSet.has(sym)) return true;
+    if (dynamicCandidateSet.has(sym)) return true;
+    if (!isAutoTradeAllowed(sym)) { nonWhitelistSkipped++; return false; }
     const vol = tickerMap[sym]?.quoteVolume24h;
-    if (typeof vol !== "number" || vol < ANALYSIS_MIN_VOLUME_USDT) {
-      lowVolumeSkipped++;
-      return false;
-    }
+    if (typeof vol !== "number" || vol < ANALYSIS_MIN_VOLUME_USDT) { lowVolumeSkipped++; return false; }
     return true;
   });
-  result.lowVolumePrefilterRejected = lowVolumeSkipped;
+  result.lowVolumePrefilterRejected = lowVolumeSkipped + (dynamicResult?.rejectedLowVolume ?? 0);
 
-  await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbolsToAnalyze.length} sembol taranıyor (${tf}) universe=${universeTotal} prefiltered=${universePrefiltered} nonWhitelist=${nonWhitelistSkipped} lowVolSkipped=${lowVolumeSkipped}` });
+  await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbolsToAnalyze.length} sembol taranıyor (${tf}) universe=${universeTotal} prefiltered=${universePrefiltered} dynamic=${dynamicResult?.candidates.length ?? 0} nonWhitelist=${nonWhitelistSkipped} lowVolSkipped=${lowVolumeSkipped}` });
 
   for (const symbol of symbolsToAnalyze) {
+    const isDynamic = dynamicCandidateSet.has(symbol);
     const detail: ScanDetail = {
       symbol,
-      tier: classifyTier(symbol),
+      coinClass: isDynamic ? "DYNAMIC" : "CORE",
+      tier: isDynamic ? "TIER_3" : classifyTier(symbol),
       spreadPercent: 0,
       atrPercent: 0,
       fundingRate: 0,
@@ -443,49 +463,89 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         continue;
       }
 
-      // ── WHITELIST + TIER GATE ── (auto-trade only allowed for whitelisted symbols)
-      const allowedSymbols: string[] = Array.isArray(settings.allowed_symbols) && settings.allowed_symbols.length > 0
-        ? settings.allowed_symbols
-        : [];
-      const symbolNorm = symbol.replace("/", ""); // BTC/USDT → BTCUSDT
-      const inDbWhitelist = allowedSymbols.length === 0 || allowedSymbols.includes(symbolNorm) || allowedSymbols.includes(symbol);
-      const inTierWhitelist = isAutoTradeAllowed(symbol);
-      if (!inTierWhitelist || !inDbWhitelist) {
-        const wlReason = "Whitelist dışı (tier/db)";
-        detail.rejectReason = wlReason;
-        result.rejectedSignals.push({ symbol, reason: wlReason });
-        await botLog({
-          userId, exchange, eventType: "whitelist_blocked",
-          message: `${symbol} otomatik işlem whitelist dışı`,
-          metadata: { tier: classifyTier(symbol), dbWhitelist: allowedSymbols.length },
-        });
-        result.scanDetails.push(detail);
-        continue;
+      // ── WHITELIST + TIER GATE ──
+      if (isDynamic) {
+        // Dynamic coins: allowed in paper mode only — never live trade
+        if (settings.trading_mode === "live") {
+          const dynReason = "Dynamic: live modda işlem yok";
+          detail.rejectReason = dynReason;
+          result.rejectedSignals.push({ symbol, reason: dynReason });
+          result.scanDetails.push(detail);
+          continue;
+        }
+        // Paper mode: dynamic coins proceed to risk/signal check
+      } else {
+        const allowedSymbols: string[] = Array.isArray(settings.allowed_symbols) && settings.allowed_symbols.length > 0
+          ? settings.allowed_symbols
+          : [];
+        const symbolNorm = symbol.replace("/", ""); // BTC/USDT → BTCUSDT
+        const inDbWhitelist = allowedSymbols.length === 0 || allowedSymbols.includes(symbolNorm) || allowedSymbols.includes(symbol);
+        const inTierWhitelist = isAutoTradeAllowed(symbol);
+        if (!inTierWhitelist || !inDbWhitelist) {
+          const wlReason = "Whitelist dışı (tier/db)";
+          detail.rejectReason = wlReason;
+          result.rejectedSignals.push({ symbol, reason: wlReason });
+          await botLog({
+            userId, exchange, eventType: "whitelist_blocked",
+            message: `${symbol} otomatik işlem whitelist dışı`,
+            metadata: { tier: classifyTier(symbol), dbWhitelist: allowedSymbols.length },
+          });
+          result.scanDetails.push(detail);
+          continue;
+        }
       }
 
-      // ── DYNAMIC TIER DOWNGRADE ── (live market conditions can demote/reject)
-      const tierResult = applyDynamicDowngrade(symbol, {
-        spreadPercent: ticker.spread * 100,
-        atrPercent: detail.atrPercent,
-        fundingRatePercent: Math.abs((funding?.rate ?? 0) * 100),
-        orderbookDepthUsdt,
-        volume24hUsdt: ticker.quoteVolume24h,
-        btcDirectionAligned: undefined,
-      });
+      // ── DYNAMIC TIER DOWNGRADE ──
+      let tierResult: ReturnType<typeof applyDynamicDowngrade>;
+      if (isDynamic) {
+        // Dynamic coins use TIER_3 policy; apply runtime risk gates manually
+        const atrPct = detail.atrPercent;
+        const fundingPct = Math.abs((funding?.rate ?? 0) * 100);
+        if (atrPct > 6.0) {
+          const r = `Dynamic: ATR aşırı (${atrPct.toFixed(2)}%)`;
+          detail.rejectReason = r;
+          result.rejectedSignals.push({ symbol, reason: r });
+          result.scanDetails.push(detail);
+          continue;
+        }
+        if (fundingPct > 0.04) {
+          const r = `Dynamic: Funding yüksek (${fundingPct.toFixed(3)}%)`;
+          detail.rejectReason = r;
+          result.rejectedSignals.push({ symbol, reason: r });
+          result.scanDetails.push(detail);
+          continue;
+        }
+        tierResult = {
+          originalTier: "REJECTED" as const,
+          effectiveTier: "TIER_3" as const,
+          downgraded: false,
+          rejected: false,
+          reasons: ["Dinamik aday — TIER_3 politikası"],
+          policy: getTierPolicy("TIER_3"),
+        };
+      } else {
+        tierResult = applyDynamicDowngrade(symbol, {
+          spreadPercent: ticker.spread * 100,
+          atrPercent: detail.atrPercent,
+          fundingRatePercent: Math.abs((funding?.rate ?? 0) * 100),
+          orderbookDepthUsdt,
+          volume24hUsdt: ticker.quoteVolume24h,
+          btcDirectionAligned: undefined,
+        });
+        if (tierResult.rejected) {
+          const tierReason = `Tier reject: ${tierResult.reasons.join(", ")}`;
+          detail.rejectReason = tierReason;
+          result.rejectedSignals.push({ symbol, reason: tierReason });
+          await botLog({
+            userId, exchange, eventType: "tier_blocked",
+            message: `${symbol} tier reddetti: ${tierResult.reasons.join(", ")}`,
+            metadata: { tier: tierResult.originalTier, effective: tierResult.effectiveTier },
+          });
+          result.scanDetails.push(detail);
+          continue;
+        }
+      }
       detail.tier = tierResult.effectiveTier;
-
-      if (tierResult.rejected) {
-        const tierReason = `Tier reject: ${tierResult.reasons.join(", ")}`;
-        detail.rejectReason = tierReason;
-        result.rejectedSignals.push({ symbol, reason: tierReason });
-        await botLog({
-          userId, exchange, eventType: "tier_blocked",
-          message: `${symbol} tier reddetti: ${tierResult.reasons.join(", ")}`,
-          metadata: { tier: tierResult.originalTier, effective: tierResult.effectiveTier },
-        });
-        result.scanDetails.push(detail);
-        continue;
-      }
 
       const tierLeverageCap = Math.min(tierResult.policy.maxLeverage, settings.max_leverage ?? 3);
 
@@ -588,6 +648,11 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     prefiltered: universePrefiltered,
     scanned: symbolsToAnalyze.length,
     lowVolumePrefilterRejected: lowVolumeSkipped,
+    dynamicCandidates: dynamicResult?.candidates.length ?? 0,
+    dynamicRejectedLowVolume: dynamicResult?.rejectedLowVolume ?? 0,
+    dynamicRejectedStablecoin: dynamicResult?.rejectedStablecoin ?? 0,
+    dynamicRejectedHighSpread: dynamicResult?.rejectedHighSpread ?? 0,
+    dynamicRejectedPumpDump: dynamicResult?.rejectedPumpDump ?? 0,
     signals: result.generatedSignals.length,
     opened: result.openedPaperTrades.length,
     rejected: result.rejectedSignals.length,
@@ -608,7 +673,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
   await botLog({
     userId, exchange, eventType: "tick_completed",
-    message: `Tick tamamlandı — universe=${universeTotal} prefilter=${universePrefiltered} lowVolSkip=${lowVolumeSkipped} tarandı=${symbolsToAnalyze.length} sinyal=${result.generatedSignals.length} açıldı=${result.openedPaperTrades.length} red=${result.rejectedSignals.length} hata=${result.errors.length} cursor=${nextCursor} (${result.durationMs}ms)`,
+    message: `Tick tamamlandı — universe=${universeTotal} prefilter=${universePrefiltered} dynamic=${dynamicResult?.candidates.length ?? 0} lowVolSkip=${lowVolumeSkipped} tarandı=${symbolsToAnalyze.length} sinyal=${result.generatedSignals.length} açıldı=${result.openedPaperTrades.length} red=${result.rejectedSignals.length} hata=${result.errors.length} cursor=${nextCursor} (${result.durationMs}ms)`,
     metadata: summary(result),
   });
 

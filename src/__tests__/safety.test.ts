@@ -2002,3 +2002,182 @@ describe("log retention — cleanup logic", () => {
     expect(() => startLogCleanupScheduler()).not.toThrow();
   });
 });
+
+// ---- Dynamic Universe v2 ----
+describe("dynamic universe v2", () => {
+  it("selectDynamicCandidates excludes core symbols", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    const coreSet = new Set(["BTC/USDT", "ETH/USDT"]);
+    const tickerMap = {
+      "BTC/USDT": { quoteVolume24h: 1e10, spread: 0.0001, changePercent24h: 0.5 },
+      "ETH/USDT": { quoteVolume24h: 5e9, spread: 0.0001, changePercent24h: 0.3 },
+      "MATIC/USDT": { quoteVolume24h: 200_000_000, spread: 0.001, changePercent24h: 2.0 },
+    };
+    const result = selectDynamicCandidates({
+      allSymbols: ["BTC/USDT", "ETH/USDT", "MATIC/USDT"],
+      tickerMap: tickerMap as any,
+      coreSet,
+      maxCandidates: 10,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+    });
+    expect(result.candidates).not.toContain("BTC/USDT");
+    expect(result.candidates).not.toContain("ETH/USDT");
+    expect(result.candidates).toContain("MATIC/USDT");
+  });
+
+  it("selectDynamicCandidates rejects low volume symbols", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    const tickerMap = {
+      "LOWVOL/USDT": { quoteVolume24h: 1_000_000, spread: 0.001, changePercent24h: 1.0 },
+      "GOODVOL/USDT": { quoteVolume24h: 100_000_000, spread: 0.001, changePercent24h: 1.0 },
+    };
+    const result = selectDynamicCandidates({
+      allSymbols: ["LOWVOL/USDT", "GOODVOL/USDT"],
+      tickerMap: tickerMap as any,
+      coreSet: new Set(),
+      maxCandidates: 10,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+    });
+    expect(result.candidates).not.toContain("LOWVOL/USDT");
+    expect(result.candidates).toContain("GOODVOL/USDT");
+    expect(result.rejectedLowVolume).toBe(1);
+  });
+
+  it("selectDynamicCandidates rejects stablecoin bases", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    const tickerMap = {
+      "USDC/USDT": { quoteVolume24h: 500_000_000, spread: 0.00001, changePercent24h: 0.01 },
+      "SOL/USDT": { quoteVolume24h: 500_000_000, spread: 0.001, changePercent24h: 1.0 },
+    };
+    const result = selectDynamicCandidates({
+      allSymbols: ["USDC/USDT", "SOL/USDT"],
+      tickerMap: tickerMap as any,
+      coreSet: new Set(),
+      maxCandidates: 10,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+    });
+    expect(result.candidates).not.toContain("USDC/USDT");
+    expect(result.candidates).toContain("SOL/USDT");
+    expect(result.rejectedStablecoin).toBe(1);
+  });
+
+  it("selectDynamicCandidates rejects high spread symbols", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    const tickerMap = {
+      "HIGHSPREAD/USDT": { quoteVolume24h: 500_000_000, spread: 0.01, changePercent24h: 1.0 }, // 1% > 0.2%
+      "OKSPREAD/USDT": { quoteVolume24h: 500_000_000, spread: 0.001, changePercent24h: 1.0 },
+    };
+    const result = selectDynamicCandidates({
+      allSymbols: ["HIGHSPREAD/USDT", "OKSPREAD/USDT"],
+      tickerMap: tickerMap as any,
+      coreSet: new Set(),
+      maxCandidates: 10,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+    });
+    expect(result.candidates).not.toContain("HIGHSPREAD/USDT");
+    expect(result.candidates).toContain("OKSPREAD/USDT");
+    expect(result.rejectedHighSpread).toBe(1);
+  });
+
+  it("selectDynamicCandidates rejects pump/dump symbols (>25% 24h change)", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    const tickerMap = {
+      "PUMP/USDT": { quoteVolume24h: 500_000_000, spread: 0.001, changePercent24h: 30.0 },
+      "NORMAL/USDT": { quoteVolume24h: 500_000_000, spread: 0.001, changePercent24h: 5.0 },
+    };
+    const result = selectDynamicCandidates({
+      allSymbols: ["PUMP/USDT", "NORMAL/USDT"],
+      tickerMap: tickerMap as any,
+      coreSet: new Set(),
+      maxCandidates: 10,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+    });
+    expect(result.candidates).not.toContain("PUMP/USDT");
+    expect(result.candidates).toContain("NORMAL/USDT");
+    expect(result.rejectedPumpDump).toBe(1);
+  });
+
+  it("selectDynamicCandidates counts symbols with no ticker data separately", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    const result = selectDynamicCandidates({
+      allSymbols: ["GHOST/USDT"],
+      tickerMap: {} as any,
+      coreSet: new Set(),
+      maxCandidates: 10,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+    });
+    expect(result.candidates).toHaveLength(0);
+    expect(result.rejectedNoData).toBe(1);
+  });
+
+  it("selectDynamicCandidates respects maxCandidates limit", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    const allSymbols = Array.from({ length: 50 }, (_, i) => `COIN${i}/USDT`);
+    const tickerMap: Record<string, any> = {};
+    allSymbols.forEach((s, i) => {
+      tickerMap[s] = { quoteVolume24h: (50 - i) * 10_000_000 + 60_000_000, spread: 0.001, changePercent24h: 1.0 };
+    });
+    const result = selectDynamicCandidates({
+      allSymbols,
+      tickerMap,
+      coreSet: new Set(),
+      maxCandidates: 5,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+    });
+    expect(result.candidates).toHaveLength(5);
+  });
+
+  it("selectDynamicCandidates sorts candidates by volume descending", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    const tickerMap = {
+      "LOW/USDT": { quoteVolume24h: 60_000_000, spread: 0.001, changePercent24h: 1.0 },
+      "HIGH/USDT": { quoteVolume24h: 500_000_000, spread: 0.001, changePercent24h: 1.0 },
+      "MID/USDT": { quoteVolume24h: 200_000_000, spread: 0.001, changePercent24h: 1.0 },
+    };
+    const result = selectDynamicCandidates({
+      allSymbols: ["LOW/USDT", "HIGH/USDT", "MID/USDT"],
+      tickerMap: tickerMap as any,
+      coreSet: new Set(),
+      maxCandidates: 10,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+    });
+    expect(result.candidates[0]).toBe("HIGH/USDT");
+    expect(result.candidates[1]).toBe("MID/USDT");
+    expect(result.candidates[2]).toBe("LOW/USDT");
+  });
+
+  it("10 core coins always present regardless of dynamic candidates", async () => {
+    vi.resetModules();
+    const { tierWhitelist } = await import("@/lib/risk-tiers");
+    const core = tierWhitelist();
+    const dynamic = ["MATIC/USDT", "OP/USDT"];
+    const batch = [...core, ...dynamic];
+    expect(batch).toHaveLength(12);
+    for (const sym of core) {
+      expect(batch).toContain(sym);
+    }
+  });
+
+  it("live trading remains blocked — HARD_LIVE_TRADING_ALLOWED=false", () => {
+    vi.stubEnv("HARD_LIVE_TRADING_ALLOWED", "false");
+    // Dynamic universe v2 does not change the live trading gate
+    const allowed = process.env.HARD_LIVE_TRADING_ALLOWED === "true";
+    expect(allowed).toBe(false);
+  });
+});

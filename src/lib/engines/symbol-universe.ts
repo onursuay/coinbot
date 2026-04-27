@@ -26,6 +26,7 @@ export interface UniverseSlice {
   batchSymbols: string[];      // symbols for this tick
   nextCursor: string;          // "0" = wrap, otherwise next start index
   tickerMap: Record<string, Ticker>;
+  allSymbols: string[];        // raw unfiltered list from adapter.getSymbols()
 }
 
 const SYMBOL_TTL = 10 * 60 * 1000; // 10 min
@@ -48,6 +49,7 @@ export async function getUniverseSlice(opts: UniverseOptions): Promise<UniverseS
       batchSymbols: symbols.slice(0, opts.maxSymbolsPerTick),
       nextCursor: "0",
       tickerMap: {},
+      allSymbols: symbols,
     };
   }
 
@@ -107,6 +109,7 @@ export async function getUniverseSlice(opts: UniverseOptions): Promise<UniverseS
       batchSymbols: filtered.slice(0, opts.maxSymbolsPerTick),
       nextCursor: "0",
       tickerMap,
+      allSymbols,
     };
   }
 
@@ -129,6 +132,7 @@ export async function getUniverseSlice(opts: UniverseOptions): Promise<UniverseS
     batchSymbols: [...priorityPinned, ...regularBatch],
     nextCursor,
     tickerMap,
+    allSymbols,
   };
 }
 
