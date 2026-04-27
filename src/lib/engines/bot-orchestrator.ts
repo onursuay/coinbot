@@ -123,34 +123,39 @@ export async function setBotStatus(userId: string, status: BotStatus, reason?: s
   await loadSettings(userId);
 
   const sb = supabaseAdmin();
+  const isKillSwitch = status === "kill_switch";
+  const dbStatus = isKillSwitch ? "kill_switch_triggered" : status;
+
   const patch: Record<string, unknown> = {
-    bot_status: status,
-    kill_switch_active: status === "kill_switch",
+    bot_status: dbStatus,
+    kill_switch_active: isKillSwitch,
   };
-  const { data, error } = await sb
-    .from("bot_settings")
-    .update(patch)
-    .eq("user_id", userId)
-    .select()
-    .single();
+  if (isKillSwitch) {
+    // Write reason + force live trading off on kill switch
+    patch.kill_switch_reason = reason ?? "Kill switch tetiklendi";
+    patch.enable_live_trading = false;
+  }
+
+  // Update by limit(1) — single-tenant, no user_id filter to avoid PostgREST UUID cast issues
+  const { error } = await sb.from("bot_settings").update(patch).limit(1);
 
   if (error) {
     await botLog({
       userId, level: "error", eventType: "bot_status_error",
-      message: `setBotStatus(${status}) hata: ${error.message}`,
+      message: `setBotStatus(${dbStatus}) hata: ${error.message}`,
     });
     throw new Error(`bot_settings güncellenemedi: ${error.message}`);
   }
 
   await botLog({
-    userId, level: status === "kill_switch" ? "warn" : "info",
-    eventType: `bot_${status}`,
-    message: `Bot status -> ${status}${reason ? `: ${reason}` : ""}`,
+    userId, level: isKillSwitch ? "warn" : "info",
+    eventType: `bot_${dbStatus}`,
+    message: `Bot status -> ${dbStatus}${reason ? `: ${reason}` : ""}`,
   });
-  if (status === "kill_switch") {
+  if (isKillSwitch) {
     await riskEvent({ userId, eventType: "kill_switch", severity: "critical", message: reason ?? "Kill switch tetiklendi" });
   }
-  return data;
+  return { bot_status: dbStatus, kill_switch_active: isKillSwitch };
 }
 
 export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; symbols?: string[] }): Promise<TickResult> {

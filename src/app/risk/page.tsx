@@ -86,7 +86,7 @@ export default function RiskPage() {
           <li>Maks. kaldıraç {policy.policy.systemHardLeverageCap}x — daha yüksek değer kabul edilmez.</li>
           <li>İşlem başı risk maks. <span className="text-warning">{fmtPct(policy.policy.riskPerTradePercent)}</span> bakiye.</li>
           <li>Stop-loss ve take-profit zorunludur; minimum R:R 1:{policy.policy.minRiskRewardRatio}.</li>
-          <li>Likidasyon stop-loss'tan önceyse işlem açılmaz.</li>
+          <li>Likidasyon stop-loss&apos;tan önceyse işlem açılmaz.</li>
           <li>Günlük kâr hedefi (USD): {policy.policy.dailyProfitTargetUsd}, üst limit {policy.policy.maxDailyProfitTargetUsd}.</li>
         </ul>
       </div>

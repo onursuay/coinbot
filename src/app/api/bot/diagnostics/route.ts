@@ -1,5 +1,5 @@
 // Dry-run diagnostics — read-only snapshot of all bot state for dashboard visibility.
-// No mutations. Safe to call at any time.
+// No mutations. Safe to call at any time. Always returns same shape, even when Supabase is missing.
 
 import { ok, fail } from "@/lib/api-helpers";
 import { getCurrentUserId } from "@/lib/auth";
@@ -11,6 +11,22 @@ import { isHardLiveAllowed } from "@/lib/env";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const EMPTY_WORKER_HEALTH = {
+  online: false,
+  workerId: null,
+  status: "offline",
+  ageMs: null,
+  secondsSinceHeartbeat: null,
+  websocketStatus: null,
+  binanceApiStatus: null,
+  lastError: null,
+};
+
+const EMPTY_TICK_STATS = {
+  universe: 0, prefiltered: 0, scanned: 0,
+  signals: 0, rejected: 0, opened: 0, errors: 0, durationMs: 0,
+};
+
 export async function GET() {
   try {
     const userId = getCurrentUserId();
@@ -18,17 +34,26 @@ export async function GET() {
     if (!supabaseConfigured()) {
       return ok({
         bot_status: "stopped",
-        worker_health: null,
         trading_mode: "paper",
         active_exchange: "binance",
+        kill_switch_active: false,
+        kill_switch_reason: null,
         hard_live_gate: isHardLiveAllowed(),
         open_paper_positions: 0,
         last_tick_at: null,
+        worker_health: EMPTY_WORKER_HEALTH,
         last_scanned_symbols: [],
         last_rejected_signals: [],
         last_opened_paper_trade: null,
-        readiness_summary: null,
+        tick_stats: EMPTY_TICK_STATS,
         scan_details: [],
+        readiness_summary: {
+          ready: false,
+          paperTradesCompleted: 0,
+          paperTradesRequired: 100,
+          blockers: ["Supabase env missing"],
+          checks: [],
+        },
         supabase_configured: false,
       });
     }
@@ -47,6 +72,7 @@ export async function GET() {
 
     const settings = settingsRes.data?.[0] ?? null;
     const tickSummary = (settings?.last_tick_summary as any) ?? null;
+    const ageMs = workerHealth.ageMs;
 
     return ok({
       bot_status: settings?.bot_status ?? "stopped",
@@ -60,8 +86,9 @@ export async function GET() {
       worker_health: {
         online: workerHealth.online,
         workerId: workerHealth.workerId,
-        status: workerHealth.status,
-        ageMs: workerHealth.ageMs,
+        status: workerHealth.status ?? "offline",
+        ageMs,
+        secondsSinceHeartbeat: ageMs !== null ? Math.round(ageMs / 1000) : null,
         websocketStatus: workerHealth.websocketStatus,
         binanceApiStatus: workerHealth.binanceApiStatus,
         lastError: workerHealth.lastError,
@@ -70,15 +97,15 @@ export async function GET() {
       last_rejected_signals: tickSummary?.topRejectReasons ?? [],
       last_opened_paper_trade: tickSummary?.lastOpenedTrade ?? null,
       tick_stats: tickSummary ? {
-        universe: tickSummary.universe,
-        prefiltered: tickSummary.prefiltered,
-        scanned: tickSummary.scanned,
-        signals: tickSummary.signals,
-        opened: tickSummary.opened,
-        rejected: tickSummary.rejected,
-        errors: tickSummary.errors,
-        durationMs: tickSummary.durationMs,
-      } : null,
+        universe: tickSummary.universe ?? 0,
+        prefiltered: tickSummary.prefiltered ?? 0,
+        scanned: tickSummary.scanned ?? 0,
+        signals: tickSummary.signals ?? 0,
+        rejected: tickSummary.rejected ?? 0,
+        opened: tickSummary.opened ?? 0,
+        errors: tickSummary.errors ?? 0,
+        durationMs: tickSummary.durationMs ?? 0,
+      } : EMPTY_TICK_STATS,
       scan_details: tickSummary?.scanDetails ?? [],
       readiness_summary: {
         ready: readiness.ready,

@@ -182,7 +182,7 @@ export default function HomePage() {
   const isKillSwitch = botStatus === "kill_switch" || status?.bot?.kill_switch_active;
   const tradingMode = status?.bot?.trading_mode ?? "paper";
   const enableLiveTrading = status?.bot?.enable_live_trading ?? false;
-  const activeExchange = status?.bot?.active_exchange ?? "binance";
+  const activeExchange = status?.bot?.active_exchange ?? status?.debug?.activeExchange ?? "binance";
 
   return (
     <div className="space-y-6">
@@ -306,7 +306,7 @@ export default function HomePage() {
           <div className="mt-2 text-xs text-danger">Son hata: {workerHealth.lastError}</div>
         )}
         <p className="mt-2 text-xs text-muted">
-          Worker 60+ saniye heartbeat göndermezse OFFLINE sayılır. Dashboard yokken bile çalışması için VPS/Docker'da çalıştır.
+          Worker 60+ saniye heartbeat göndermezse OFFLINE sayılır. Dashboard yokken bile çalışması için VPS/Docker&apos;da çalıştır.
         </p>
       </div>
 

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 const DEFAULTS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
 
 export default function CoinsIndex() {
-  const [exchange, setExchange] = useState("mexc");
+  const [exchange, setExchange] = useState("binance");
   const [list, setList] = useState<string[]>(DEFAULTS);
   const [filter, setFilter] = useState("");
   useEffect(() => {

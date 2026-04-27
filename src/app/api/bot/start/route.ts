@@ -23,12 +23,6 @@ interface StartBody {
 
 export async function POST(req: Request) {
   const envCheck = checkEnv();
-  if (!supabaseConfigured()) {
-    return fail("Supabase env missing. Configure Vercel environment variables first.", 500, {
-      missing: envCheck.missing, empty: envCheck.empty,
-    });
-  }
-
   const body = (await req.json().catch(() => ({}))) as StartBody;
   const requestedMode = body.mode === "live" ? "live" : "paper";
   const requestedEnableLive = body.enableLive === true;
@@ -47,6 +41,12 @@ export async function POST(req: Request) {
       403,
       { hardLiveTradingAllowed: false }
     );
+  }
+
+  if (!supabaseConfigured()) {
+    return fail("Supabase env missing. Configure Vercel environment variables first.", 500, {
+      missing: envCheck.missing, empty: envCheck.empty,
+    });
   }
 
   const userId = getCurrentUserId();

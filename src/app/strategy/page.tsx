@@ -53,7 +53,7 @@ export default function StrategyPage() {
         </table>
       </section>
       <div className="card text-sm text-muted">
-        Strateji parametreleri Risk Settings'te tutuluyor; signal engine ek olarak BTC trendi, hacim teyidi,
+        Strateji parametreleri Risk Settings&apos;te tutuluyor; signal engine ek olarak BTC trendi, hacim teyidi,
         spread, funding rate ve volatilite filtrelerini uyguluyor. Sinyal skoru &lt;70 ise işlem açılmaz; 70-79 max 2x,
         80-89 max 3x, 90+ max 5x kaldıraca izin verilir (sistem 5x üst sınırı içinde).
       </div>
