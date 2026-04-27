@@ -4,7 +4,7 @@ import { getDailyStatus } from "@/lib/engines/daily-target";
 import { liveTradingEnabled } from "@/lib/engines/live-trading-guard";
 import { getCurrentUserId } from "@/lib/auth";
 import { supabaseAdmin, supabaseConfigured } from "@/lib/supabase/server";
-import { env, SYSTEM_HARD_LEVERAGE_CAP } from "@/lib/env";
+import { env, SYSTEM_HARD_LEVERAGE_CAP, isHardLiveAllowed } from "@/lib/env";
 import { checkEnv } from "@/lib/env-validation";
 
 export const runtime = "nodejs";
@@ -21,6 +21,7 @@ export async function GET() {
       bot: null,
       daily: { realizedPnlUsd: 0, dailyTargetUsd: env.dailyProfitTargetUsd, targetHit: false, lossLimitHit: false },
       liveTrading: liveTradingEnabled(),
+      hardLiveTradingAllowed: isHardLiveAllowed(),
       openPositions: 0,
       debug: {
         botStatus: "STOPPED",
@@ -59,6 +60,7 @@ export async function GET() {
       bot: state,
       daily,
       liveTrading: liveTradingEnabled(),
+      hardLiveTradingAllowed: isHardLiveAllowed(),
       openPositions: count ?? 0,
       debug: {
         botStatus: (state?.bot_status ?? "stopped").toString().toUpperCase(),

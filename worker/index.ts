@@ -22,10 +22,11 @@
 // The worker process itself does NOT need to be restarted to switch modes — change the
 // row in Supabase via dashboard, and the next tick picks it up.
 
-import { tickBot } from "../src/lib/engines/bot-orchestrator";
+import { tickBot, setBotStatus } from "../src/lib/engines/bot-orchestrator";
 import { recordHeartbeat } from "../src/lib/engines/heartbeat";
 import { getCurrentUserId } from "../src/lib/auth";
 import { supabaseAdmin, supabaseConfigured } from "../src/lib/supabase/server";
+import { reconcileOrders } from "../src/lib/engines/order-lifecycle-manager";
 
 const TICK_INTERVAL_SEC = Number(process.env.TICK_INTERVAL_SEC ?? 30);
 const HEARTBEAT_INTERVAL_SEC = Number(process.env.HEARTBEAT_INTERVAL_SEC ?? 15);
@@ -88,6 +89,49 @@ async function tickLoop() {
   }
 }
 
+async function reconciliationLoop() {
+  const RECON_INTERVAL_MS = 5 * 60 * 1000; // every 5 min
+  while (!stopping) {
+    await sleep(RECON_INTERVAL_MS);
+    if (stopping) break;
+    try {
+      const mode = await readBotMode();
+      if (!mode || mode.status === "stopped" || mode.killSwitch) continue;
+      // Paper mode: no real orders on exchange, skip reconciliation
+      if (mode.mode !== "live") continue;
+
+      const userId = getCurrentUserId();
+      if (!supabaseConfigured()) continue;
+
+      // Live mode: compare DB open orders vs exchange.
+      // Since live order placement is not yet wired, we pass empty exchangeOpenOrders.
+      // When live orders are implemented, populate from exchange adapter.
+      const result = await reconcileOrders({
+        userId,
+        exchangeName: "binance",
+        exchangeOpenOrders: [],
+      });
+
+      if (!result.ok || result.shouldEnterSafeMode) {
+        console.warn(`[reconcile] mismatches=${result.mismatches.length} shouldEnterSafeMode=${result.shouldEnterSafeMode}`);
+        if (result.shouldEnterSafeMode) {
+          const reason = result.mismatches[0]?.reason ?? "Reconciliation mismatch";
+          await setBotStatus(userId, "kill_switch", `Reconciliation: ${reason}`);
+          await recordHeartbeat({
+            workerId: WORKER_ID,
+            status: "safe_mode",
+            lastError: `Reconciliation triggered safe mode: ${reason}`,
+          }).catch(() => undefined);
+        }
+      } else {
+        console.log(`[reconcile] ok — ${result.mismatches.length} mismatches`);
+      }
+    } catch (e: any) {
+      console.error("[reconcile] failed:", e?.message ?? e);
+    }
+  }
+}
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -116,7 +160,7 @@ process.on("uncaughtException", (e: any) => {
 console.log(`[worker] starting workerId=${WORKER_ID} tickSec=${TICK_INTERVAL_SEC} heartbeatSec=${HEARTBEAT_INTERVAL_SEC}`);
 
 // Run loops in parallel — they're independent
-Promise.all([heartbeatLoop(), tickLoop()]).catch((e) => {
+Promise.all([heartbeatLoop(), tickLoop(), reconciliationLoop()]).catch((e) => {
   console.error("[worker] fatal:", e?.message ?? e);
   process.exit(1);
 });

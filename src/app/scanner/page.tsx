@@ -34,8 +34,6 @@ export default function ScannerPage() {
   const [stats, setStats] = useState<ScanStats | null>(null);
   const [cursor, setCursor] = useState("0");
   const [loading, setLoading] = useState(false);
-  const [debug, setDebug] = useState(false);
-
   const run = async (cur = "0") => {
     setLoading(true);
     try {
@@ -50,22 +48,18 @@ export default function ScannerPage() {
 
   useEffect(() => { setCursor("0"); run("0"); }, [exchange, universe]);
 
-  const colSpan = debug ? 16 : 12;
+  const colSpan = 12;
 
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-xl font-semibold">Market Scanner</h1>
-        <div className="flex gap-2 items-center flex-wrap">
-          <label className="flex items-center gap-1 text-sm text-muted cursor-pointer">
-            <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} className="accent-accent" />
-            Debug
-          </label>
-          <select className="input w-40" value={universe} onChange={(e) => setUniverse(e.target.value as any)}>
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="text-xl font-semibold whitespace-nowrap">Market Scanner</h1>
+        <div className="flex items-center gap-2">
+          <select className="input w-44" value={universe} onChange={(e) => setUniverse(e.target.value as any)}>
             {UNIVERSES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
           </select>
-          <select className="input w-32" value={exchange} onChange={(e) => setExchange(e.target.value as any)}>
+          <select className="input w-28" value={exchange} onChange={(e) => setExchange(e.target.value as any)}>
             {EXCHANGES.map((x) => <option key={x} value={x}>{x.toUpperCase()}</option>)}
           </select>
           <button className="btn-primary whitespace-nowrap px-4" onClick={() => run(cursor)} disabled={loading}>
@@ -120,7 +114,6 @@ export default function ScannerPage() {
             <tr>
               <th>Sym</th><th>Fiyat</th><th>24s Hacim</th><th>Spread</th><th>Funding</th>
               <th>Trend</th><th>Vol</th><th>Volatilite</th><th>Sinyal</th><th>Skor</th><th>Sınıf</th><th>Neden</th>
-              {debug && <><th title="Candle count">Mum</th><th title="Last candle close time">Son Mum</th><th title="Indicator status">İnd. Durum</th><th title="ATR % of close">ATR%</th><th title="RSI">RSI</th></>}
             </tr>
           </thead>
           <tbody>
@@ -143,13 +136,6 @@ export default function ScannerPage() {
                   </span>
                 </td>
                 <td className="text-xs text-muted max-w-sm truncate">{r.reason}</td>
-                {debug && <>
-                  <td className="text-xs tabular-nums">{r.candleCount ?? "—"}</td>
-                  <td className="text-xs tabular-nums">{fmtTime(r.lastCandleTime)}</td>
-                  <td className={`text-xs ${r.indicatorStatus === "ok" ? "text-success" : r.indicatorStatus === "error" ? "text-danger" : "text-muted"}`}>{r.indicatorStatus ?? "—"}</td>
-                  <td className="text-xs tabular-nums">{r.atrPct !== null && r.atrPct !== undefined ? fmtNum(r.atrPct, 3) + "%" : "—"}</td>
-                  <td className="text-xs tabular-nums">{r.rsi !== null && r.rsi !== undefined ? fmtNum(r.rsi, 1) : "—"}</td>
-                </>}
               </tr>
             ))}
           </tbody>
