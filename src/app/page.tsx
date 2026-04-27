@@ -202,10 +202,6 @@ export default function HomePage() {
         ))}
       </div>
 
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Panel</h1>
-      </div>
-
       {/* ===== Control Panel ===== */}
       <div className="card space-y-4">
         <div className="flex items-center justify-between">
