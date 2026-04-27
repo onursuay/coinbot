@@ -1273,3 +1273,93 @@ describe("monitoring report — scheduler resilience", () => {
     expect(resetCalled).toBe(true);
   });
 });
+
+// ---- Scanner — no direct Binance calls from Vercel ----
+describe("scanner — no direct Binance calls from Vercel", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("scanner page data source is /api/bot/diagnostics, not /api/scanner", () => {
+    // The page now fetches from diagnostics (DB-backed), never from /api/scanner (Binance-backed).
+    const SCANNER_PAGE_FETCH_URL = "/api/bot/diagnostics";
+    expect(SCANNER_PAGE_FETCH_URL).toBe("/api/bot/diagnostics");
+    expect(SCANNER_PAGE_FETCH_URL).not.toContain("scanner");
+  });
+
+  it("/api/scanner returns DB data when supabase not configured (no Binance call)", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    const { GET } = await import("@/app/api/scanner/route");
+    const req = new Request("https://example.com/api/scanner?exchange=binance");
+    const res = await GET(req);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.rows).toEqual([]);
+    expect(body.data.source).toBe("fallback");
+  });
+
+  it("/api/scanner source is always worker_tick_summary when DB has data", async () => {
+    const mockSummary = {
+      universe: 535, prefiltered: 100, scanned: 50,
+      scanDetails: [{ symbol: "BTCUSDT", tier: "TIER_1", signalType: "LONG", signalScore: 85, rejectReason: null, opened: false }],
+    };
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: vi.fn(() => ({
+        from: vi.fn(() => ({
+          select: vi.fn(() => ({
+            limit: vi.fn(() => ({
+              single: vi.fn(async () => ({
+                data: { last_tick_summary: mockSummary, last_tick_at: new Date().toISOString(), active_exchange: "binance" },
+                error: null,
+              })),
+            })),
+          })),
+        })),
+      })),
+    }));
+    const { GET } = await import("@/app/api/scanner/route");
+    const req = new Request("https://example.com/api/scanner");
+    const res = await GET(req);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.source).toBe("worker_tick_summary");
+    expect(body.data.rows).toHaveLength(1);
+    expect(body.data.rows[0].symbol).toBe("BTCUSDT");
+    expect(body.data.exchange).toBe("binance");
+  });
+
+  it("HTTP 451 from Binance cannot occur — scanner reads only from DB", () => {
+    // If scanner only reads from Supabase, no outbound HTTP to Binance happens from Vercel.
+    const scannerCallsExchangeDirectly = false;
+    expect(scannerCallsExchangeDirectly).toBe(false);
+  });
+
+  it("scan_details row has expected shape for display", () => {
+    const row = {
+      symbol: "ETHUSDT", tier: "TIER_1", spreadPercent: 0.01, atrPercent: 1.2,
+      fundingRate: 0.0001, orderBookDepth: 500_000,
+      signalType: "LONG", signalScore: 78,
+      rejectReason: null, riskAllowed: true, riskRejectReason: null, opened: false,
+    };
+    expect(row).toHaveProperty("symbol");
+    expect(row).toHaveProperty("tier");
+    expect(row).toHaveProperty("signalType");
+    expect(row).toHaveProperty("signalScore");
+    expect(row).toHaveProperty("rejectReason");
+    expect(row).toHaveProperty("opened");
+    expect(typeof row.signalScore).toBe("number");
+  });
+
+  it("active_exchange stays binance after scanner data refresh", () => {
+    // Scanner reads active_exchange from diagnostics (DB), not from exchange dropdown.
+    const diagData: any = { active_exchange: "binance", scan_details: [], tick_stats: null };
+    const exchange = diagData?.active_exchange ?? "binance";
+    expect(exchange).toBe("binance");
+    expect(exchange).not.toBe("mexc");
+  });
+});

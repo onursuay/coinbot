@@ -1,146 +1,215 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { fmtNum, fmtPct, fmtUsd } from "@/lib/format";
+import { fmtNum, fmtPct } from "@/lib/format";
 
-const EXCHANGES = ["mexc", "binance", "okx", "bybit"] as const;
-const UNIVERSES = [
-  { value: "all_futures", label: "All Futures Markets" },
-  { value: "top_volume", label: "Top Volume Futures" },
-  { value: "watchlist_only", label: "Watchlist Only" },
-] as const;
-
-function fmtTime(ts: number | null): string {
-  if (!ts) return "—";
-  const d = new Date(ts);
-  return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+interface TickStats {
+  universe: number;
+  prefiltered: number;
+  scanned: number;
+  signals: number;
+  rejected: number;
+  opened: number;
+  errors: number;
+  durationMs: number;
 }
 
-interface ScanStats {
-  totalUniverse: number;
-  preFiltered: number;
-  deepAnalyzed: number;
-  signalLong: number;
-  signalShort: number;
-  signalNoTrade: number;
-  signalWait: number;
-  nextCursor: string;
+interface ScanRow {
+  symbol: string;
+  tier: string;
+  spreadPercent: number;
+  atrPercent: number;
+  fundingRate: number;
+  orderBookDepth: number;
+  signalType: string;
+  signalScore: number;
+  rejectReason: string | null;
+  riskAllowed: boolean | null;
+  riskRejectReason: string | null;
+  opened: boolean;
+}
+
+interface DiagData {
+  bot_status: string;
+  trading_mode: string;
+  active_exchange: string;
+  last_tick_at: string | null;
+  tick_stats: TickStats;
+  scan_details: ScanRow[];
+  worker_health: { online: boolean; status: string | null; ageMs: number | null };
+}
+
+function fmtTime(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export default function ScannerPage() {
-  const [exchange, setExchange] = useState<(typeof EXCHANGES)[number]>("mexc");
-  const [universe, setUniverse] = useState<"all_futures" | "top_volume" | "watchlist_only">("all_futures");
-  const [rows, setRows] = useState<any[]>([]);
-  const [stats, setStats] = useState<ScanStats | null>(null);
-  const [cursor, setCursor] = useState("0");
+  const [data, setData] = useState<DiagData | null>(null);
   const [loading, setLoading] = useState(false);
-  const run = async (cur = "0") => {
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  const refresh = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/scanner?exchange=${exchange}&universe=${universe}&cursor=${cur}`).then((r) => r.json());
+      const res = await fetch("/api/bot/diagnostics", { cache: "no-store" }).then((r) => r.json());
       if (res.ok && res.data) {
-        setRows(res.data.rows ?? []);
-        setStats(res.data.stats ?? null);
-        if (res.data.stats?.nextCursor) setCursor(res.data.stats.nextCursor);
+        setData(res.data);
+        setLastRefresh(new Date());
       }
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { setCursor("0"); run("0"); }, [exchange, universe]);
+  useEffect(() => { refresh(); }, []);
 
-  const colSpan = 12;
+  const stats = data?.tick_stats;
+  const rows = data?.scan_details ?? [];
+  const exchange = data?.active_exchange ?? "binance";
+  const workerOnline = data?.worker_health?.online ?? false;
 
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold whitespace-nowrap">Market Scanner</h1>
-        <div className="flex items-center gap-2">
-          <select className="input" style={{minWidth: 180}} value={universe} onChange={(e) => setUniverse(e.target.value as any)}>
-            {UNIVERSES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-          </select>
-          <select className="input w-28 pr-8" value={exchange} onChange={(e) => setExchange(e.target.value as any)}>
-            {EXCHANGES.map((x) => <option key={x} value={x}>{x.toUpperCase()}</option>)}
-          </select>
-          <button className="btn-primary whitespace-nowrap px-4" onClick={() => run(cursor)} disabled={loading}>
-            {loading ? "Tarıyor..." : "Yeniden Tara"}
-          </button>
-          {stats?.nextCursor && stats.nextCursor !== "0" && (
-            <button className="btn-secondary whitespace-nowrap px-3 text-sm" onClick={() => run(stats.nextCursor)} disabled={loading}>
-              Sonraki Batch →
-            </button>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-xl font-semibold">Market Scanner</h1>
+          <p className="text-xs text-muted mt-0.5">
+            Tarama VPS worker tarafından otomatik yapılır. Bu buton sadece son tarama verilerini yeniler.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`tag ${workerOnline ? "tag-success" : "tag-danger"}`}>
+            {workerOnline ? "WORKER ONLINE" : "WORKER OFFLINE"}
+          </span>
+          <span className="tag-muted">{exchange.toUpperCase()}</span>
+          {data?.last_tick_at && (
+            <span className="text-xs text-muted">Son tick: {fmtTime(data.last_tick_at)}</span>
           )}
+          <button
+            className="btn-primary whitespace-nowrap px-4"
+            onClick={refresh}
+            disabled={loading}
+          >
+            {loading ? "Yükleniyor..." : "Verileri Yenile"}
+          </button>
         </div>
       </div>
 
       {/* Stats bar */}
       {stats && (
-        <div className="card grid grid-cols-4 gap-3 sm:grid-cols-7 text-center py-2">
+        <div className="card grid grid-cols-4 gap-3 sm:grid-cols-8 text-center py-2">
           <div>
             <div className="text-xs text-muted">Universe</div>
-            <div className="font-semibold tabular-nums">{stats.totalUniverse}</div>
+            <div className="font-semibold tabular-nums">{stats.universe}</div>
           </div>
           <div>
             <div className="text-xs text-muted">Ön Eleme</div>
-            <div className="font-semibold tabular-nums">{stats.preFiltered}</div>
+            <div className="font-semibold tabular-nums">{stats.prefiltered}</div>
           </div>
           <div>
             <div className="text-xs text-muted">Analiz</div>
-            <div className="font-semibold tabular-nums">{stats.deepAnalyzed}</div>
+            <div className="font-semibold tabular-nums">{stats.scanned}</div>
           </div>
           <div>
-            <div className="text-xs text-success">LONG</div>
-            <div className="font-semibold tabular-nums text-success">{stats.signalLong}</div>
+            <div className="text-xs text-success">Sinyal</div>
+            <div className="font-semibold tabular-nums text-success">{stats.signals}</div>
           </div>
           <div>
-            <div className="text-xs text-danger">SHORT</div>
-            <div className="font-semibold tabular-nums text-danger">{stats.signalShort}</div>
+            <div className="text-xs text-muted">Reddedilen</div>
+            <div className="font-semibold tabular-nums">{stats.rejected}</div>
           </div>
           <div>
-            <div className="text-xs text-muted">WAIT</div>
-            <div className="font-semibold tabular-nums">{stats.signalWait}</div>
+            <div className="text-xs text-accent">Açılan</div>
+            <div className="font-semibold tabular-nums text-accent">{stats.opened}</div>
           </div>
           <div>
-            <div className="text-xs text-muted">NO_TRADE</div>
-            <div className="font-semibold tabular-nums">{stats.signalNoTrade}</div>
+            <div className="text-xs text-danger">Hata</div>
+            <div className={`font-semibold tabular-nums ${stats.errors > 0 ? "text-danger" : ""}`}>
+              {stats.errors}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted">Süre</div>
+            <div className="font-semibold tabular-nums">{stats.durationMs}ms</div>
           </div>
         </div>
       )}
 
-      {/* Table */}
-      <div className="card overflow-x-auto">
-        <table className="t">
-          <thead>
-            <tr>
-              <th>Sym</th><th>Fiyat</th><th>24s Hacim</th><th>Spread</th><th>Funding</th>
-              <th>Trend</th><th>Vol</th><th>Volatilite</th><th>Sinyal</th><th>Skor</th><th>Sınıf</th><th>Neden</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && <tr><td colSpan={colSpan} className="text-muted">{loading ? "Taranıyor..." : "veri yok"}</td></tr>}
-            {rows.map((r) => (
-              <tr key={`${r.exchange}-${r.symbol}`}>
-                <td className="font-medium"><Link className="text-accent" href={`/coins/${encodeURIComponent(r.symbol)}?exchange=${r.exchange}`}>{r.symbol}</Link></td>
-                <td>{fmtNum(r.price, 4)}</td>
-                <td>{fmtUsd(r.volume24hUsd, 0)}</td>
-                <td>{fmtPct(r.spread * 100, 3)}</td>
-                <td>{r.fundingRate !== null ? fmtPct(r.fundingRate * 100, 4) : "—"}</td>
-                <td>{fmtNum(r.trendScore, 0)}</td>
-                <td>{fmtNum(r.volumeScore, 0)}</td>
-                <td>{fmtNum(r.volatilityScore, 0)}</td>
-                <td><span className={`tag-${r.signal === "LONG" ? "success" : r.signal === "SHORT" ? "danger" : "muted"}`}>{r.signal}</span></td>
-                <td>{fmtNum(r.signalScore, 0)}</td>
-                <td>
-                  <span className={`tag-${r.classification === "tradeable" ? "success" : r.classification === "watchlist" ? "accent" : r.classification === "high_risk" ? "warning" : "muted"}`}>
-                    {r.classification}
-                  </span>
-                </td>
-                <td className="text-xs text-muted max-w-sm truncate">{r.reason}</td>
+      {/* No data */}
+      {!data && !loading && (
+        <div className="card text-muted text-sm text-center py-8">
+          Worker henüz tarama yapmadı. Worker çalışıyorsa ~30 saniyede veri gelir.
+        </div>
+      )}
+
+      {rows.length === 0 && data && (
+        <div className="card text-muted text-sm text-center py-6">
+          Son tick'te scan_details boş. Worker bir sonraki tick'te dolduracak.
+        </div>
+      )}
+
+      {/* Scan details table */}
+      {rows.length > 0 && (
+        <div className="card overflow-x-auto">
+          <table className="t">
+            <thead>
+              <tr>
+                <th>Sembol</th>
+                <th>Tier</th>
+                <th>Spread</th>
+                <th>ATR%</th>
+                <th>Funding</th>
+                <th>Sinyal</th>
+                <th>Skor</th>
+                <th>Red Nedeni</th>
+                <th>Açıldı</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.symbol}>
+                  <td className="font-medium">
+                    <Link className="text-accent" href={`/coins/${encodeURIComponent(r.symbol)}?exchange=${exchange}`}>
+                      {r.symbol}
+                    </Link>
+                  </td>
+                  <td>
+                    <span className={`tag-${r.tier === "TIER_1" ? "success" : r.tier === "TIER_2" ? "accent" : "muted"}`}>
+                      {r.tier}
+                    </span>
+                  </td>
+                  <td>{fmtPct(r.spreadPercent, 3)}</td>
+                  <td>{fmtPct(r.atrPercent, 2)}</td>
+                  <td>{fmtPct(r.fundingRate * 100, 4)}</td>
+                  <td>
+                    <span className={`tag-${r.signalType === "LONG" ? "success" : r.signalType === "SHORT" ? "danger" : "muted"}`}>
+                      {r.signalType || "—"}
+                    </span>
+                  </td>
+                  <td>{fmtNum(r.signalScore, 0)}</td>
+                  <td className="text-xs text-muted max-w-xs truncate">
+                    {r.rejectReason ?? r.riskRejectReason ?? "—"}
+                  </td>
+                  <td>
+                    {r.opened
+                      ? <span className="tag-success text-xs">✓</span>
+                      : <span className="text-muted">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {lastRefresh && (
+        <p className="text-xs text-muted text-right">
+          Son güncelleme: {lastRefresh.toLocaleTimeString("tr-TR")}
+        </p>
+      )}
     </div>
   );
 }
