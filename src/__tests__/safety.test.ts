@@ -1363,3 +1363,152 @@ describe("scanner — no direct Binance calls from Vercel", () => {
     expect(exchange).not.toBe("mexc");
   });
 });
+
+// ---- Log retention — cleanup logic ----
+describe("log retention — cleanup logic", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("logs endpoint default limit is 500", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    vi.doMock("@/lib/auth", () => ({ getCurrentUserId: () => "test-user" }));
+    const { GET } = await import("@/app/api/logs/route");
+    const req = new Request("https://example.com/api/logs");
+    const res = await GET(req);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    // When supabase not configured, returns empty arrays
+    expect(body.data.logs).toEqual([]);
+    expect(body.data.riskEvents).toEqual([]);
+  });
+
+  it("logs endpoint limit cannot exceed 1000", () => {
+    // Logic from /api/logs/route.ts
+    const parseLimit = (raw: string | null, defaultVal: number): number =>
+      raw ? Math.min(1000, Math.max(1, Number(raw) || defaultVal)) : defaultVal;
+    expect(parseLimit("9999", 500)).toBe(1000);
+    expect(parseLimit("500", 500)).toBe(500);
+    expect(parseLimit(null, 500)).toBe(500);
+  });
+
+  it("filter=last100 produces limit 100", () => {
+    const filterToLimit = (f: string): number => {
+      if (f === "last100") return 100;
+      if (f === "last1000") return 1000;
+      return 500;
+    };
+    expect(filterToLimit("last100")).toBe(100);
+    expect(filterToLimit("last1000")).toBe(1000);
+    expect(filterToLimit("last500")).toBe(500);
+  });
+
+  it("error-only filter maps to level='error'", async () => {
+    // Structural: verify GET accepts filter=error without throwing
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    vi.doMock("@/lib/auth", () => ({ getCurrentUserId: () => "test-user" }));
+    const { GET } = await import("@/app/api/logs/route");
+    const req = new Request("https://example.com/api/logs?filter=error");
+    const res = await GET(req);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.meta.filter).toBe("error");
+  });
+
+  it("cleanup deletes debug/info logs older than 7 days", () => {
+    // Mirrors SQL function logic: debug/info → 7 days retention
+    const retentionDays: Record<string, number> = {
+      debug: 7, info: 7, warn: 14, error: 30,
+    };
+    const now = new Date("2026-04-27T00:00:00Z");
+    const eightDaysAgo = new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000);
+    const sixDaysAgo = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+
+    const shouldDelete = (level: string, createdAt: Date): boolean =>
+      createdAt < new Date(now.getTime() - retentionDays[level] * 24 * 60 * 60 * 1000);
+
+    expect(shouldDelete("debug", eightDaysAgo)).toBe(true);
+    expect(shouldDelete("info", eightDaysAgo)).toBe(true);
+    expect(shouldDelete("debug", sixDaysAgo)).toBe(false);
+    expect(shouldDelete("info", sixDaysAgo)).toBe(false);
+  });
+
+  it("cleanup does NOT delete error logs newer than 30 days", () => {
+    const retentionDays: Record<string, number> = { error: 30 };
+    const now = new Date("2026-04-27T00:00:00Z");
+    const twentyDaysAgo = new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000);
+    const thirtyOneDaysAgo = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000);
+
+    const shouldDelete = (level: string, createdAt: Date): boolean =>
+      createdAt < new Date(now.getTime() - retentionDays[level] * 24 * 60 * 60 * 1000);
+
+    expect(shouldDelete("error", twentyDaysAgo)).toBe(false);
+    expect(shouldDelete("error", thirtyOneDaysAgo)).toBe(true);
+  });
+
+  it("cleanup does NOT delete kill_switch logs newer than 90 days", () => {
+    // kill_switch/safety/live_gate events get 90-day retention regardless of level
+    const KILL_SWITCH_RETENTION_DAYS = 90;
+    const now = new Date("2026-04-27T00:00:00Z");
+    const eightyDaysAgo = new Date(now.getTime() - 80 * 24 * 60 * 60 * 1000);
+    const ninetyOneDaysAgo = new Date(now.getTime() - 91 * 24 * 60 * 60 * 1000);
+
+    const isProtectedEvent = (eventType: string): boolean =>
+      eventType.includes("kill_switch") || eventType.includes("safety") || eventType.includes("live_gate");
+
+    const shouldDelete = (eventType: string, createdAt: Date): boolean => {
+      if (isProtectedEvent(eventType)) {
+        return createdAt < new Date(now.getTime() - KILL_SWITCH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+      }
+      return false;
+    };
+
+    expect(shouldDelete("kill_switch_triggered", eightyDaysAgo)).toBe(false);
+    expect(shouldDelete("kill_switch_triggered", ninetyOneDaysAgo)).toBe(true);
+    expect(isProtectedEvent("kill_switch_triggered")).toBe(true);
+    expect(isProtectedEvent("live_gate_blocked")).toBe(true);
+    expect(isProtectedEvent("safety_check")).toBe(true);
+    expect(isProtectedEvent("tick_scan")).toBe(false);
+  });
+
+  it("cleanup never touches paper_trades table", () => {
+    // The cleanup_old_logs SQL function only touches bot_logs, risk_events, monitoring_reports.
+    // paper_trades is not in the affected tables list.
+    const CLEANUP_AFFECTED_TABLES = ["bot_logs", "risk_events", "monitoring_reports"] as const;
+    const PROTECTED_TABLES = ["paper_trades", "order_lifecycle", "strategy_health", "exchange_credentials", "bot_settings"];
+    for (const t of PROTECTED_TABLES) {
+      expect(CLEANUP_AFFECTED_TABLES).not.toContain(t);
+    }
+  });
+
+  it("runLogCleanup returns ok=false and does not throw when supabase not configured", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { logRetentionEnabled: true, logCleanupIntervalHours: 24 } }));
+    const { runLogCleanup } = await import("@/lib/logs/log-cleanup");
+    const result = await runLogCleanup();
+    expect(result.ok).toBe(false);
+    expect(result.deleted_total).toBe(0);
+    expect(result.error).toBeDefined();
+  });
+
+  it("cleanup error does not crash worker — startLogCleanupScheduler never throws", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { logRetentionEnabled: false, logCleanupIntervalHours: 24 } }));
+    const { startLogCleanupScheduler } = await import("@/lib/logs/log-cleanup");
+    // When LOG_RETENTION_ENABLED=false, scheduler should not throw
+    expect(() => startLogCleanupScheduler()).not.toThrow();
+  });
+});

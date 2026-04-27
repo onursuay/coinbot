@@ -118,6 +118,10 @@ export const env = {
   // ── Worker identity (for heartbeat) ──
   workerId: str(process.env.WORKER_ID, "vercel-default"),
 
+  // ── Log retention / cleanup ──
+  logRetentionEnabled: bool(process.env.LOG_RETENTION_ENABLED, true),
+  logCleanupIntervalHours: num(process.env.LOG_CLEANUP_INTERVAL_HOURS, 24),
+
   // ── Monitoring reports ──
   reportEmailEnabled: bool(process.env.REPORT_EMAIL_ENABLED, false),
   reportEmailIntervalMinutes: num(process.env.REPORT_EMAIL_INTERVAL_MINUTES, 30),

@@ -37,6 +37,7 @@ import { reconcileOrders } from "../src/lib/engines/order-lifecycle-manager";
 import { resolveActiveExchange } from "../src/lib/exchanges/resolve-active-exchange";
 import { startReportScheduler } from "../src/lib/reports/report-scheduler";
 import { emptyTickStats, type TickPeriodStats } from "../src/lib/reports/monitoring-report";
+import { startLogCleanupScheduler } from "../src/lib/logs/log-cleanup";
 
 const TICK_INTERVAL_SEC = Number(process.env.TICK_INTERVAL_SEC ?? 30);
 const HEARTBEAT_INTERVAL_SEC = Number(process.env.HEARTBEAT_INTERVAL_SEC ?? 15);
@@ -227,6 +228,8 @@ process.on("uncaughtException", (e: any) => {
 const userId = getCurrentUserId();
 
 console.log(`[worker] starting workerId=${WORKER_ID} tickSec=${TICK_INTERVAL_SEC} heartbeatSec=${HEARTBEAT_INTERVAL_SEC}`);
+
+startLogCleanupScheduler();
 
 startReportScheduler({
   userId,
