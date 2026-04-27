@@ -2174,6 +2174,49 @@ describe("dynamic universe v2", () => {
     }
   });
 
+  it("selectDynamicCandidates rejects weak momentum symbols (|change| < 1%)", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    const tickerMap = {
+      "FLATCOIN/USDT": { quoteVolume24h: 500_000_000, spread: 0.001, changePercent24h: 0.3 },
+      "MOVING/USDT":   { quoteVolume24h: 500_000_000, spread: 0.001, changePercent24h: 2.5 },
+    };
+    const result = selectDynamicCandidates({
+      allSymbols: ["FLATCOIN/USDT", "MOVING/USDT"],
+      tickerMap: tickerMap as any,
+      coreSet: new Set(),
+      maxCandidates: 10,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+      minMomentumPct: 1.0,
+    });
+    expect(result.candidates).not.toContain("FLATCOIN/USDT");
+    expect(result.candidates).toContain("MOVING/USDT");
+    expect(result.rejectedWeakMomentum).toBe(1);
+  });
+
+  it("selectDynamicCandidates zero candidates is valid — quality filter, not quota filler", async () => {
+    const { selectDynamicCandidates } = await import("@/lib/engines/dynamic-universe");
+    // All coins are high-volume but completely flat — no momentum
+    const tickerMap = {
+      "FLATBIG/USDT":  { quoteVolume24h: 5_000_000_000, spread: 0.001, changePercent24h: 0.1 },
+      "FLATHUGE/USDT": { quoteVolume24h: 2_000_000_000, spread: 0.001, changePercent24h: 0.2 },
+    };
+    const result = selectDynamicCandidates({
+      allSymbols: ["FLATBIG/USDT", "FLATHUGE/USDT"],
+      tickerMap: tickerMap as any,
+      coreSet: new Set(),
+      maxCandidates: 30,
+      minVolume24hUsd: 50_000_000,
+      maxSpreadPct: 0.2,
+      maxPriceChangePct: 25,
+      minMomentumPct: 1.0,
+    });
+    // 0 dynamic candidates is correct — quota should NOT be filled with low-quality coins
+    expect(result.candidates).toHaveLength(0);
+    expect(result.rejectedWeakMomentum).toBe(2);
+  });
+
   it("live trading remains blocked — HARD_LIVE_TRADING_ALLOWED=false", () => {
     vi.stubEnv("HARD_LIVE_TRADING_ALLOWED", "false");
     // Dynamic universe v2 does not change the live trading gate

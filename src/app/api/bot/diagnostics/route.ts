@@ -32,6 +32,9 @@ const EMPTY_TICK_STATS = {
   dynamicRejectedStablecoin: 0,
   dynamicRejectedHighSpread: 0,
   dynamicRejectedPumpDump: 0,
+  dynamicRejectedWeakMomentum: 0,
+  dynamicRejectedNoData: 0,
+  dynamicRejectedInsufficientDepth: 0,
 };
 
 export async function GET() {
@@ -167,6 +170,9 @@ export async function GET() {
         dynamicRejectedStablecoin: tickSummary.dynamicRejectedStablecoin ?? 0,
         dynamicRejectedHighSpread: tickSummary.dynamicRejectedHighSpread ?? 0,
         dynamicRejectedPumpDump: tickSummary.dynamicRejectedPumpDump ?? 0,
+        dynamicRejectedWeakMomentum: tickSummary.dynamicRejectedWeakMomentum ?? 0,
+        dynamicRejectedNoData: tickSummary.dynamicRejectedNoData ?? 0,
+        dynamicRejectedInsufficientDepth: tickSummary.dynamicRejectedInsufficientDepth ?? 0,
       } : EMPTY_TICK_STATS,
       scan_details: tickSummary?.scanDetails ?? [],
       tick_identity: tickSummary ? {

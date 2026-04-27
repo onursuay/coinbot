@@ -18,6 +18,9 @@ interface TickStats {
   dynamicRejectedStablecoin?: number;
   dynamicRejectedHighSpread?: number;
   dynamicRejectedPumpDump?: number;
+  dynamicRejectedWeakMomentum?: number;
+  dynamicRejectedNoData?: number;
+  dynamicRejectedInsufficientDepth?: number;
 }
 
 interface ScanRow {
@@ -158,29 +161,56 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* Dynamic universe stats */}
-      {stats && (stats.dynamicCandidates ?? 0) > 0 && (
-        <div className="card grid grid-cols-5 gap-3 text-center py-2 text-xs">
-          <div>
-            <div className="text-muted">Dinamik Aday</div>
-            <div className="font-semibold tabular-nums text-accent">{stats.dynamicCandidates ?? 0}</div>
+      {/* Dynamic universe stats — always shown when stats exist; 0 candidates is valid (quality filter working) */}
+      {stats && (
+        <div className="card py-2 text-xs space-y-2">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-center">
+            <div>
+              <div className="text-muted">Core (sabit)</div>
+              <div className="font-semibold tabular-nums">10</div>
+            </div>
+            <div>
+              <div className="text-muted">Dinamik Fırsat Adayı</div>
+              <div className={`font-semibold tabular-nums ${(stats.dynamicCandidates ?? 0) > 0 ? "text-accent" : "text-muted"}`}>
+                {stats.dynamicCandidates ?? 0}
+              </div>
+            </div>
+            <div>
+              <div className="text-muted">Dyn. Yetersiz Likidite</div>
+              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedInsufficientDepth ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-muted">Dyn. Veri Yok</div>
+              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedNoData ?? 0}</div>
+            </div>
           </div>
-          <div>
-            <div className="text-muted">Dyn. Düşük Hac.</div>
-            <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedLowVolume ?? 0}</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 text-center border-t border-border pt-2">
+            <div>
+              <div className="text-muted">Elenen Düşük Hacim</div>
+              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedLowVolume ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-muted">Elenen Spread</div>
+              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedHighSpread ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-muted">Elenen Zayıf Mom.</div>
+              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedWeakMomentum ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-muted">Elenen Pump/Dump</div>
+              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedPumpDump ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-muted">Elenen Stablecoin</div>
+              <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedStablecoin ?? 0}</div>
+            </div>
           </div>
-          <div>
-            <div className="text-muted">Dyn. Stablecoin</div>
-            <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedStablecoin ?? 0}</div>
-          </div>
-          <div>
-            <div className="text-muted">Dyn. Spread</div>
-            <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedHighSpread ?? 0}</div>
-          </div>
-          <div>
-            <div className="text-muted">Dyn. Pump/Dump</div>
-            <div className="font-semibold tabular-nums text-muted">{stats.dynamicRejectedPumpDump ?? 0}</div>
-          </div>
+          {(stats.dynamicCandidates ?? 0) === 0 && (
+            <p className="text-center text-muted pt-1">
+              Kaliteli dinamik aday yok — tarayıcı yalnızca 10 core coin ile çalışıyor. Bu beklenen davranıştır.
+            </p>
+          )}
         </div>
       )}
 

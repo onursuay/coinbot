@@ -7,10 +7,11 @@ export interface DynamicCandidateOptions {
   allSymbols: string[];
   tickerMap: Record<string, Ticker>;
   coreSet: Set<string>;
-  maxCandidates: number;
+  maxCandidates: number;          // upper ceiling, NOT a target quota
   minVolume24hUsd: number;
-  maxSpreadPct: number;          // e.g. 0.2 means 0.2%
-  maxPriceChangePct: number;     // abs 24h change — pump/dump proxy
+  maxSpreadPct: number;           // e.g. 0.2 means 0.2%
+  maxPriceChangePct: number;      // abs 24h change — pump/dump proxy
+  minMomentumPct?: number;        // abs 24h change minimum — dead/flat markets rejected (default 1.0%)
 }
 
 export interface DynamicCandidateResult {
@@ -20,6 +21,7 @@ export interface DynamicCandidateResult {
   rejectedStablecoin: number;
   rejectedHighSpread: number;
   rejectedPumpDump: number;
+  rejectedWeakMomentum: number;   // |change| < minMomentumPct — no observable trend
   rejectedNoData: number;
 }
 
@@ -31,10 +33,12 @@ const STABLE_BASES = new Set([
 
 export function selectDynamicCandidates(opts: DynamicCandidateOptions): DynamicCandidateResult {
   const maxSpreadFrac = opts.maxSpreadPct / 100;
+  const minMomentumPct = opts.minMomentumPct ?? 1.0;
   let rejectedLowVolume = 0;
   let rejectedStablecoin = 0;
   let rejectedHighSpread = 0;
   let rejectedPumpDump = 0;
+  let rejectedWeakMomentum = 0;
   let rejectedNoData = 0;
   let totalConsidered = 0;
   const candidates: { symbol: string; volume: number }[] = [];
@@ -49,9 +53,13 @@ export function selectDynamicCandidates(opts: DynamicCandidateOptions): DynamicC
     if (t.quoteVolume24h < opts.minVolume24hUsd) { rejectedLowVolume++; continue; }
     if (t.spread > maxSpreadFrac) { rejectedHighSpread++; continue; }
     if (Math.abs(t.changePercent24h) > opts.maxPriceChangePct) { rejectedPumpDump++; continue; }
+    // Weak momentum: flat/dead markets have no observable trend — high volume alone is not enough
+    if (Math.abs(t.changePercent24h) < minMomentumPct) { rejectedWeakMomentum++; continue; }
     candidates.push({ symbol: sym, volume: t.quoteVolume24h });
   }
 
+  // Sort by volume descending among quality-filtered candidates.
+  // maxCandidates is a ceiling only — if fewer quality candidates exist, the list stays short.
   candidates.sort((a, b) => b.volume - a.volume);
   return {
     candidates: candidates.slice(0, opts.maxCandidates).map((c) => c.symbol),
@@ -60,6 +68,7 @@ export function selectDynamicCandidates(opts: DynamicCandidateOptions): DynamicC
     rejectedStablecoin,
     rejectedHighSpread,
     rejectedPumpDump,
+    rejectedWeakMomentum,
     rejectedNoData,
   };
 }

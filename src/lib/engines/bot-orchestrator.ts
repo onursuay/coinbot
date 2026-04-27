@@ -56,6 +56,9 @@ export interface TickResult {
   dynamicRejectedStablecoin?: number;
   dynamicRejectedHighSpread?: number;
   dynamicRejectedPumpDump?: number;
+  dynamicRejectedWeakMomentum?: number;
+  dynamicRejectedNoData?: number;
+  dynamicRejectedInsufficientDepth?: number;  // order book depth check in per-symbol loop
 }
 
 const PAPER_BALANCE = 1000;
@@ -277,7 +280,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       tickerMap = universe.tickerMap;
       nextCursor = universe.nextCursor;
 
-      // Dynamic Universe v2: quality-select candidates from full symbol list
+      // Dynamic Universe v2: quality-select candidates from full symbol list.
+      // maxCandidates is a ceiling only — fewer quality candidates = shorter list, never quota-filled.
       dynamicResult = selectDynamicCandidates({
         allSymbols: universe.allSymbols,
         tickerMap,
@@ -286,6 +290,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         minVolume24hUsd: 50_000_000,
         maxSpreadPct: 0.2,
         maxPriceChangePct: 25,
+        minMomentumPct: 1.0,   // |24h change| must be >= 1% — dead/flat markets excluded
       });
 
       // Batch = 10 core coins + up to DYNAMIC_ANALYSIS_LIMIT dynamic candidates
@@ -306,6 +311,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   result.dynamicRejectedStablecoin = dynamicResult?.rejectedStablecoin ?? 0;
   result.dynamicRejectedHighSpread = dynamicResult?.rejectedHighSpread ?? 0;
   result.dynamicRejectedPumpDump = dynamicResult?.rejectedPumpDump ?? 0;
+  result.dynamicRejectedWeakMomentum = dynamicResult?.rejectedWeakMomentum ?? 0;
+  result.dynamicRejectedNoData = dynamicResult?.rejectedNoData ?? 0;
 
   const daily = await getDailyStatus(userId, PAPER_BALANCE);
   if (daily.targetHit) {
@@ -515,6 +522,14 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
           result.scanDetails.push(detail);
           continue;
         }
+        if (orderbookDepthUsdt < 150_000) {
+          const r = `Dynamic: Order book yetersiz (${(orderbookDepthUsdt / 1000).toFixed(0)}K USD)`;
+          detail.rejectReason = r;
+          result.rejectedSignals.push({ symbol, reason: r });
+          result.dynamicRejectedInsufficientDepth = (result.dynamicRejectedInsufficientDepth ?? 0) + 1;
+          result.scanDetails.push(detail);
+          continue;
+        }
         tierResult = {
           originalTier: "REJECTED" as const,
           effectiveTier: "TIER_3" as const,
@@ -653,6 +668,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     dynamicRejectedStablecoin: dynamicResult?.rejectedStablecoin ?? 0,
     dynamicRejectedHighSpread: dynamicResult?.rejectedHighSpread ?? 0,
     dynamicRejectedPumpDump: dynamicResult?.rejectedPumpDump ?? 0,
+    dynamicRejectedWeakMomentum: dynamicResult?.rejectedWeakMomentum ?? 0,
+    dynamicRejectedNoData: dynamicResult?.rejectedNoData ?? 0,
+    dynamicRejectedInsufficientDepth: result.dynamicRejectedInsufficientDepth ?? 0,
     signals: result.generatedSignals.length,
     opened: result.openedPaperTrades.length,
     rejected: result.rejectedSignals.length,
