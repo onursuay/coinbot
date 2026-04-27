@@ -9,6 +9,8 @@ export default function ApiSettings() {
   const [form, setForm] = useState({ exchange: "mexc", apiKey: "", apiSecret: "", apiPassphrase: "" });
   const [busy, setBusy] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [diagChecks, setDiagChecks] = useState<Record<string, string> | null>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
 
   const refresh = async () => {
     const [s, c] = await Promise.all([
@@ -55,6 +57,20 @@ export default function ApiSettings() {
     if (!res.ok) alert(res.error); else refresh();
   };
 
+  const runDiag = async () => {
+    setDiagBusy(true);
+    setDiagChecks(null);
+    try {
+      const r = await fetch("/api/debug/connect-check");
+      const j = await r.json();
+      setDiagChecks(j.checks ?? {});
+    } catch (e: any) {
+      setDiagChecks({ hata: e?.message ?? "ulaşılamadı" });
+    } finally {
+      setDiagBusy(false);
+    }
+  };
+
   const sel = supported.find((x) => x.slug === form.exchange);
   const requiresPassphrase = sel?.requires_passphrase || form.exchange === "okx";
 
@@ -66,6 +82,25 @@ export default function ApiSettings() {
         <div>⚠ API key oluştururken <b>Withdrawal</b> iznini AÇMAYIN.</div>
         <div>⚠ Mümkünse <b>IP whitelist</b> kullanın (sunucu IP'leri için Vercel docs'a bakın).</div>
         <div>⚠ Trade izni olan API key'ler risk içerir; live trading varsayılan kapalıdır.</div>
+      </div>
+
+      {/* Diagnostics */}
+      <div className="card space-y-2">
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted">Bağlantı çalışmıyor mu?</span>
+          <button className="btn-ghost text-xs" onClick={runDiag} disabled={diagBusy}>
+            {diagBusy ? "Kontrol ediliyor..." : "Tanı Çalıştır"}
+          </button>
+        </div>
+        {diagChecks && (
+          <div className="grid grid-cols-1 gap-1 text-sm font-mono">
+            {Object.entries(diagChecks).map(([k, v]) => (
+              <div key={k} className={v.startsWith("✓") ? "text-success" : "text-danger"}>
+                <span className="text-muted mr-2">{k}:</span>{v}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <section className="card space-y-3">
