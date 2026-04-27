@@ -48,25 +48,25 @@ export default function RiskPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Risk Settings</h1>
+      <h1 className="text-xl font-semibold">Risk Ayarları</h1>
 
       <div className="grid md:grid-cols-3 gap-3">
-        <Kpi label="System Hard Cap" value={`${policy.policy.systemHardLeverageCap}x`} accent="warning" />
-        <Kpi label="Daily PnL" value={fmtUsd(policy.daily.realizedPnlUsd)} accent={policy.daily.realizedPnlUsd >= 0 ? "success" : "danger"} />
-        <Kpi label="Daily Loss Limit" value={fmtUsd(policy.daily.dailyLossLimitUsd)} accent="danger" />
+        <Kpi label="Sistem Üst Limiti" value={`${policy.policy.systemHardLeverageCap}x`} accent="warning" />
+        <Kpi label="Günlük Kâr/Zarar" value={fmtUsd(policy.daily.realizedPnlUsd)} accent={policy.daily.realizedPnlUsd >= 0 ? "success" : "danger"} />
+        <Kpi label="Günlük Zarar Limiti" value={fmtUsd(policy.daily.dailyLossLimitUsd)} accent="danger" />
       </div>
 
       <section className="card grid md:grid-cols-2 gap-4">
-        <Field label="Default Leverage (≤5)" type="number" value={form.max_leverage} onChange={(v) => setForm({ ...form, max_leverage: v })} step={1} min={1} max={5} />
-        <Field label="Max Allowed Leverage (≤5)" type="number" value={form.max_allowed_leverage} onChange={(v) => setForm({ ...form, max_allowed_leverage: v })} step={1} min={1} max={5} />
-        <Field label="Risk per Trade (%)" type="number" step={0.1} min={0.1} max={2} value={form.risk_per_trade_percent} onChange={(v) => setForm({ ...form, risk_per_trade_percent: v })} />
-        <Field label="Min Risk:Reward" type="number" step={0.1} min={1} max={10} value={form.min_risk_reward_ratio} onChange={(v) => setForm({ ...form, min_risk_reward_ratio: v })} />
-        <Field label="Daily Loss Limit (%)" type="number" step={0.5} min={1} max={20} value={form.max_daily_loss_percent} onChange={(v) => setForm({ ...form, max_daily_loss_percent: v })} />
-        <Field label="Weekly Loss Limit (%)" type="number" step={0.5} min={1} max={40} value={form.max_weekly_loss_percent} onChange={(v) => setForm({ ...form, max_weekly_loss_percent: v })} />
-        <Field label="Daily Profit Target (USD, 1-50)" type="number" step={1} min={1} max={50} value={form.daily_profit_target_usd} onChange={(v) => setForm({ ...form, daily_profit_target_usd: v })} />
-        <Field label="Max Open Positions" type="number" step={1} min={1} max={5} value={form.max_open_positions} onChange={(v) => setForm({ ...form, max_open_positions: v })} />
+        <Field label="Varsayılan Kaldıraç (≤5)" type="number" value={form.max_leverage} onChange={(v) => setForm({ ...form, max_leverage: v })} step={1} min={1} max={5} />
+        <Field label="Maksimum İzinli Kaldıraç (≤5)" type="number" value={form.max_allowed_leverage} onChange={(v) => setForm({ ...form, max_allowed_leverage: v })} step={1} min={1} max={5} />
+        <Field label="İşlem Başına Risk (%)" type="number" step={0.1} min={0.1} max={2} value={form.risk_per_trade_percent} onChange={(v) => setForm({ ...form, risk_per_trade_percent: v })} />
+        <Field label="Minimum Risk/Ödül" type="number" step={0.1} min={1} max={10} value={form.min_risk_reward_ratio} onChange={(v) => setForm({ ...form, min_risk_reward_ratio: v })} />
+        <Field label="Günlük Zarar Limiti (%)" type="number" step={0.5} min={1} max={20} value={form.max_daily_loss_percent} onChange={(v) => setForm({ ...form, max_daily_loss_percent: v })} />
+        <Field label="Haftalık Zarar Limiti (%)" type="number" step={0.5} min={1} max={40} value={form.max_weekly_loss_percent} onChange={(v) => setForm({ ...form, max_weekly_loss_percent: v })} />
+        <Field label="Günlük Kâr Hedefi (USD, 1-50)" type="number" step={1} min={1} max={50} value={form.daily_profit_target_usd} onChange={(v) => setForm({ ...form, daily_profit_target_usd: v })} />
+        <Field label="Maksimum Açık Pozisyon" type="number" step={1} min={1} max={5} value={form.max_open_positions} onChange={(v) => setForm({ ...form, max_open_positions: v })} />
         <div>
-          <div className="label">Margin Mode</div>
+          <div className="label">Marjin Modu</div>
           <select className="input" value={form.margin_mode} onChange={(e) => setForm({ ...form, margin_mode: e.target.value })}>
             <option value="isolated">isolated</option>
             <option value="cross">cross (önerilmez)</option>
@@ -74,7 +74,7 @@ export default function RiskPage() {
         </div>
         <div className="flex items-center gap-2 mt-6">
           <input type="checkbox" checked={!!form.conservative_mode_enabled} onChange={(e) => setForm({ ...form, conservative_mode_enabled: e.target.checked })} />
-          <span className="text-sm">Conservative Mode (hedef sonrası muhafazakâr)</span>
+          <span className="text-sm">Muhafazakâr Mod (hedef sonrası muhafazakâr)</span>
         </div>
       </section>
 

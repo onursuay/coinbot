@@ -203,7 +203,7 @@ export default function HomePage() {
       </div>
 
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Dashboard</h1>
+        <h1 className="text-xl font-semibold">Panel</h1>
       </div>
 
       {/* ===== Control Panel ===== */}
@@ -220,8 +220,8 @@ export default function HomePage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
           <InfoRow label="Mod" value={tradingMode.toUpperCase()} accent={tradingMode === "live" ? "danger" : "success"} />
           <InfoRow label="Borsa" value={activeExchange.toUpperCase()} />
-          <InfoRow label="Live Enable" value={enableLiveTrading ? "Evet" : "Hayır"} accent={enableLiveTrading ? "danger" : "muted"} />
-          <InfoRow label="HARD_LIVE_GATE" value={hardLiveAllowed ? "AÇIK" : "KAPALI"} accent={hardLiveAllowed ? "warning" : "success"} />
+          <InfoRow label="Canlı İşlem" value={enableLiveTrading ? "Evet" : "Hayır"} accent={enableLiveTrading ? "danger" : "muted"} />
+          <InfoRow label="Canlı İşlem Kilidi" value={hardLiveAllowed ? "AÇIK" : "Kapalı"} accent={hardLiveAllowed ? "warning" : "success"} />
         </div>
 
         {/* Action buttons */}
@@ -231,7 +231,7 @@ export default function HomePage() {
             onClick={() => actWithBody("/api/bot/start", "Start Paper Bot", { mode: "paper", enableLive: false })}
             disabled={busy || isRunning}
           >
-            Paper Başlat
+            Sanal İşlemi Başlat
           </button>
 
           <button
@@ -250,7 +250,7 @@ export default function HomePage() {
             disabled={busy || isRunning}
             title={!hardLiveAllowed ? "HARD_LIVE_TRADING_ALLOWED=false — devre dışı" : undefined}
           >
-            Live Başlat {!hardLiveAllowed && "🔒"}
+            Canlı İşlemi Başlat {!hardLiveAllowed && "🔒"}
           </button>
 
           <button
@@ -270,11 +270,11 @@ export default function HomePage() {
             }}
             disabled={busy}
           >
-            Acil Dur
+            Acil Durdur
           </button>
 
           <button className="btn-primary text-sm px-4 py-2 ml-auto" onClick={runTick} disabled={busy}>
-            {busy ? "Çalışıyor…" : "Tick Çalıştır"}
+            {busy ? "Çalışıyor…" : "Taramayı Çalıştır"}
           </button>
         </div>
 
@@ -289,14 +289,14 @@ export default function HomePage() {
       {/* ===== Worker Heartbeat ===== */}
       <div className={`card border ${workerHealth?.online ? "border-success/30" : "border-warning/30"}`}>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold">Worker Durumu</h2>
+          <h2 className="font-semibold">Sunucu Bot Durumu</h2>
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${workerHealth?.online ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
-            {workerHealth?.online ? "ONLINE" : "OFFLINE / YOK"}
+            {workerHealth?.online ? "ÇEVRİMİÇİ" : "ÇEVRİMDIŞI / YOK"}
           </span>
         </div>
         {workerHealth ? (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-            <InfoRow label="Worker ID" value={workerHealth.workerId ?? "—"} />
+            <InfoRow label="Sunucu Bot ID" value={workerHealth.workerId ?? "—"} />
             <InfoRow label="Son Heartbeat" value={workerHealth.ageMs !== null ? `${Math.round(workerHealth.ageMs / 1000)}s önce` : "—"} accent={workerHealth.online ? "success" : "danger"} />
             <InfoRow label="WebSocket" value={workerHealth.websocketStatus ?? "—"} accent={workerHealth.websocketStatus === "connected" ? "success" : "muted"} />
             <InfoRow label="Binance API" value={workerHealth.binanceApiStatus ?? "—"} accent={workerHealth.binanceApiStatus === "ok" ? "success" : "muted"} />
@@ -344,16 +344,16 @@ export default function HomePage() {
       <ScannerVisibilityCard diagnostics={diagnostics} open={scannerOpen} onToggle={() => setScannerOpen((v) => !v)} />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Kpi label="Daily PnL" value={fmtUsd(daily?.realizedPnlUsd ?? 0)} accent={(daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
-        <Kpi label="Daily Target" value={fmtUsd(daily?.dailyTargetUsd ?? 20)} sub={daily?.targetHit ? "Hedef tamam!" : `Kalan ${fmtUsd(distance)}`} />
-        <Kpi label="Total PnL (paper)" value={fmtUsd(perf?.totalPnl ?? 0)} accent={(perf?.totalPnl ?? 0) >= 0 ? "success" : "danger"} />
-        <Kpi label="Win Rate" value={fmtPct(perf?.winRate ?? 0)} sub={`${perf?.totalTrades ?? 0} işlem`} />
+        <Kpi label="Günlük Kâr/Zarar" value={fmtUsd(daily?.realizedPnlUsd ?? 0)} accent={(daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
+        <Kpi label="Günlük Hedef" value={fmtUsd(daily?.dailyTargetUsd ?? 20)} sub={daily?.targetHit ? "Hedef tamam!" : `Kalan ${fmtUsd(distance)}`} />
+        <Kpi label="Toplam Kâr/Zarar (Sanal)" value={fmtUsd(perf?.totalPnl ?? 0)} accent={(perf?.totalPnl ?? 0) >= 0 ? "success" : "danger"} />
+        <Kpi label="Kazanma Oranı" value={fmtPct(perf?.winRate ?? 0)} sub={`${perf?.totalTrades ?? 0} işlem`} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Kpi label="Profit Factor" value={fmtNum(perf?.profitFactor ?? 0)} />
-        <Kpi label="Max Drawdown" value={fmtUsd(perf?.maxDrawdown ?? 0)} accent="danger" />
-        <Kpi label="Open Positions" value={String(status?.openPositions ?? 0)} sub={`max ${status?.config?.maxAllowedLeverage ?? 5}x lev`} />
+        <Kpi label="Kâr Faktörü" value={fmtNum(perf?.profitFactor ?? 0)} />
+        <Kpi label="Maksimum Düşüş" value={fmtUsd(perf?.maxDrawdown ?? 0)} accent="danger" />
+        <Kpi label="Açık Pozisyonlar" value={String(status?.openPositions ?? 0)} sub={`max ${status?.config?.maxAllowedLeverage ?? 5}x kaldıraç`} />
       </div>
 
       {/* ===== Strategy Health Score ===== */}
@@ -393,7 +393,7 @@ export default function HomePage() {
             <thead><tr><th>Sym</th><th>TF</th><th>Tip</th><th>Skor</th><th>R:R</th><th>Neden / Red</th></tr></thead>
             <tbody>
               {signals.length === 0 && (
-                <tr><td colSpan={6} className="text-muted text-sm py-3">Henüz sinyal yok — Tick Çalıştır ile tarama başlatın.</td></tr>
+                <tr><td colSpan={6} className="text-muted text-sm py-3">Henüz sinyal yok — Taramayı Çalıştır ile tarama başlatın.</td></tr>
               )}
               {signals.map((s) => (
                 <tr key={s.id}>
@@ -504,9 +504,16 @@ function StatusBadge({ status }: { status: string }) {
     s === "kill_switch" || s === "kill_switch_triggered" ? "bg-danger/20 text-danger border-danger/40 animate-pulse" :
     s === "paused" ? "bg-warning/20 text-warning border-warning/40" :
     "bg-muted/20 text-muted border-border";
+  const label =
+    s === "running" || s === "running_paper" ? "ÇALIŞIYOR" :
+    s === "running_live" ? "CANLI ÇALIŞIYOR" :
+    s === "stopped" ? "DURDU" :
+    s === "kill_switch" || s === "kill_switch_triggered" ? "ACİL DURDURULDU" :
+    s === "paused" ? "DURAKLADI" :
+    status.toUpperCase().replace(/_/g, " ");
   return (
     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${cls}`}>
-      {status.toUpperCase().replace("_", " ")}
+      {label}
     </span>
   );
 }
@@ -540,20 +547,20 @@ function SystemConfigCard({ envCheck, status }: { envCheck: any; status: any }) 
   return (
     <div className={`card border ${envCheck.ok ? "" : "border-danger/50"}`}>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="font-semibold">System Status</h2>
+        <h2 className="font-semibold">Sistem Durumu</h2>
         {!envCheck.ok && <span className="tag-danger text-xs">CONFIG INCOMPLETE</span>}
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-        <ConfigRow label="Connection" value={connectionOk ? "Connected" : "Error"} ok={connectionOk} />
-        <ConfigRow label="Security" value={securityOk ? "Active" : "Error"} ok={securityOk} />
-        <ConfigRow label="Live Trading" value={cfg.liveTrading ? "Enabled" : "Disabled"} ok={!cfg.liveTrading} />
-        <ConfigRow label="Default Leverage" value={`${cfg.maxLeverage ?? 3}x`} ok />
-        <ConfigRow label="Max Allowed Leverage" value={`${cfg.maxAllowedLeverage ?? 5}x`} ok />
-        <ConfigRow label="Hard Cap" value={`${cfg.hardCap ?? 5}x`} ok />
+        <ConfigRow label="Bağlantı" value={connectionOk ? "Bağlı" : "Hata"} ok={connectionOk} />
+        <ConfigRow label="Güvenlik" value={securityOk ? "Aktif" : "Hata"} ok={securityOk} />
+        <ConfigRow label="Canlı İşlem" value={cfg.liveTrading ? "Açık" : "Kapalı"} ok={!cfg.liveTrading} />
+        <ConfigRow label="Varsayılan Kaldıraç" value={`${cfg.maxLeverage ?? 3}x`} ok />
+        <ConfigRow label="Maks. İzinli Kaldıraç" value={`${cfg.maxAllowedLeverage ?? 5}x`} ok />
+        <ConfigRow label="Üst Limit" value={`${cfg.hardCap ?? 5}x`} ok />
       </div>
       {!envCheck.ok && (
         <div className="mt-3 rounded-lg border border-danger/50 bg-danger/10 px-3 py-2 text-sm text-danger">
-          System configuration is incomplete. Please contact support.
+          Sistem yapılandırması eksik. Vercel ortam değişkenlerini kontrol edin.
         </div>
       )}
       {envCheck.warnings?.length > 0 && (
@@ -653,7 +660,7 @@ function ScannerVisibilityCard({ diagnostics, open, onToggle }: { diagnostics: a
         onClick={onToggle}
       >
         <div className="flex items-center gap-3">
-          <span className="font-semibold">Scanner Görünürlüğü</span>
+          <span className="font-semibold">Tarama Görünümü</span>
           {stats && (
             <span className="text-xs text-muted">
               {stats.scanned} tarandı · {stats.signals} sinyal · {stats.opened} açıldı · {stats.rejected} reddedildi · {stats.durationMs}ms

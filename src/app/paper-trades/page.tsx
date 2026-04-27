@@ -23,17 +23,17 @@ export default function PaperTradesPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Paper Trades</h1>
+      <h1 className="text-xl font-semibold">Sanal İşlemler</h1>
 
       <section className="card overflow-x-auto">
         <h2 className="font-semibold mb-2">Açık Pozisyonlar</h2>
         <table className="t">
           <thead><tr>
-            <th>Sym</th><th>Yön</th><th>Lev</th><th>Margin</th><th>Size</th>
-            <th>Entry</th><th>SL</th><th>TP</th><th>Liq~</th><th>R:R</th><th>Skor</th><th>Açılış</th><th></th>
+            <th>Sembol</th><th>Yön</th><th>Kaldıraç</th><th>Marjin</th><th>Boyut</th>
+            <th>Giriş</th><th>Zarar Durdur</th><th>Kâr Al</th><th>Tahmini Likidasyon</th><th>Risk/Ödül</th><th>Skor</th><th>Açılış</th><th></th>
           </tr></thead>
           <tbody>
-            {open.length === 0 && <tr><td colSpan={13} className="text-muted">açık pozisyon yok</td></tr>}
+            {open.length === 0 && <tr><td colSpan={13} className="text-muted">Açık pozisyon yok</td></tr>}
             {open.map((t) => (
               <tr key={t.id}>
                 <td className="font-medium">{t.symbol}</td>
@@ -48,7 +48,7 @@ export default function PaperTradesPage() {
                 <td>1:{fmtNum(t.risk_reward_ratio)}</td>
                 <td>{fmtNum(t.signal_score, 0)}</td>
                 <td className="text-xs text-muted">{new Date(t.opened_at).toLocaleString()}</td>
-                <td><button className="btn-ghost text-xs" onClick={() => close(t.id)}>Close</button></td>
+                <td><button className="btn-ghost text-xs" onClick={() => close(t.id)}>Kapat</button></td>
               </tr>
             ))}
           </tbody>
@@ -59,11 +59,11 @@ export default function PaperTradesPage() {
         <h2 className="font-semibold mb-2">Kapanan İşlemler</h2>
         <table className="t">
           <thead><tr>
-            <th>Sym</th><th>Yön</th><th>Lev</th><th>Entry</th><th>Exit</th><th>PnL</th><th>%</th>
-            <th>Fees</th><th>Slip</th><th>Funding</th><th>Sebep</th><th>Kapanış</th>
+            <th>Sembol</th><th>Yön</th><th>Kaldıraç</th><th>Giriş</th><th>Çıkış</th><th>Kâr/Zarar</th><th>%</th>
+            <th>Ücretler</th><th>Kayma</th><th>Fonlama</th><th>Sebep</th><th>Kapanış</th>
           </tr></thead>
           <tbody>
-            {closed.length === 0 && <tr><td colSpan={12} className="text-muted">henüz kapanan işlem yok</td></tr>}
+            {closed.length === 0 && <tr><td colSpan={12} className="text-muted">Henüz kapanan işlem yok</td></tr>}
             {closed.map((t) => (
               <tr key={t.id}>
                 <td className="font-medium">{t.symbol}</td>

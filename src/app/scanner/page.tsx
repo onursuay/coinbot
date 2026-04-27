@@ -75,14 +75,14 @@ export default function ScannerPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold">Market Scanner</h1>
+          <h1 className="text-xl font-semibold">Piyasa Tarayıcı</h1>
           <p className="text-xs text-muted mt-0.5">
             Tarama VPS worker tarafından otomatik yapılır. Bu buton sadece son tarama verilerini yeniler.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <span className={`tag ${workerOnline ? "tag-success" : "tag-danger"}`}>
-            {workerOnline ? "WORKER ONLINE" : "WORKER OFFLINE"}
+            {workerOnline ? "SUNUCU BOT ÇEVRİMİÇİ" : "SUNUCU BOT ÇEVRİMDIŞI"}
           </span>
           <span className="tag-muted">{exchange.toUpperCase()}</span>
           {data?.last_tick_at && (
@@ -158,10 +158,10 @@ export default function ScannerPage() {
             <thead>
               <tr>
                 <th>Sembol</th>
-                <th>Tier</th>
+                <th>Kademe</th>
                 <th>Spread</th>
                 <th>ATR%</th>
-                <th>Funding</th>
+                <th>Fonlama</th>
                 <th>Sinyal</th>
                 <th>Skor</th>
                 <th>Red Nedeni</th>
