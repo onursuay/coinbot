@@ -7,7 +7,7 @@ services:
       dockerfile: worker/Dockerfile
     image: coinbot-worker:latest
     container_name: coinbot-worker
-    restart: unless-stopped
+    restart: always   # always restart — handles VPS reboot even if container was stopped before shutdown
     env_file:
       - worker/.env   # copy worker/.env.example → worker/.env and fill in values
     environment:
