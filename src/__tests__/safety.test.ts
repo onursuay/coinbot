@@ -381,6 +381,190 @@ describe("diagnostics shape", () => {
   });
 });
 
+// ---- Diagnostics endpoint read-only contract ----
+describe("diagnostics endpoint read-only", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  function createSupabaseReadOnlyMock() {
+    const botSettingsState = {
+      is_active: true,
+      bot_status: "running_paper",
+      trading_mode: "paper",
+      active_exchange: "binance",
+      kill_switch_active: false,
+      kill_switch_reason: null,
+      last_tick_at: null,
+      last_tick_summary: null,
+    };
+
+    const mutationSpies = {
+      insert: vi.fn(),
+      update: vi.fn((patch: any) => {
+        Object.assign(botSettingsState, patch);
+        return { limit: vi.fn(async () => ({ data: null, error: null })) };
+      }),
+      upsert: vi.fn(),
+      delete: vi.fn(),
+    };
+
+    const from = vi.fn((table: string) => ({
+      insert: mutationSpies.insert,
+      update: mutationSpies.update,
+      upsert: mutationSpies.upsert,
+      delete: mutationSpies.delete,
+      select: vi.fn((_columns?: string, options?: { count?: string; head?: boolean }) => {
+        if (table === "bot_settings") {
+          return {
+            limit: vi.fn(async () => ({ data: [botSettingsState], error: null })),
+          };
+        }
+        if (table === "paper_trades") {
+          const count = options?.count === "exact" ? 0 : null;
+          return {
+            eq: vi.fn(() => ({
+              eq: vi.fn(async () => ({ data: [], error: null, count })),
+            })),
+          };
+        }
+        return {
+          limit: vi.fn(async () => ({ data: [], error: null })),
+          eq: vi.fn(() => ({
+            eq: vi.fn(async () => ({ data: [], error: null, count: 0 })),
+          })),
+        };
+      }),
+    }));
+
+    return { botSettingsState, mutationSpies, supabaseAdmin: vi.fn(() => ({ from })) };
+  }
+
+  it("GET /api/bot/diagnostics does not mutate bot_settings.is_active", async () => {
+    const mock = createSupabaseReadOnlyMock();
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: mock.supabaseAdmin,
+    }));
+    vi.doMock("@/lib/auth", () => ({ getCurrentUserId: () => "test-user" }));
+    vi.doMock("@/lib/engines/heartbeat", () => ({
+      getWorkerHealth: async () => ({
+        online: true,
+        workerId: "test-worker",
+        status: "running_paper",
+        lastHeartbeat: new Date().toISOString(),
+        ageMs: 1000,
+        websocketStatus: "connected",
+        binanceApiStatus: "unknown",
+        openPositionsCount: 0,
+        lastError: null,
+      }),
+    }));
+    vi.doMock("@/lib/engines/live-readiness", () => ({
+      checkLiveReadiness: async () => ({
+        ready: false,
+        paperTradesCompleted: 0,
+        paperTradesRequired: 100,
+        blockers: [],
+        checks: [],
+      }),
+    }));
+
+    const { GET } = await import("@/app/api/bot/diagnostics/route");
+    const response = await GET();
+    const body = await response.json();
+
+    expect(body.ok).toBe(true);
+    expect(mock.botSettingsState.is_active).toBe(true);
+    expect(mock.mutationSpies.insert).not.toHaveBeenCalled();
+    expect(mock.mutationSpies.update).not.toHaveBeenCalled();
+    expect(mock.mutationSpies.upsert).not.toHaveBeenCalled();
+    expect(mock.mutationSpies.delete).not.toHaveBeenCalled();
+  });
+
+  it("POST /api/bot/diagnostics is rejected and does not mutate bot_settings.is_active", async () => {
+    const mock = createSupabaseReadOnlyMock();
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: mock.supabaseAdmin,
+    }));
+
+    const { POST } = await import("@/app/api/bot/diagnostics/route");
+    const response = await POST();
+    const body = await response.json();
+
+    expect(response.status).toBe(405);
+    expect(body.ok).toBe(false);
+    expect(mock.botSettingsState.is_active).toBe(true);
+    expect(mock.mutationSpies.insert).not.toHaveBeenCalled();
+    expect(mock.mutationSpies.update).not.toHaveBeenCalled();
+    expect(mock.mutationSpies.upsert).not.toHaveBeenCalled();
+    expect(mock.mutationSpies.delete).not.toHaveBeenCalled();
+  });
+});
+
+// ---- API settings diagnostic button must not mutate bot state ----
+describe("api settings diagnostic button read-only", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("Tanı Çalıştır endpoint keeps bot_settings.is_active true", async () => {
+    const botSettingsState = { is_active: true };
+    const mutationSpies = {
+      insert: vi.fn(),
+      update: vi.fn((patch: any) => {
+        Object.assign(botSettingsState, patch);
+        return { limit: vi.fn(async () => ({ data: null, error: null })) };
+      }),
+      upsert: vi.fn(),
+      delete: vi.fn(),
+    };
+
+    const from = vi.fn((_table: string) => ({
+      insert: mutationSpies.insert,
+      update: mutationSpies.update,
+      upsert: mutationSpies.upsert,
+      delete: mutationSpies.delete,
+      select: vi.fn(() => ({
+        order: vi.fn(async () => ({ data: [], error: null })),
+      })),
+    }));
+
+    vi.doMock("@/lib/env", () => ({
+      env: {
+        supabaseUrl: "mock-url",
+        supabaseServiceRoleKey: "mock-service-role",
+        credentialEncryptionKey: "mock-encryption-key",
+      },
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseAdmin: vi.fn(() => ({ from })),
+    }));
+    vi.doMock("@/lib/crypto", () => ({
+      decryptSecret: vi.fn((value: string) => (value === "encrypted-test" ? "test-value-12345" : "masked-test-key")),
+      encryptSecret: vi.fn(() => "encrypted-test"),
+      maskApiKey: vi.fn(() => "mask****key"),
+    }));
+
+    const { GET } = await import("@/app/api/debug/connect-check/route");
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toHaveProperty("checks");
+    expect(botSettingsState.is_active).toBe(true);
+    expect(mutationSpies.insert).not.toHaveBeenCalled();
+    expect(mutationSpies.update).not.toHaveBeenCalled();
+    expect(mutationSpies.upsert).not.toHaveBeenCalled();
+    expect(mutationSpies.delete).not.toHaveBeenCalled();
+  });
+});
+
 // ---- Env-check: exchange defaults ----
 describe("env-check exchange defaults", () => {
   it("DEFAULT_EXCHANGE missing → binance", () => {

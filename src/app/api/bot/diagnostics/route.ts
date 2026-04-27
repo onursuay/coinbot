@@ -120,3 +120,7 @@ export async function GET() {
     return fail(e?.message ?? "diagnostics failed", 500);
   }
 }
+
+export async function POST() {
+  return fail("Diagnostics endpoint is read-only. Use GET.", 405);
+}
