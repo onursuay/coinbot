@@ -72,9 +72,57 @@ export async function GET() {
       resolveActiveExchange(userId),
     ]);
 
+    // Read-only threshold simulation — non-critical, failure does not break diagnostics
+    let recentSignals: { symbol: string; signal_type: string; signal_score: number; rejected_reason: string | null }[] = [];
+    try {
+      const signalsRes = await (sb.from("signals") as any)
+        .select("symbol, signal_type, signal_score, rejected_reason")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      recentSignals = signalsRes?.data ?? [];
+    } catch { /* non-critical — threshold simulation degraded gracefully */ }
+
     const settings = settingsRes.data?.[0] ?? null;
     const tickSummary = (settings?.last_tick_summary as any) ?? null;
     const ageMs = workerHealth.ageMs;
+
+    // ── Diagnostic threshold simulation (read-only, no settings changed) ──
+    // Based on the last 200 signals stored in DB. Answers counterfactual questions.
+    const totalRecentSignals = recentSignals.length;
+    // Signals rejected purely for low score (passed all other filters)
+    const lowScoreRejects = recentSignals.filter(
+      (s) => s.signal_type === "NO_TRADE" && typeof s.signal_score === "number" && (s.rejected_reason ?? "").includes("skoru düşük")
+    );
+    // How many would pass if threshold were 60 instead of 70?
+    const wouldPassAt60 = lowScoreRejects.filter((s) => s.signal_score >= 60).length;
+    // How many would pass if threshold were 50?
+    const wouldPassAt50 = lowScoreRejects.filter((s) => s.signal_score >= 50).length;
+    // Signals blocked by BTC trend filter
+    const btcTrendBlocked = recentSignals.filter(
+      (s) => s.signal_type === "NO_TRADE" && (s.rejected_reason ?? "").includes("BTC trend")
+    ).length;
+    // Near-miss signals (50-69, passed all filters except score)
+    const nearMissCount = lowScoreRejects.filter((s) => s.signal_score >= 50 && s.signal_score < 70).length;
+    // Score distribution of near-miss signals
+    const nearMissTopSymbols = lowScoreRejects
+      .filter((s) => s.signal_score >= 50 && s.signal_score < 70)
+      .sort((a, b) => b.signal_score - a.signal_score)
+      .slice(0, 10)
+      .map((s) => `${s.symbol} skor=${s.signal_score}`);
+
+    const thresholdSimulation = {
+      // Diagnostic only — these numbers describe what WOULD have happened.
+      // Real MIN_SIGNAL_CONFIDENCE is 70 and remains unchanged.
+      basedOnLastNSignals: totalRecentSignals,
+      currentThreshold: 70,
+      wouldPassAt60: wouldPassAt60,
+      wouldPassAt50: wouldPassAt50,
+      btcTrendFilterBlocked: btcTrendBlocked,
+      nearMissCount: nearMissCount,
+      nearMissTopSymbols,
+      settingsUnchanged: true,
+    };
 
     return ok({
       bot_status: settings?.bot_status ?? "stopped",
@@ -109,6 +157,11 @@ export async function GET() {
         durationMs: tickSummary.durationMs ?? 0,
       } : EMPTY_TICK_STATS,
       scan_details: tickSummary?.scanDetails ?? [],
+      near_miss_summary: tickSummary ? {
+        nearMiss: tickSummary.nearMiss ?? 0,
+        topNearMiss: tickSummary.topNearMiss ?? [],
+      } : { nearMiss: 0, topNearMiss: [] },
+      threshold_simulation: thresholdSimulation,
       readiness_summary: {
         ready: readiness.ready,
         paperTradesCompleted: readiness.paperTradesCompleted,

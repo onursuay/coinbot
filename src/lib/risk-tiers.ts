@@ -249,3 +249,9 @@ export function tierWhitelist(): string[] {
 export function isAutoTradeAllowed(symbol: string): boolean {
   return classifyTier(symbol) !== "REJECTED";
 }
+
+// TIER_1 + TIER_2 symbols that must be analyzed in every scanner tick.
+// TIER_3 symbols join the regular cursor rotation (still whitelisted, just not pinned).
+export function getPrioritySymbols(): string[] {
+  return [...TIER_1, ...TIER_2];
+}

@@ -9,7 +9,7 @@ import { generateSignal } from "./signal-engine";
 import { getAdapter } from "@/lib/exchanges/exchange-factory";
 import { getDailyStatus } from "./daily-target";
 import { getUniverseSlice, type ScanUniverse } from "./symbol-universe";
-import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier } from "@/lib/risk-tiers";
+import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols } from "@/lib/risk-tiers";
 import { calculateStrategyHealth } from "./strategy-health";
 import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
@@ -37,6 +37,8 @@ export interface TickResult {
   generatedSignals: { symbol: string; type: string; score: number }[];
   openedPaperTrades: { symbol: string; direction: string; entryPrice: number }[];
   rejectedSignals: { symbol: string; reason: string }[];
+  // Signals that passed all filters except score (50-69). Never opens a trade.
+  nearMissSignals: { symbol: string; direction: string; score: number; reason: string }[];
   errors: { symbol: string; error: string }[];
   scanDetails: ScanDetail[];
   durationMs: number;
@@ -187,6 +189,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     generatedSignals: [],
     openedPaperTrades: [],
     rejectedSignals: [],
+    nearMissSignals: [],
     errors: [],
     scanDetails: [],
     durationMs: 0,
@@ -245,6 +248,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         maxFundingRateAbs: Number(settings.max_funding_rate_abs ?? 0.003),
         maxSymbolsPerTick: Number(settings.max_symbols_per_tick ?? 50),
         cursor,
+        // TIER_1 + TIER_2 pinned to every tick — never missed by cursor rotation
+        prioritySymbols: getPrioritySymbols(),
       });
       symbols = universe.batchSymbols;
       universeTotal = universe.totalSymbols;
@@ -372,6 +377,18 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
           message: `${symbol} ${sig.signalType} — ${rejReason}`,
           metadata: { score: sig.score, features: sig.features },
         });
+
+        // Near-miss: passed all filters except score (50-69). Informational only, never opens a trade.
+        if (sig.nearMissDirection && sig.score >= 50) {
+          const nmReason = `Skor=${sig.score}/100 — 70 eşiği geçemedi (RR=${sig.riskRewardRatio?.toFixed(2) ?? "?"}, stop=${sig.features.stopDistPct ?? "?"}%)`;
+          result.nearMissSignals.push({ symbol, direction: sig.nearMissDirection, score: sig.score, reason: nmReason });
+          await botLog({
+            userId, exchange, eventType: "near_miss_signal",
+            message: `NEAR_MISS ${sig.nearMissDirection} ${symbol} skor=${sig.score}/100 — eşik 70, mevcut ${sig.score}`,
+            metadata: { score: sig.score, direction: sig.nearMissDirection, rr: sig.riskRewardRatio, stopDistPct: sig.features.stopDistPct, trendScore: sig.features.trendScore, volConf: sig.features.volConf },
+          });
+        }
+
         result.scanDetails.push(detail);
         continue;
       }
@@ -527,11 +544,13 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     signals: result.generatedSignals.length,
     opened: result.openedPaperTrades.length,
     rejected: result.rejectedSignals.length,
+    nearMiss: result.nearMissSignals.length,
     errors: result.errors.length,
     durationMs: result.durationMs,
     scanDetails: result.scanDetails.slice(0, 50), // cap at 50 to limit JSONB size
     lastOpenedTrade: result.openedPaperTrades[0] ?? null,
     topRejectReasons: result.rejectedSignals.slice(0, 10).map((r) => `${r.symbol}: ${r.reason}`),
+    topNearMiss: result.nearMissSignals.slice(0, 5).map((n) => `${n.direction} ${n.symbol} skor=${n.score}`),
   };
   await sb.from("bot_settings").update({
     last_tick_at: lastTickSummary.at,

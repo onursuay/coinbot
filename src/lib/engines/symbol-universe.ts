@@ -15,6 +15,9 @@ export interface UniverseOptions {
   maxSymbolsPerTick: number;
   cursor?: string | null;    // index into sorted universe list
   watchlistSymbols?: string[];
+  // Symbols guaranteed to appear in every batch regardless of cursor position.
+  // TIER_1+TIER_2 coins are pinned here so they are never skipped by cursor rotation.
+  prioritySymbols?: string[];
 }
 
 export interface UniverseSlice {
@@ -105,17 +108,23 @@ export async function getUniverseSlice(opts: UniverseOptions): Promise<UniverseS
     };
   }
 
-  // all_futures: cursor-based pagination so each tick scans a different batch
+  // all_futures: priority symbols always first, cursor rotates only the remainder.
+  // This ensures TIER_1/2 coins are analyzed in every tick, not once per rotation cycle.
+  const prioritySet = new Set(opts.prioritySymbols ?? []);
+  const priorityPinned = (opts.prioritySymbols ?? []).filter((s) => filtered.includes(s));
+  const regularPool = filtered.filter((s) => !prioritySet.has(s));
+
   const cursorIndex = parseInt(opts.cursor ?? "0", 10) || 0;
-  const start = Math.min(cursorIndex, filtered.length);
-  const batch = filtered.slice(start, start + opts.maxSymbolsPerTick);
-  const next = start + opts.maxSymbolsPerTick;
-  const nextCursor = next < filtered.length ? String(next) : "0"; // wrap when done
+  const slotsForRegular = Math.max(0, opts.maxSymbolsPerTick - priorityPinned.length);
+  const start = Math.min(cursorIndex, regularPool.length);
+  const regularBatch = regularPool.slice(start, start + slotsForRegular);
+  const next = start + slotsForRegular;
+  const nextCursor = next < regularPool.length ? String(next) : "0"; // wrap when done
 
   return {
     totalSymbols: allSymbols.length,
     preFilteredCount: filtered.length,
-    batchSymbols: batch,
+    batchSymbols: [...priorityPinned, ...regularBatch],
     nextCursor,
     tickerMap,
   };

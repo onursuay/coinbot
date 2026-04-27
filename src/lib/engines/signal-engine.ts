@@ -32,6 +32,9 @@ export interface SignalResult {
   riskRewardRatio: number | null;
   reasons: string[];
   rejectedReason?: string;
+  // Populated when score is 50-69: the direction that almost qualified.
+  // Allows orchestrator to log near-miss signals without opening a trade.
+  nearMissDirection?: "LONG" | "SHORT";
   // Always populated — scanner depends on these even for NO_TRADE returns.
   features: Record<string, number | string | boolean | null>;
 }
@@ -249,6 +252,8 @@ export function generateSignal(ctx: SignalContext): SignalResult {
       entryPrice: last, stopLoss: stop, takeProfit: take, riskRewardRatio: rr,
       reasons,
       rejectedReason: `Sinyal skoru düşük (${score}/100 < 70)`,
+      // near-miss: score 50-69 passed all other filters — direction is valid but score too low
+      nearMissDirection: score >= 50 ? direction : undefined,
       features: { ...features },
     };
   }
