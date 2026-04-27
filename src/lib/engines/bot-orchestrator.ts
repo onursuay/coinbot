@@ -87,7 +87,27 @@ async function loadSettings(userId: string) {
     .limit(1);
   if (readErr) throw new Error(`bot_settings okunamadı: ${readErr.message}`);
   const existing = rows?.[0] ?? null;
-  if (existing) return existing;
+  if (existing) {
+    // Override active_exchange with exchange_credentials.is_active=true (primary source of truth)
+    const { data: credRows } = await sb
+      .from("exchange_credentials")
+      .select("exchange_name")
+      .eq("is_active", true)
+      .limit(1);
+    const activeCred = credRows?.[0]?.exchange_name;
+    if (activeCred) {
+      existing.active_exchange = (activeCred as string).toLowerCase();
+    } else {
+      // No active credential — self-heal bot_settings.active_exchange to env default.
+      // This clears stale values (e.g. "mexc" left over after credential changes).
+      const envExchange = env.defaultActiveExchange || "binance";
+      if (existing.active_exchange !== envExchange) {
+        existing.active_exchange = envExchange;
+        await sb.from("bot_settings").update({ active_exchange: envExchange }).neq("id", "00000000-0000-0000-0000-000000000000");
+      }
+    }
+    return existing;
+  }
 
   // No row exists — insert with defaults (bot_status: stopped).
   // On duplicate key (race condition), re-fetch.

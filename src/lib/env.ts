@@ -117,6 +117,18 @@ export const env = {
 
   // ── Worker identity (for heartbeat) ──
   workerId: str(process.env.WORKER_ID, "vercel-default"),
+
+  // ── Monitoring reports ──
+  reportEmailEnabled: bool(process.env.REPORT_EMAIL_ENABLED, false),
+  reportEmailIntervalMinutes: num(process.env.REPORT_EMAIL_INTERVAL_MINUTES, 30),
+  reportEmailTo: str(process.env.REPORT_EMAIL_TO, "onursuay@hotmail.com"),
+  smtp: {
+    host: str(process.env.SMTP_HOST, ""),
+    port: num(process.env.SMTP_PORT, 587),
+    user: str(process.env.SMTP_USER, ""),
+    pass: str(process.env.SMTP_PASS, ""),   // never log this value
+    from: str(process.env.SMTP_FROM, ""),
+  },
 };
 
 // Quick check: are we allowed to even consider live trading at the env layer?

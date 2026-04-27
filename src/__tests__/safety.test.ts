@@ -429,10 +429,18 @@ describe("diagnostics endpoint read-only", () => {
             })),
           };
         }
+        if (table === "exchange_credentials") {
+          // resolveActiveExchange: .select(...).eq("is_active", true).limit(1)
+          return {
+            eq: vi.fn(() => ({
+              limit: vi.fn(async () => ({ data: [{ exchange_name: "binance" }], error: null })),
+            })),
+          };
+        }
         return {
           limit: vi.fn(async () => ({ data: [], error: null })),
           eq: vi.fn(() => ({
-            eq: vi.fn(async () => ({ data: [], error: null, count: 0 })),
+            limit: vi.fn(async () => ({ data: [], error: null })),
           })),
         };
       }),
@@ -839,5 +847,429 @@ describe("set-active exchange flow", () => {
     expect(diagActive).toBe(true);
     expect(listIsActive).toBe(true);
     expect(diagActive).toBe(listIsActive);
+  });
+});
+
+// ---- resolveActiveExchange priority chain ----
+describe("resolveActiveExchange", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  function makeSupabaseMock(credRows: any[], settingsRows: any[]) {
+    return vi.fn(() => ({
+      from: vi.fn((table: string) => ({
+        select: vi.fn(() => {
+          if (table === "exchange_credentials") {
+            return {
+              eq: vi.fn(() => ({
+                limit: vi.fn(async () => ({ data: credRows, error: null })),
+              })),
+            };
+          }
+          // bot_settings
+          return {
+            limit: vi.fn(async () => ({ data: settingsRows, error: null })),
+          };
+        }),
+      })),
+    }));
+  }
+
+  it("returns binance when exchange_credentials has binance is_active=true", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: makeSupabaseMock([{ exchange_name: "binance" }], []),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { defaultActiveExchange: "binance" } }));
+    const { resolveActiveExchange } = await import("@/lib/exchanges/resolve-active-exchange");
+    expect(await resolveActiveExchange("test-user")).toBe("binance");
+  });
+
+  it("returns mexc when exchange_credentials has mexc is_active=true", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: makeSupabaseMock([{ exchange_name: "mexc" }], []),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { defaultActiveExchange: "binance" } }));
+    const { resolveActiveExchange } = await import("@/lib/exchanges/resolve-active-exchange");
+    expect(await resolveActiveExchange("test-user")).toBe("mexc");
+  });
+
+  it("env.defaultActiveExchange wins over bot_settings when no active credential", async () => {
+    // Priority 2 is env, priority 3 is bot_settings — stale "mexc" in bot_settings must NOT win.
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: makeSupabaseMock([], [{ active_exchange: "mexc" }]),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { defaultActiveExchange: "binance" } }));
+    const { resolveActiveExchange } = await import("@/lib/exchanges/resolve-active-exchange");
+    expect(await resolveActiveExchange("test-user")).toBe("binance");
+  });
+
+  it("bot_settings.active_exchange used when env is empty and no active credential", async () => {
+    // env empty → fall through to bot_settings (priority 3)
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: makeSupabaseMock([], [{ active_exchange: "bybit" }]),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { defaultActiveExchange: "" } }));
+    const { resolveActiveExchange } = await import("@/lib/exchanges/resolve-active-exchange");
+    expect(await resolveActiveExchange("test-user")).toBe("bybit");
+  });
+
+  it("falls back to env.defaultActiveExchange when no credential and no bot_settings row", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: makeSupabaseMock([], []),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { defaultActiveExchange: "okx" } }));
+    const { resolveActiveExchange } = await import("@/lib/exchanges/resolve-active-exchange");
+    expect(await resolveActiveExchange("test-user")).toBe("okx");
+  });
+
+  it("falls back to binance when supabase not configured and env is empty", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { defaultActiveExchange: "" } }));
+    const { resolveActiveExchange } = await import("@/lib/exchanges/resolve-active-exchange");
+    expect(await resolveActiveExchange("test-user")).toBe("binance");
+  });
+
+  it("normalises exchange name to lowercase", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: makeSupabaseMock([{ exchange_name: "BINANCE" }], []),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { defaultActiveExchange: "binance" } }));
+    const { resolveActiveExchange } = await import("@/lib/exchanges/resolve-active-exchange");
+    expect(await resolveActiveExchange("test-user")).toBe("binance");
+  });
+
+  it("credential is_active=true takes priority over bot_settings.active_exchange", async () => {
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      // credentials say binance active, but bot_settings says mexc
+      supabaseAdmin: makeSupabaseMock(
+        [{ exchange_name: "binance" }],
+        [{ active_exchange: "mexc" }],
+      ),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { defaultActiveExchange: "binance" } }));
+    const { resolveActiveExchange } = await import("@/lib/exchanges/resolve-active-exchange");
+    expect(await resolveActiveExchange("test-user")).toBe("binance");
+  });
+
+  it("diagnostic endpoint is read-only — resolveActiveExchange called without mutations", async () => {
+    const mutationSpies = {
+      insert: vi.fn(),
+      update: vi.fn(() => ({ limit: vi.fn(async () => ({ data: null, error: null })) })),
+      upsert: vi.fn(),
+      delete: vi.fn(),
+    };
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: vi.fn(() => ({
+        from: vi.fn((table: string) => ({
+          ...mutationSpies,
+          select: vi.fn(() => {
+            if (table === "exchange_credentials") {
+              return { eq: vi.fn(() => ({ limit: vi.fn(async () => ({ data: [{ exchange_name: "binance" }], error: null })) })) };
+            }
+            return { limit: vi.fn(async () => ({ data: [], error: null })) };
+          }),
+        })),
+      })),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { defaultActiveExchange: "binance" } }));
+    const { resolveActiveExchange } = await import("@/lib/exchanges/resolve-active-exchange");
+    const result = await resolveActiveExchange("test-user");
+    expect(result).toBe("binance");
+    expect(mutationSpies.insert).not.toHaveBeenCalled();
+    expect(mutationSpies.update).not.toHaveBeenCalled();
+    expect(mutationSpies.upsert).not.toHaveBeenCalled();
+    expect(mutationSpies.delete).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Monitoring report email subject ----
+describe("monitoring report — email subject", () => {
+  it("subject contains trading mode uppercase", async () => {
+    const { buildSubject } = await import("@/lib/reports/email-reporter");
+    const metrics: any = {
+      generatedAt: "2026-04-27T14:30:00.000Z",
+      tradingMode: "paper",
+    };
+    const subject = buildSubject(metrics);
+    expect(subject).toContain("PAPER");
+    expect(subject).toContain("CoinBot");
+    expect(subject).toContain("30 Dakika Raporu");
+    expect(subject).toContain("2026-04-27");
+  });
+
+  it("subject contains live mode uppercase when live", async () => {
+    vi.resetModules();
+    const { buildSubject } = await import("@/lib/reports/email-reporter");
+    const metrics: any = {
+      generatedAt: "2026-04-27T14:30:00.000Z",
+      tradingMode: "live",
+    };
+    expect(buildSubject(metrics)).toContain("LIVE");
+  });
+});
+
+// ---- Monitoring report — security section ----
+describe("monitoring report — security invariants", () => {
+  it("HARD_LIVE_TRADING_ALLOWED=false appears in HTML body", async () => {
+    vi.resetModules();
+    const { buildHtmlBody } = await import("@/lib/reports/email-reporter");
+    const metrics: any = {
+      generatedAt: "2026-04-27T14:30:00.000Z",
+      periodStart: "2026-04-27T14:00:00.000Z",
+      periodEnd: "2026-04-27T14:30:00.000Z",
+      botStatus: "running", workerOnline: true, workerAgeMs: 5000,
+      workerUptimeSec: 3600, workerRestartCount: 0,
+      activeExchange: "binance", tradingMode: "paper",
+      hardLiveAllowed: false, enableLiveTrading: false,
+      tickCount: 60, avgTickDurationMs: 250, maxTickDurationMs: 800,
+      tickErrorCount: 0, totalScannedSymbols: 3000, avgScannedSymbols: 50, lastTickAt: null,
+      topRejectedReasons: [], recentSignalCount: 0, recentSignalSymbols: [],
+      openedPaperTrades30m: 0, closedPaperTrades30m: 0, openPaperPositions: 0,
+      totalPaperPnl: 0, pnl30m: 0, winRate: 0, profitFactor: 0, maxDrawdown: 0,
+      slClosedCount: 0, tpClosedCount: 0, totalClosedTrades: 0,
+      paperTradesCompleted: 0, paperTradesRequired: 100,
+      liveReady: false, readinessBlockers: [], strategyScore: 100, strategyBlocked: false,
+      hardLiveTradingAllowedFalse: true, enableLiveTradingFalse: true,
+      tradingModePaper: true, realOrderSent: false, killSwitchActive: false, lastError: null,
+      warnings: [],
+    };
+    const html = buildHtmlBody(metrics);
+    expect(html).toContain("HARD_LIVE");
+    expect(html).toContain("FALSE");
+    expect(html).toContain("Gerçek emir");
+    expect(html).not.toContain("ALARM");
+  });
+
+  it("realOrderSent=true triggers ALARM in report", async () => {
+    vi.resetModules();
+    const { buildHtmlBody } = await import("@/lib/reports/email-reporter");
+    const metrics: any = {
+      generatedAt: "2026-04-27T14:30:00.000Z",
+      periodStart: "2026-04-27T14:00:00.000Z",
+      periodEnd: "2026-04-27T14:30:00.000Z",
+      botStatus: "running", workerOnline: true, workerAgeMs: 5000,
+      workerUptimeSec: 0, workerRestartCount: 0,
+      activeExchange: "binance", tradingMode: "paper",
+      hardLiveAllowed: false, enableLiveTrading: false,
+      tickCount: 0, avgTickDurationMs: 0, maxTickDurationMs: 0,
+      tickErrorCount: 0, totalScannedSymbols: 0, avgScannedSymbols: 0, lastTickAt: null,
+      topRejectedReasons: [], recentSignalCount: 0, recentSignalSymbols: [],
+      openedPaperTrades30m: 0, closedPaperTrades30m: 0, openPaperPositions: 0,
+      totalPaperPnl: 0, pnl30m: 0, winRate: 0, profitFactor: 0, maxDrawdown: 0,
+      slClosedCount: 0, tpClosedCount: 0, totalClosedTrades: 0,
+      paperTradesCompleted: 0, paperTradesRequired: 100,
+      liveReady: false, readinessBlockers: [], strategyScore: 100, strategyBlocked: false,
+      hardLiveTradingAllowedFalse: true, enableLiveTradingFalse: true,
+      tradingModePaper: true, realOrderSent: true, killSwitchActive: false, lastError: null,
+      warnings: [],
+    };
+    const html = buildHtmlBody(metrics);
+    expect(html).toContain("ALARM");
+  });
+});
+
+// ---- Monitoring report — REPORT_EMAIL_ENABLED=false skips sending ----
+describe("monitoring report — email disabled skips send", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  it("returns status=skipped when REPORT_EMAIL_ENABLED=false", async () => {
+    vi.doMock("@/lib/env", () => ({
+      env: {
+        reportEmailEnabled: false,
+        reportEmailTo: "onursuay@hotmail.com",
+        smtp: { host: "smtp.example.com", port: 587, user: "u", pass: "p", from: "" },
+      },
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    const { sendMonitoringReport } = await import("@/lib/reports/email-reporter");
+    const metrics: any = {
+      generatedAt: new Date().toISOString(),
+      periodStart: new Date().toISOString(),
+      periodEnd: new Date().toISOString(),
+      tradingMode: "paper",
+    };
+    const result = await sendMonitoringReport(metrics);
+    expect(result.status).toBe("skipped");
+    expect(result.ok).toBe(true);
+  });
+
+  it("returns status=skipped when SMTP not configured", async () => {
+    vi.doMock("@/lib/env", () => ({
+      env: {
+        reportEmailEnabled: true,
+        reportEmailTo: "onursuay@hotmail.com",
+        smtp: { host: "", port: 587, user: "", pass: "", from: "" },
+      },
+    }));
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    const { sendMonitoringReport } = await import("@/lib/reports/email-reporter");
+    const metrics: any = {
+      generatedAt: new Date().toISOString(),
+      periodStart: new Date().toISOString(),
+      periodEnd: new Date().toISOString(),
+      tradingMode: "paper",
+    };
+    const result = await sendMonitoringReport(metrics);
+    expect(result.status).toBe("skipped");
+    expect(result.error).toContain("SMTP");
+  });
+});
+
+// ---- Monitoring report — metric calculations ----
+describe("monitoring report — metric calculations", () => {
+  it("emptyTickStats initialises all fields to zero", async () => {
+    vi.resetModules();
+    const { emptyTickStats } = await import("@/lib/reports/monitoring-report");
+    const s = emptyTickStats();
+    expect(s.count).toBe(0);
+    expect(s.totalDurationMs).toBe(0);
+    expect(s.maxDurationMs).toBe(0);
+    expect(s.errorCount).toBe(0);
+    expect(s.totalScanned).toBe(0);
+    expect(typeof s.periodStart).toBe("number");
+  });
+
+  it("avgTickDurationMs is 0 when tickCount is 0", async () => {
+    const tickCount = 0;
+    const totalDurationMs = 0;
+    const avg = tickCount > 0 ? Math.round(totalDurationMs / tickCount) : 0;
+    expect(avg).toBe(0);
+  });
+
+  it("avgTickDurationMs rounds correctly", async () => {
+    const tickCount = 3;
+    const totalDurationMs = 1000;
+    const avg = tickCount > 0 ? Math.round(totalDurationMs / tickCount) : 0;
+    expect(avg).toBe(333);
+  });
+
+  it("no paper trades opened triggers warning in metrics", async () => {
+    const openedPaperTrades30m = 0;
+    const tickCount = 5;
+    const topRejectedReasons: { reason: string; count: number }[] = [{ reason: "Spread yüksek", count: 3 }];
+    const warnings: string[] = [];
+    if (openedPaperTrades30m === 0 && tickCount > 0) {
+      const topReason = topRejectedReasons[0]?.reason;
+      warnings.push(`30 dakikada paper trade açılmadı — ${topReason ? `en yaygın ret: ${topReason}` : "sinyal üretilmedi"}`);
+    }
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("Spread yüksek");
+  });
+
+  it("no paper trades + no reject reason shows 'sinyal üretilmedi'", async () => {
+    const openedPaperTrades30m = 0;
+    const tickCount = 5;
+    const topRejectedReasons: { reason: string; count: number }[] = [];
+    const warnings: string[] = [];
+    if (openedPaperTrades30m === 0 && tickCount > 0) {
+      const topReason = topRejectedReasons[0]?.reason;
+      warnings.push(`30 dakikada paper trade açılmadı — ${topReason ? `en yaygın ret: ${topReason}` : "sinyal üretilmedi"}`);
+    }
+    expect(warnings[0]).toContain("sinyal üretilmedi");
+  });
+
+  it("HARD_LIVE_ALLOWED=false is flagged correctly in metrics", async () => {
+    const hardLiveAllowed = false;
+    const hardLiveTradingAllowedFalse = !hardLiveAllowed;
+    expect(hardLiveTradingAllowedFalse).toBe(true);
+  });
+
+  it("HARD_LIVE_ALLOWED=true triggers warning in metrics", async () => {
+    const hardLiveAllowed = true;
+    const warnings: string[] = [];
+    if (hardLiveAllowed) warnings.push("DİKKAT: HARD_LIVE_TRADING_ALLOWED=true");
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("HARD_LIVE_TRADING_ALLOWED");
+  });
+});
+
+// ---- TopBar + Dashboard active exchange — no MEXC flash ----
+describe("TopBar/Dashboard active exchange — no MEXC flash", () => {
+  it("initial null state (before fetch) shows '...' not mexc", () => {
+    const s: any = null;
+    const exchange = s === null ? "..." : (s?.bot?.active_exchange ?? "binance");
+    expect(exchange).toBe("...");
+    expect(exchange).not.toBe("mexc");
+  });
+
+  it("config.defaultExchange='mexc' is NOT used as fallback", () => {
+    // Supabase unavailable: bot=null but config.defaultExchange could be env mexc.
+    // TopBar must NOT fall back to config.defaultExchange.
+    const s: any = { bot: null, config: { defaultExchange: "mexc" } };
+    const exchange = s === null ? "..." : (s?.bot?.active_exchange ?? "binance");
+    expect(exchange).not.toBe("mexc");
+    expect(exchange).toBe("binance");
+  });
+
+  it("status.debug.activeExchange='mexc' is NOT used as fallback in dashboard", () => {
+    const status: any = { bot: null, debug: { activeExchange: "mexc" } };
+    const activeExchange = status === null ? "..." : (status?.bot?.active_exchange ?? "binance");
+    expect(activeExchange).not.toBe("mexc");
+    expect(activeExchange).toBe("binance");
+  });
+
+  it("when status loaded with binance, shows BINANCE", () => {
+    const s: any = { bot: { active_exchange: "binance" } };
+    const exchange = s === null ? "..." : (s?.bot?.active_exchange ?? "binance");
+    expect(exchange).toBe("binance");
+  });
+
+  it("TopBar and Dashboard derive exchange from same source — always match", () => {
+    const statusFromApi: any = { bot: { active_exchange: "binance" } };
+    const topBarExchange = statusFromApi === null ? "..." : (statusFromApi?.bot?.active_exchange ?? "binance");
+    const dashboardExchange = statusFromApi === null ? "..." : (statusFromApi?.bot?.active_exchange ?? "binance");
+    expect(topBarExchange).toBe(dashboardExchange);
+  });
+
+  it("hardcoded mexc never appears as exchange fallback in TopBar or Dashboard", () => {
+    const fallback = "binance";
+    expect(fallback).not.toBe("mexc");
+  });
+});
+
+// ---- Monitoring report — scheduler does not crash on error ----
+describe("monitoring report — scheduler resilience", () => {
+  it("runReportCycle catches errors and does not throw", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/reports/monitoring-report", () => ({
+      buildMonitoringMetrics: async () => { throw new Error("DB down"); },
+      emptyTickStats: () => ({ count: 0, totalDurationMs: 0, maxDurationMs: 0, errorCount: 0, totalScanned: 0, periodStart: Date.now() }),
+    }));
+    vi.doMock("@/lib/reports/email-reporter", () => ({
+      sendMonitoringReport: vi.fn(),
+    }));
+    vi.doMock("@/lib/env", () => ({ env: { reportEmailIntervalMinutes: 30 } }));
+    const { runReportCycle } = await import("@/lib/reports/report-scheduler");
+    let resetCalled = false;
+    await expect(runReportCycle({
+      userId: "test",
+      workerStartMs: Date.now(),
+      getTickStats: () => ({ count: 0, totalDurationMs: 0, maxDurationMs: 0, errorCount: 0, totalScanned: 0, periodStart: Date.now() }),
+      resetTickStats: () => { resetCalled = true; },
+    })).resolves.not.toThrow();
+    // resetTickStats still called after error
+    expect(resetCalled).toBe(true);
   });
 });

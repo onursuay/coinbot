@@ -28,7 +28,9 @@ export default function TopBar() {
 
   const status = s?.bot?.bot_status ?? "stopped";
   const mode = s?.bot?.trading_mode ?? "paper";
-  const exchange = s?.bot?.active_exchange ?? s?.config?.defaultExchange ?? "mexc";
+  // s===null: data not yet loaded → show "..." to avoid stale/env-based MEXC flash.
+  // Once loaded, use bot.active_exchange only (skipping config.defaultExchange which can carry env "mexc").
+  const exchange = s === null ? "..." : (s?.bot?.active_exchange ?? "binance");
 
   return (
     <header className="flex items-center justify-between px-6 py-3 border-b border-border bg-bg-soft/60 backdrop-blur">

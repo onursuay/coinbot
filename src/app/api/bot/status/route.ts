@@ -45,7 +45,7 @@ export async function GET() {
         systemHardCap: SYSTEM_HARD_LEVERAGE_CAP,
         defaultMarketType: env.defaultMarketType,
         defaultMarginMode: env.defaultMarginMode,
-        defaultExchange: env.defaultActiveExchange,
+        defaultExchange: env.defaultActiveExchange || "binance",
       },
     });
   }

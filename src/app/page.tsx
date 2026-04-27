@@ -182,7 +182,9 @@ export default function HomePage() {
   const isKillSwitch = botStatus === "kill_switch" || status?.bot?.kill_switch_active;
   const tradingMode = status?.bot?.trading_mode ?? "paper";
   const enableLiveTrading = status?.bot?.enable_live_trading ?? false;
-  const activeExchange = status?.bot?.active_exchange ?? status?.debug?.activeExchange ?? "binance";
+  // status===null: data not yet loaded → "..." avoids stale env value flash.
+  // debug.activeExchange skipped — same env risk as config.defaultExchange.
+  const activeExchange = status === null ? "..." : (status?.bot?.active_exchange ?? "binance");
 
   return (
     <div className="space-y-6">
