@@ -7,6 +7,7 @@ import { supabaseAdmin, supabaseConfigured } from "@/lib/supabase/server";
 import { getWorkerHealth } from "@/lib/engines/heartbeat";
 import { checkLiveReadiness } from "@/lib/engines/live-readiness";
 import { isHardLiveAllowed } from "@/lib/env";
+import { resolveActiveExchange } from "@/lib/exchanges/resolve-active-exchange";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +61,7 @@ export async function GET() {
 
     const sb = supabaseAdmin();
 
-    const [settingsRes, openPosRes, workerHealth, readiness] = await Promise.all([
+    const [settingsRes, openPosRes, workerHealth, readiness, resolvedExchange] = await Promise.all([
       sb.from("bot_settings").select(
         "bot_status, trading_mode, active_exchange, kill_switch_active, kill_switch_reason, last_tick_at, last_tick_summary"
       ).limit(1),
@@ -68,6 +69,7 @@ export async function GET() {
         .eq("user_id", userId).eq("status", "open"),
       getWorkerHealth(),
       checkLiveReadiness(userId),
+      resolveActiveExchange(userId),
     ]);
 
     const settings = settingsRes.data?.[0] ?? null;
@@ -77,7 +79,7 @@ export async function GET() {
     return ok({
       bot_status: settings?.bot_status ?? "stopped",
       trading_mode: settings?.trading_mode ?? "paper",
-      active_exchange: settings?.active_exchange ?? "binance",
+      active_exchange: resolvedExchange,
       kill_switch_active: settings?.kill_switch_active ?? false,
       kill_switch_reason: settings?.kill_switch_reason ?? null,
       hard_live_gate: isHardLiveAllowed(),
