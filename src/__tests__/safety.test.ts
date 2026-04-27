@@ -2223,6 +2223,98 @@ describe("dynamic universe v2", () => {
     const allowed = process.env.HARD_LIVE_TRADING_ALLOWED === "true";
     expect(allowed).toBe(false);
   });
+
+  // ── Opportunity filter: scanner table rows ──
+  // The pre-filter (selectDynamicCandidates) admits coins by liquidity quality, but in
+  // a normal market that easily passes 30 coins. The opportunity filter is the second
+  // gate — applied AFTER signal computation — that drops dynamic rows lacking real
+  // trade-opportunity potential. Without it, the scanner reverts to a quota-style table.
+
+  it("opportunity filter drops dynamic WAIT rows with score 0", async () => {
+    const { filterScanDetailsForDisplay } = await import("@/lib/engines/bot-orchestrator");
+    const details = [
+      { symbol: "BTC/USDT", coinClass: "CORE", tier: "TIER_1", spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0, signalType: "WAIT", signalScore: 0, rejectReason: null, riskAllowed: null, riskRejectReason: null, opened: false, opportunityCandidate: false } as const,
+      { symbol: "JUNK/USDT", coinClass: "DYNAMIC", tier: "TIER_3", spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0, signalType: "WAIT", signalScore: 0, rejectReason: null, riskAllowed: null, riskRejectReason: null, opened: false, opportunityCandidate: false } as const,
+      { symbol: "JUNK2/USDT", coinClass: "DYNAMIC", tier: "TIER_3", spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0, signalType: "NO_TRADE", signalScore: 0, rejectReason: null, riskAllowed: null, riskRejectReason: null, opened: false, opportunityCandidate: false } as const,
+    ];
+    const { kept, eliminated } = filterScanDetailsForDisplay(details as any);
+    expect(kept.map((d) => d.symbol)).toEqual(["BTC/USDT"]);
+    expect(eliminated).toBe(2);
+  });
+
+  it("opportunity filter keeps dynamic rows with score >= 50 (near-miss range)", async () => {
+    const { filterScanDetailsForDisplay } = await import("@/lib/engines/bot-orchestrator");
+    const details = [
+      { symbol: "NEAR/USDT", coinClass: "DYNAMIC", tier: "TIER_3", spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0, signalType: "NO_TRADE", signalScore: 58, rejectReason: "Sinyal skoru düşük", riskAllowed: null, riskRejectReason: null, opened: false, opportunityCandidate: true } as const,
+    ];
+    const { kept, eliminated } = filterScanDetailsForDisplay(details as any);
+    expect(kept).toHaveLength(1);
+    expect(eliminated).toBe(0);
+  });
+
+  it("opportunity filter keeps dynamic rows with LONG/SHORT signals", async () => {
+    const { filterScanDetailsForDisplay } = await import("@/lib/engines/bot-orchestrator");
+    const details = [
+      { symbol: "STRONG/USDT", coinClass: "DYNAMIC", tier: "TIER_3", spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0, signalType: "LONG", signalScore: 78, rejectReason: null, riskAllowed: null, riskRejectReason: null, opened: false, opportunityCandidate: true } as const,
+    ];
+    const { kept } = filterScanDetailsForDisplay(details as any);
+    expect(kept).toHaveLength(1);
+  });
+
+  it("opportunity filter drops dynamic rows with score < 50 even if no rejection reason", async () => {
+    const { filterScanDetailsForDisplay } = await import("@/lib/engines/bot-orchestrator");
+    const details = [
+      { symbol: "MEH/USDT", coinClass: "DYNAMIC", tier: "TIER_3", spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0, signalType: "NO_TRADE", signalScore: 32, rejectReason: null, riskAllowed: null, riskRejectReason: null, opened: false, opportunityCandidate: false } as const,
+    ];
+    const { kept, eliminated } = filterScanDetailsForDisplay(details as any);
+    expect(kept).toHaveLength(0);
+    expect(eliminated).toBe(1);
+  });
+
+  it("opportunity filter retains all CORE rows regardless of score", async () => {
+    const { filterScanDetailsForDisplay } = await import("@/lib/engines/bot-orchestrator");
+    const details = [
+      { symbol: "BTC/USDT",  coinClass: "CORE", tier: "TIER_1", spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0, signalType: "WAIT",     signalScore: 0,  rejectReason: null, riskAllowed: null, riskRejectReason: null, opened: false, opportunityCandidate: false } as const,
+      { symbol: "ETH/USDT",  coinClass: "CORE", tier: "TIER_1", spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0, signalType: "NO_TRADE", signalScore: 12, rejectReason: "Risk", riskAllowed: false, riskRejectReason: "x", opened: false, opportunityCandidate: false } as const,
+      { symbol: "BNB/USDT",  coinClass: "CORE", tier: "TIER_2", spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0, signalType: "LONG",     signalScore: 82, rejectReason: null, riskAllowed: true,  riskRejectReason: null, opened: true,  opportunityCandidate: true } as const,
+    ];
+    const { kept, eliminated } = filterScanDetailsForDisplay(details as any);
+    expect(kept).toHaveLength(3);
+    expect(eliminated).toBe(0);
+  });
+
+  it("isOpportunityCandidate: helper accepts score >= 50, LONG, SHORT, or explicit flag", async () => {
+    const { isOpportunityCandidate } = await import("@/lib/engines/bot-orchestrator");
+    expect(isOpportunityCandidate({ signalScore: 50, signalType: "NO_TRADE", opportunityCandidate: false })).toBe(true);
+    expect(isOpportunityCandidate({ signalScore: 78, signalType: "LONG",     opportunityCandidate: false })).toBe(true);
+    expect(isOpportunityCandidate({ signalScore: 75, signalType: "SHORT",    opportunityCandidate: false })).toBe(true);
+    expect(isOpportunityCandidate({ signalScore: 0,  signalType: "WAIT",     opportunityCandidate: true  })).toBe(true);
+    // negatives
+    expect(isOpportunityCandidate({ signalScore: 49, signalType: "NO_TRADE", opportunityCandidate: false })).toBe(false);
+    expect(isOpportunityCandidate({ signalScore: 0,  signalType: "WAIT",     opportunityCandidate: false })).toBe(false);
+  });
+
+  it("opportunity filter prevents quota-filling — table can be all CORE", async () => {
+    // Simulates a flat market: 30 dynamics passed pre-filter (volume/spread) but none had
+    // signal potential. Result: scanner shows only the 10 CORE rows, dynamic rows dropped.
+    const { filterScanDetailsForDisplay } = await import("@/lib/engines/bot-orchestrator");
+    const core = Array.from({ length: 10 }, (_, i) => ({
+      symbol: `CORE${i}/USDT`, coinClass: "CORE" as const, tier: "TIER_1",
+      spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0,
+      signalType: "WAIT", signalScore: 0, rejectReason: null, riskAllowed: null,
+      riskRejectReason: null, opened: false, opportunityCandidate: false,
+    }));
+    const dynamics = Array.from({ length: 30 }, (_, i) => ({
+      symbol: `DYN${i}/USDT`, coinClass: "DYNAMIC" as const, tier: "TIER_3",
+      spreadPercent: 0, atrPercent: 0, fundingRate: 0, orderBookDepth: 0,
+      signalType: "NO_TRADE", signalScore: 0, rejectReason: "düşük skor",
+      riskAllowed: null, riskRejectReason: null, opened: false, opportunityCandidate: false,
+    }));
+    const { kept, eliminated } = filterScanDetailsForDisplay([...core, ...dynamics] as any);
+    expect(kept).toHaveLength(10);                                  // only CORE survives
+    expect(kept.every((d) => d.coinClass === "CORE")).toBe(true);
+    expect(eliminated).toBe(30);                                    // all dynamics dropped
+  });
 });
 
 // ---- Paper trade E2E validation ----

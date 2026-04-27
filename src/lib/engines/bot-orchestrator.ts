@@ -30,6 +30,30 @@ export interface ScanDetail {
   riskAllowed: boolean | null;
   riskRejectReason: string | null;
   opened: boolean;
+  // True when the row carries real trade-opportunity potential.
+  // CORE rows are always displayed regardless. DYNAMIC rows are dropped from the
+  // scanner table when this is false — liquidity passing alone is not enough.
+  opportunityCandidate: boolean;
+}
+
+// A dynamic row is shown in the scanner table only if it carries opportunity signal.
+// CORE rows are always retained — the user wants to see WAIT/NO_TRADE for the pinned set.
+export function isOpportunityCandidate(detail: Pick<ScanDetail, "signalScore" | "signalType" | "opportunityCandidate">): boolean {
+  return detail.opportunityCandidate === true ||
+    detail.signalScore >= 50 ||
+    detail.signalType === "LONG" ||
+    detail.signalType === "SHORT";
+}
+
+export function filterScanDetailsForDisplay(details: ScanDetail[]): { kept: ScanDetail[]; eliminated: number } {
+  let eliminated = 0;
+  const kept = details.filter((d) => {
+    if (d.coinClass !== "DYNAMIC") return true;
+    if (isOpportunityCandidate(d)) return true;
+    eliminated++;
+    return false;
+  });
+  return { kept, eliminated };
 }
 
 export interface TickResult {
@@ -59,6 +83,14 @@ export interface TickResult {
   dynamicRejectedWeakMomentum?: number;
   dynamicRejectedNoData?: number;
   dynamicRejectedInsufficientDepth?: number;  // order book depth check in per-symbol loop
+  // Dynamic candidates that ran full analysis but produced no opportunity (score < 50, no
+  // direction, no near-miss). These are dropped from scanDetails before display — keeping
+  // them would clutter the table with score=0 / WAIT noise.
+  dynamicEliminatedLowSignal?: number;
+  // Dynamic rows that survived the post-analysis opportunity filter and made it to the
+  // scanner table. This — not the pre-filter pool size — is what "Dinamik Fırsat Adayı"
+  // should display. May be much lower than maxCandidates ceiling.
+  dynamicOpportunityCandidates?: number;
 }
 
 const PAPER_BALANCE = 1000;
@@ -393,6 +425,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       riskAllowed: null,
       riskRejectReason: null,
       opened: false,
+      opportunityCandidate: false,
     };
 
     try {
@@ -421,6 +454,18 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       detail.signalType = sig.signalType;
       detail.signalScore = sig.score;
       detail.atrPercent = typeof sig.features.atrPctOfClose === "number" ? sig.features.atrPctOfClose : 0;
+
+      // Mark opportunity candidates: score >= 50 (covers near-miss 50-69 and full LONG/SHORT >=70),
+      // explicit direction, near-miss flag, or strong trend+momentum combo.
+      // CORE coins ignore this — they're always displayed. DYNAMIC coins must qualify.
+      const trendScoreNum = typeof sig.features.trendScore === "number" ? sig.features.trendScore : 0;
+      const volConfNum = typeof sig.features.volConf === "number" ? sig.features.volConf : 0;
+      detail.opportunityCandidate =
+        sig.score >= 50 ||
+        sig.signalType === "LONG" ||
+        sig.signalType === "SHORT" ||
+        !!sig.nearMissDirection ||
+        (trendScoreNum >= 60 && volConfNum >= 60);
 
       // Persist signal for audit
       await sb.from("signals").insert({
@@ -645,6 +690,19 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
   result.ok = true;
   result.deeplyAnalyzedSymbols = symbolsToAnalyze.length;
+
+  // ── Final opportunity filter for the scanner table ──
+  // Pre-filter (selectDynamicCandidates) admits coins by liquidity quality alone — that
+  // routinely passes 30+ coins on Binance Futures, which would force the table to ~30
+  // dynamic rows of WAIT/score=0 noise. The dynamic ceiling is a CEILING, not a target.
+  // Drop dynamic rows that did not yield real opportunity (score < 50, no direction).
+  // CORE rows are always retained.
+  const dynamicAnalyzed = result.scanDetails.filter((d) => d.coinClass === "DYNAMIC").length;
+  const { kept: filteredScanDetails, eliminated: dynamicEliminatedLowSignal } = filterScanDetailsForDisplay(result.scanDetails);
+  result.scanDetails = filteredScanDetails;
+  result.dynamicEliminatedLowSignal = dynamicEliminatedLowSignal;
+  result.dynamicOpportunityCandidates = dynamicAnalyzed - dynamicEliminatedLowSignal;
+
   result.durationMs = Date.now() - start;
 
   // Persist last tick summary for diagnostics endpoint.
@@ -663,7 +721,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     prefiltered: universePrefiltered,
     scanned: symbolsToAnalyze.length,
     lowVolumePrefilterRejected: lowVolumeSkipped,
-    dynamicCandidates: dynamicResult?.candidates.length ?? 0,
+    dynamicCandidates: dynamicResult?.candidates.length ?? 0,    // pre-filter pool size (legacy field)
+    dynamicOpportunityCandidates: result.dynamicOpportunityCandidates ?? 0,  // in-table count — what user calls "Dinamik Fırsat Adayı"
+    dynamicEliminatedLowSignal: result.dynamicEliminatedLowSignal ?? 0,
     dynamicRejectedLowVolume: dynamicResult?.rejectedLowVolume ?? 0,
     dynamicRejectedStablecoin: dynamicResult?.rejectedStablecoin ?? 0,
     dynamicRejectedHighSpread: dynamicResult?.rejectedHighSpread ?? 0,
