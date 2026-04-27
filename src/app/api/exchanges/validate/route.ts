@@ -25,7 +25,7 @@ export async function POST(req: Request) {
     const userId = getCurrentUserId();
     await supabaseAdmin().from("exchange_credentials")
       .update({ last_validated_at: new Date().toISOString() })
-      .eq("user_id", userId).eq("exchange_name", parsed.exchange);
+      .eq("exchange_name", parsed.exchange);
   }
   return ok({ ok: true, validated: true, exchange: parsed.exchange });
 }

@@ -14,10 +14,10 @@ export async function POST(req: Request) {
   if (isResponse(parsed)) return parsed;
   const userId = getCurrentUserId();
   await supabaseAdmin().from("exchange_credentials")
-    .update({ is_active: false }).eq("user_id", userId);
+    .update({ is_active: false });
   await supabaseAdmin().from("exchange_credentials")
     .update({ is_active: true })
-    .eq("user_id", userId).eq("exchange_name", parsed.exchange);
+    .eq("exchange_name", parsed.exchange);
   await supabaseAdmin().from("bot_settings").upsert(
     { user_id: userId, active_exchange: parsed.exchange },
     { onConflict: "user_id" },

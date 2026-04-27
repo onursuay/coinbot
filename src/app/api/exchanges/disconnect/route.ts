@@ -16,6 +16,6 @@ export async function DELETE(req: Request) {
   if (!parsed.success) return fail("Geçersiz exchange", 400);
   const userId = getCurrentUserId();
   await supabaseAdmin().from("exchange_credentials")
-    .delete().eq("user_id", userId).eq("exchange_name", parsed.data.exchange);
+    .delete().eq("exchange_name", parsed.data.exchange);
   return ok({ removed: parsed.data.exchange });
 }

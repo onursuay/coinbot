@@ -11,7 +11,6 @@ export async function GET() {
   const { data, error } = await supabaseAdmin()
     .from("exchange_credentials")
     .select("id, exchange_name, api_key_encrypted, permissions, is_active, last_validated_at, created_at")
-    .eq("user_id", userId)
     .order("created_at", { ascending: false });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   const masked = (data ?? []).map((c) => {
