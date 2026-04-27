@@ -120,8 +120,9 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   }
 
   // ── Volume / liquidity sanity ──
+  // vol=0 means no data or dead coin — reject it; do NOT use > 0 guard.
   const minQuoteVol = 5_000_000;
-  if (ticker.quoteVolume24h > 0 && ticker.quoteVolume24h < minQuoteVol) {
+  if (ticker.quoteVolume24h < minQuoteVol) {
     return earlyExit("NO_TRADE", `24s hacim düşük ($${(ticker.quoteVolume24h / 1_000_000).toFixed(1)}M < $5M) — likidite yetersiz`);
   }
 
