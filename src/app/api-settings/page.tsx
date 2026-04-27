@@ -51,7 +51,11 @@ export default function ApiSettings() {
     try {
       const r = await fetch("/api/exchanges/set-active", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ exchange }) });
       const res = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
-      if (!res.ok) alert(`Set Active hatası: ${res.error}`); else refresh();
+      if (!res.ok) {
+        alert(`Set Active hatası: ${res.error}`);
+      } else {
+        await refresh();
+      }
     } catch (e: any) { alert(`Set Active hatası: ${e?.message}`); }
   };
   const disconnect = async (exchange: string) => {

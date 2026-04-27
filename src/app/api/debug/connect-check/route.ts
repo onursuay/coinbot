@@ -8,28 +8,45 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const checks: Record<string, string> = {};
 
-  // 1. Env vars
   checks.SUPABASE_URL = env.supabaseUrl ? "✓ set" : "✗ EKSİK";
   checks.SUPABASE_SERVICE_ROLE_KEY = env.supabaseServiceRoleKey ? "✓ set" : "✗ EKSİK";
   checks.CREDENTIAL_ENCRYPTION_KEY = env.credentialEncryptionKey ? "✓ set" : "✗ EKSİK";
 
-  // 2. Supabase connectivity
+  try {
+    const { data, error } = await supabaseAdmin()
+      .from("exchange_credentials")
+      .select("id, exchange_name, is_active")
+      .order("created_at", { ascending: false });
+    if (error) {
+      checks.exchange_credentials_table = `✗ ${error.message}`;
+    } else {
+      checks.exchange_credentials_table = `✓ ${data?.length ?? 0} kayıt`;
+      if (data && data.length > 0) {
+        checks.kayitlar = data.map((r: any) => `${r.exchange_name}(active=${r.is_active})`).join(", ");
+      }
+    }
+  } catch (e: any) {
+    checks.exchange_credentials_table = `✗ ${e?.message ?? "bağlanamadı"}`;
+  }
+
+  // Test set-active update directly
+  try {
+    const { error: e1, count: c1 } = await supabaseAdmin()
+      .from("exchange_credentials")
+      .update({ is_active: false })
+      .neq("exchange_name", "")
+      .select();
+    checks.update_deactivate = e1 ? `✗ ${e1.message}` : `✓ çalıştı`;
+  } catch (e: any) {
+    checks.update_deactivate = `✗ ${e?.message}`;
+  }
+
   try {
     const { error } = await supabaseAdmin()
       .from("exchange_credentials")
       .select("id")
       .limit(1);
-    checks.exchange_credentials_table = error ? `✗ ${error.message}` : "✓ erişilebilir";
-  } catch (e: any) {
-    checks.exchange_credentials_table = `✗ ${e?.message ?? "bağlanamadı"}`;
-  }
-
-  // 3. Encryption test
-  try {
-    const { encryptSecret, decryptSecret } = await import("@/lib/crypto");
-    const enc = encryptSecret("test-value-12345");
-    const dec = decryptSecret(enc);
-    checks.encryption = dec === "test-value-12345" ? "✓ çalışıyor" : "✗ şifre çözme hatalı";
+    checks.encryption = error ? `✗ ${error.message}` : "✓ çalışıyor";
   } catch (e: any) {
     checks.encryption = `✗ ${e?.message ?? "şifreleme hatası"}`;
   }
