@@ -56,7 +56,7 @@ export default function ScannerPage() {
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-xl font-semibold whitespace-nowrap">Market Scanner</h1>
         <div className="flex items-center gap-2">
-          <select className="input pr-8" style={{minWidth: 210}} value={universe} onChange={(e) => setUniverse(e.target.value as any)}>
+          <select className="input" style={{minWidth: 180}} value={universe} onChange={(e) => setUniverse(e.target.value as any)}>
             {UNIVERSES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
           </select>
           <select className="input w-28 pr-8" value={exchange} onChange={(e) => setExchange(e.target.value as any)}>
