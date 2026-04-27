@@ -379,43 +379,7 @@ export default function HomePage() {
       )}
 
       {/* ===== Live Readiness ===== */}
-      {liveReadiness && (
-        <div className={`card border ${liveReadiness.ready ? "border-success/40" : "border-warning/30"}`}>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Live Readiness</h2>
-            <span className={`text-xs font-semibold px-2 py-1 rounded-full ${liveReadiness.ready ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
-              {liveReadiness.ready ? "HAZIR" : "HENÜZ HAZIR DEĞİL"}
-            </span>
-          </div>
-          {/* Progress bar for paper trade count */}
-          <div className="mb-3">
-            <div className="flex items-center justify-between text-xs text-muted mb-1">
-              <span>Paper Trades</span>
-              <span>{liveReadiness.paperTradesCompleted} / {liveReadiness.paperTradesRequired}</span>
-            </div>
-            <div className="w-full bg-bg-soft rounded-full h-2">
-              <div
-                className={`h-2 rounded-full transition-all ${liveReadiness.paperTradesCompleted >= liveReadiness.paperTradesRequired ? "bg-success" : "bg-accent"}`}
-                style={{ width: `${Math.min(100, (liveReadiness.paperTradesCompleted / liveReadiness.paperTradesRequired) * 100)}%` }}
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-            {liveReadiness.checks?.map((c: any) => (
-              <div key={c.name} className={`bg-bg-soft border rounded-lg px-3 py-2 ${c.passed ? "border-success/30" : "border-danger/30"}`}>
-                <div className="text-xs text-muted">{c.name}</div>
-                <div className={`text-sm font-semibold ${c.passed ? "text-success" : "text-danger"}`}>{c.value}</div>
-                <div className="text-xs text-muted">gereken: {c.required}</div>
-              </div>
-            ))}
-          </div>
-          {liveReadiness.blockers?.length > 0 && (
-            <div className="mt-2 text-xs text-warning">
-              Engeller: {liveReadiness.blockers.join(" • ")}
-            </div>
-          )}
-        </div>
-      )}
+      <LiveReadinessCard readiness={liveReadiness} />
 
       {/* System Config Status */}
       <SystemConfigCard envCheck={envCheck} status={status} />
@@ -616,6 +580,62 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
+// Placeholder checks shown when API returns no data yet
+const PLACEHOLDER_CHECKS = [
+  { name: "Paper Trades", value: "—", required: "100", passed: false },
+  { name: "Profit Factor", value: "—", required: "1.3", passed: false },
+  { name: "Max Drawdown", value: "—", required: "≤10%", passed: false },
+  { name: "Win Rate", value: "—", required: "≥45%", passed: false },
+  { name: "Health Score", value: "—", required: "≥60", passed: false },
+];
+
+function LiveReadinessCard({ readiness }: { readiness: any }) {
+  const completed = readiness?.paperTradesCompleted ?? 0;
+  const required = readiness?.paperTradesRequired ?? 100;
+  const ready = readiness?.ready ?? false;
+  const checks: any[] = readiness?.checks?.length > 0 ? readiness.checks : PLACEHOLDER_CHECKS;
+  const blockers: string[] = readiness?.blockers ?? [];
+
+  return (
+    <div className={`card border ${ready ? "border-success/40" : "border-warning/30"}`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold">Live Readiness</h2>
+        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${ready ? "bg-success/20 text-success" : "bg-warning/20 text-warning"}`}>
+          {ready ? "HAZIR" : "HENÜZ HAZIR DEĞİL"}
+        </span>
+      </div>
+
+      {/* Progress bar */}
+      <div className="mb-3">
+        <div className="flex items-center justify-between text-xs text-muted mb-1">
+          <span>Paper Trades</span>
+          <span>{completed} / {required}</span>
+        </div>
+        <div className="w-full bg-bg-soft rounded-full h-2">
+          <div
+            className={`h-2 rounded-full transition-all ${completed >= required ? "bg-success" : "bg-accent"}`}
+            style={{ width: `${Math.min(100, required > 0 ? (completed / required) * 100 : 0)}%` }}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
+        {checks.map((c: any) => (
+          <div key={c.name} className={`bg-bg-soft border rounded-lg px-3 py-2 ${c.passed ? "border-success/30" : "border-border"}`}>
+            <div className="text-xs text-muted">{c.name}</div>
+            <div className={`text-sm font-semibold ${c.passed ? "text-success" : c.value === "—" ? "text-muted" : "text-danger"}`}>{c.value}</div>
+            <div className="text-xs text-muted">gereken: {c.required}</div>
+          </div>
+        ))}
+      </div>
+
+      {blockers.length > 0 && (
+        <div className="mt-2 text-xs text-warning">Engeller: {blockers.join(" • ")}</div>
+      )}
+    </div>
+  );
+}
+
 function ScannerVisibilityCard({ diagnostics, open, onToggle }: { diagnostics: any; open: boolean; onToggle: () => void }) {
   const details: any[] = diagnostics?.scan_details ?? [];
   const stats = diagnostics?.tick_stats;
@@ -647,7 +667,7 @@ function ScannerVisibilityCard({ diagnostics, open, onToggle }: { diagnostics: a
       {open && (
         <div className="mt-3">
           {details.length === 0 ? (
-            <p className="text-sm text-muted py-2">Henüz tarama verisi yok — Tick Çalıştır ile başlatın.</p>
+            <p className="text-sm text-muted py-2">Henüz tarama verisi yok. Paper bot başlatıldığında ve worker tick çalıştığında burada sembol bazlı scan sonuçları görünecek.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="t w-full text-xs">

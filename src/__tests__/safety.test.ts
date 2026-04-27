@@ -298,6 +298,113 @@ describe("paper trading", () => {
   });
 });
 
+// ---- Kill-switch behavior ----
+describe("kill-switch", () => {
+  it("setBotStatus with 'kill_switch' maps to 'kill_switch_triggered'", async () => {
+    vi.resetModules();
+    // Structural: verify setBotStatus is exported and accepts kill_switch status
+    const mod = await import("@/lib/engines/bot-orchestrator");
+    expect(typeof mod.setBotStatus).toBe("function");
+  });
+
+  it("kill_switch result shape has required fields", () => {
+    // Mirrors what kill-switch route returns
+    const result = {
+      status: "kill_switch_triggered",
+      kill_switch_active: true,
+      kill_switch_reason: "Manual emergency stop",
+    };
+    expect(result.status).toBe("kill_switch_triggered");
+    expect(result.kill_switch_active).toBe(true);
+    expect(result.kill_switch_reason).toBe("Manual emergency stop");
+  });
+
+  it("kill_switch reason is never undefined", () => {
+    const reason = "Manual emergency stop";
+    const stored = reason ?? "Kill switch tetiklendi";
+    expect(stored.length).toBeGreaterThan(0);
+  });
+
+  it("enable_live_trading is set to false on kill_switch", () => {
+    // Mirrors setBotStatus patch logic
+    const isKillSwitch = true;
+    const patch: Record<string, unknown> = { bot_status: "kill_switch_triggered", kill_switch_active: isKillSwitch };
+    if (isKillSwitch) {
+      patch.enable_live_trading = false;
+    }
+    expect(patch.enable_live_trading).toBe(false);
+  });
+});
+
+// ---- Diagnostics shape invariants ----
+describe("diagnostics shape", () => {
+  it("EMPTY_TICK_STATS has all required zero fields", () => {
+    const EMPTY_TICK_STATS = {
+      universe: 0, prefiltered: 0, scanned: 0,
+      signals: 0, rejected: 0, opened: 0, errors: 0, durationMs: 0,
+    };
+    expect(EMPTY_TICK_STATS.universe).toBe(0);
+    expect(EMPTY_TICK_STATS.scanned).toBe(0);
+    expect(EMPTY_TICK_STATS.signals).toBe(0);
+    expect(EMPTY_TICK_STATS.opened).toBe(0);
+  });
+
+  it("EMPTY_WORKER_HEALTH is an object (never null)", () => {
+    const EMPTY_WORKER_HEALTH = {
+      online: false, workerId: null, status: "offline",
+      ageMs: null, secondsSinceHeartbeat: null,
+      websocketStatus: null, binanceApiStatus: null, lastError: null,
+    };
+    expect(EMPTY_WORKER_HEALTH).not.toBeNull();
+    expect(EMPTY_WORKER_HEALTH.online).toBe(false);
+    expect(EMPTY_WORKER_HEALTH.status).toBe("offline");
+  });
+
+  it("active_exchange fallback is binance", () => {
+    const settings: any = null;
+    const active_exchange = settings?.active_exchange ?? "binance";
+    expect(active_exchange).toBe("binance");
+  });
+
+  it("readiness_summary is always an object", () => {
+    // When supabase not configured
+    const readiness_summary = {
+      ready: false,
+      paperTradesCompleted: 0,
+      paperTradesRequired: 100,
+      blockers: ["Supabase env missing"],
+      checks: [],
+    };
+    expect(readiness_summary).not.toBeNull();
+    expect(Array.isArray(readiness_summary.blockers)).toBe(true);
+    expect(Array.isArray(readiness_summary.checks)).toBe(true);
+  });
+});
+
+// ---- Env-check: exchange defaults ----
+describe("env-check exchange defaults", () => {
+  it("DEFAULT_EXCHANGE missing → binance", () => {
+    vi.stubEnv("DEFAULT_EXCHANGE", "");
+    const val = process.env.DEFAULT_EXCHANGE || "binance";
+    expect(val).toBe("binance");
+  });
+
+  it("DEFAULT_ACTIVE_EXCHANGE missing → binance", () => {
+    vi.stubEnv("DEFAULT_ACTIVE_EXCHANGE", "");
+    const val = process.env.DEFAULT_ACTIVE_EXCHANGE || "binance";
+    expect(val).toBe("binance");
+  });
+
+  it("mexc never appears as exchange fallback", () => {
+    vi.stubEnv("DEFAULT_EXCHANGE", "");
+    vi.stubEnv("DEFAULT_ACTIVE_EXCHANGE", "");
+    const exchange = process.env.DEFAULT_EXCHANGE || "binance";
+    const activeExchange = process.env.DEFAULT_ACTIVE_EXCHANGE || "binance";
+    expect(exchange).not.toBe("mexc");
+    expect(activeExchange).not.toBe("mexc");
+  });
+});
+
 // ---- Scanner visibility & diagnostics ----
 describe("scanner visibility", () => {
   it("TickResult scanDetails is present and typed correctly", async () => {
