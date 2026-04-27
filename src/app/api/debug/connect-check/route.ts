@@ -29,6 +29,27 @@ export async function GET() {
     checks.exchange_credentials_table = `✗ ${e?.message ?? "bağlanamadı"}`;
   }
 
+  // Test connected route directly
+  try {
+    const { decryptSecret, maskApiKey } = await import("@/lib/crypto");
+    const { data: rawData, error: rawErr } = await supabaseAdmin()
+      .from("exchange_credentials")
+      .select("id, exchange_name, is_active, api_key_encrypted")
+      .order("created_at", { ascending: false });
+    if (rawErr) {
+      checks.connected_route_sim = `✗ ${rawErr.message}`;
+    } else {
+      const masked = (rawData ?? []).map((c: any) => {
+        let key = "****";
+        try { key = maskApiKey(decryptSecret(c.api_key_encrypted)); } catch {}
+        return `${c.exchange_name}(active=${c.is_active}, key=${key})`;
+      });
+      checks.connected_route_sim = `✓ ${masked.join(", ") || "boş"}`;
+    }
+  } catch (e: any) {
+    checks.connected_route_sim = `✗ ${e?.message}`;
+  }
+
   try {
     const { encryptSecret, decryptSecret } = await import("@/lib/crypto");
     const enc = encryptSecret("test-value-12345");

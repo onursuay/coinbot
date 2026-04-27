@@ -69,9 +69,10 @@ export default function ApiSettings() {
     setDiagBusy(true);
     setDiagChecks(null);
     try {
-      const r = await fetch("/api/debug/connect-check");
+      const r = await fetch(`/api/debug/connect-check?t=${Date.now()}`, { cache: "no-store" });
       const j = await r.json();
       setDiagChecks(j.checks ?? {});
+      await refresh();
     } catch (e: any) {
       setDiagChecks({ hata: e?.message ?? "ulaşılamadı" });
     } finally {
@@ -88,8 +89,8 @@ export default function ApiSettings() {
 
       <div className="card text-sm text-warning space-y-1">
         <div>⚠ API key oluştururken <b>Withdrawal</b> iznini AÇMAYIN.</div>
-        <div>⚠ Mümkünse <b>IP whitelist</b> kullanın (sunucu IP'leri için Vercel docs'a bakın).</div>
-        <div>⚠ Trade izni olan API key'ler risk içerir; live trading varsayılan kapalıdır.</div>
+        <div>⚠ Mümkünse <b>IP whitelist</b> kullanın (sunucu IP&apos;leri için Vercel docs&apos;a bakın).</div>
+        <div>⚠ Trade izni olan API key&apos;ler risk içerir; live trading varsayılan kapalıdır.</div>
       </div>
 
       {/* Diagnostics */}
