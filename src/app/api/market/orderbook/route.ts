@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const exchange = (url.searchParams.get("exchange") ?? "mexc").toLowerCase();
+  const exchange = (url.searchParams.get("exchange") ?? "binance").toLowerCase();
   const symbol = toCanonical(url.searchParams.get("symbol") ?? "");
   if (!symbol) return fail("symbol gerekli", 400);
   try {

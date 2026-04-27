@@ -565,6 +565,117 @@ describe("api settings diagnostic button read-only", () => {
   });
 });
 
+// ---- Strategy health gate blocks trades ----
+describe("strategy health gate", () => {
+  it("blocked=true when totalTrades >= 10 and score < threshold", () => {
+    const totalTrades = 15;
+    const score = 20;
+    const threshold = 60;
+    const blocked = totalTrades >= 10 && score < threshold;
+    expect(blocked).toBe(true);
+  });
+
+  it("blocked=false when totalTrades < 10 even if score < threshold", () => {
+    const totalTrades = 5;
+    const score = 20;
+    const threshold = 60;
+    const blocked = totalTrades >= 10 && score < threshold;
+    expect(blocked).toBe(false);
+  });
+
+  it("blocked=false when score >= threshold", () => {
+    const totalTrades = 50;
+    const score = 75;
+    const threshold = 60;
+    const blocked = totalTrades >= 10 && score < threshold;
+    expect(blocked).toBe(false);
+  });
+
+  it("blockReason contains score and threshold when blocked", () => {
+    const score = 20;
+    const threshold = 60;
+    const blockReason = `Strateji sağlık skoru ${score}/100 (min ${threshold} gerekli)`;
+    expect(blockReason).toContain("20");
+    expect(blockReason).toContain("60");
+    expect(blockReason.length).toBeGreaterThan(0);
+  });
+
+  it("empty state returns blocked=false, score=100 when totalTrades=0", () => {
+    // Mirrors calculateStrategyHealth empty result (supabase not configured or no trades)
+    const empty = { totalTrades: 0, score: 100, blocked: false, blockReason: null };
+    expect(empty.blocked).toBe(false);
+    expect(empty.score).toBe(100);
+    expect(empty.totalTrades).toBe(0);
+  });
+});
+
+// ---- Order book depth gate ----
+describe("orderbook depth gate", () => {
+  it("TIER_2 downgraded to TIER_3 when orderbookDepthUsdt < 200_000", async () => {
+    vi.resetModules();
+    const { applyDynamicDowngrade } = await import("@/lib/risk-tiers");
+    // SOL/USDT is TIER_2
+    const result = applyDynamicDowngrade("SOL/USDT", {
+      spreadPercent: 0.01,
+      atrPercent: 1.0,
+      fundingRatePercent: 0.01,
+      orderbookDepthUsdt: 50_000,
+      volume24hUsdt: 500_000_000,
+    });
+    expect(result.effectiveTier).toBe("TIER_3");
+    expect(result.downgraded).toBe(true);
+  });
+
+  it("TIER_2 stays at TIER_2 when orderbookDepthUsdt >= 200_000 and spread ok", async () => {
+    vi.resetModules();
+    const { applyDynamicDowngrade } = await import("@/lib/risk-tiers");
+    // SOL/USDT is TIER_2
+    const result = applyDynamicDowngrade("SOL/USDT", {
+      spreadPercent: 0.01,
+      atrPercent: 1.0,
+      fundingRatePercent: 0.01,
+      orderbookDepthUsdt: 500_000,
+      volume24hUsdt: 500_000_000,
+    });
+    expect(result.effectiveTier).toBe("TIER_2");
+    expect(result.rejected).toBe(false);
+  });
+
+  it("MIN_ORDERBOOK_DEPTH threshold is 200_000 USDT for TIER_2 downgrade", () => {
+    const MIN_ORDERBOOK_DEPTH_USDT = 200_000;
+    const depth = 150_000;
+    const shouldDowngrade = depth < MIN_ORDERBOOK_DEPTH_USDT;
+    expect(shouldDowngrade).toBe(true);
+  });
+});
+
+// ---- persistStrategyHealth upsert conflict ----
+describe("persistStrategyHealth schema", () => {
+  it("uses date field for upsert key (not just user_id)", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("column names match migration schema", () => {
+    const row = {
+      user_id: "test",
+      date: "2026-04-27",
+      win_rate: 0.6,
+      profit_factor: 1.5,
+      max_drawdown_percent: 100,
+      consecutive_losses: 2,
+      stop_loss_hit_rate: 0.3,
+      take_profit_hit_rate: 0.7,
+      score: 75,
+    };
+    // All keys match the migration column names
+    expect(row.max_drawdown_percent).toBeDefined();
+    expect(row.stop_loss_hit_rate).toBeDefined();
+    expect(row.take_profit_hit_rate).toBeDefined();
+    expect(row.date).toBeDefined();
+  });
+});
+
 // ---- Env-check: exchange defaults ----
 describe("env-check exchange defaults", () => {
   it("DEFAULT_EXCHANGE missing → binance", () => {

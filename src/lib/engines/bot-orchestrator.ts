@@ -10,6 +10,7 @@ import { getAdapter } from "@/lib/exchanges/exchange-factory";
 import { getDailyStatus } from "./daily-target";
 import { getUniverseSlice, type ScanUniverse } from "./symbol-universe";
 import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier } from "@/lib/risk-tiers";
+import { calculateStrategyHealth } from "./strategy-health";
 import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
@@ -20,6 +21,7 @@ export interface ScanDetail {
   spreadPercent: number;
   atrPercent: number;
   fundingRate: number;
+  orderBookDepth: number;    // USDT — top-10 bid+ask average
   signalType: string;
   signalScore: number;
   rejectReason: string | null;
@@ -259,6 +261,20 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     return result;
   }
 
+  // ── STRATEGY HEALTH GATE ── block new trades if score below threshold
+  const strategyHealth = await calculateStrategyHealth(userId);
+  if (strategyHealth.blocked) {
+    result.ok = true;
+    result.reason = `strategy_health_blocked: ${strategyHealth.blockReason}`;
+    result.durationMs = Date.now() - start;
+    await botLog({
+      userId, level: "warn", eventType: "tick_completed",
+      message: `Tick — strateji sağlık gate reddetti: ${strategyHealth.blockReason}`,
+      metadata: { score: strategyHealth.score, totalTrades: strategyHealth.totalTrades },
+    });
+    return result;
+  }
+
   const { data: openPos } = await sb.from("paper_trades").select("id").eq("user_id", userId).eq("status", "open");
   let openCount = openPos?.length ?? 0;
 
@@ -282,6 +298,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       spreadPercent: 0,
       atrPercent: 0,
       fundingRate: 0,
+      orderBookDepth: 0,
       signalType: "UNKNOWN",
       signalScore: 0,
       rejectReason: null,
@@ -292,12 +309,22 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
     try {
       const preTicker = tickerMap[symbol];
-      const [klines, ticker, info, funding] = await Promise.all([
+      const [klines, ticker, info, funding, orderBook] = await Promise.all([
         adapter.getKlines(symbol, tf, 250),
         preTicker ? Promise.resolve(preTicker) : adapter.getTicker(symbol),
         adapter.getExchangeInfo(symbol),
         adapter.getFundingRate(symbol),
+        adapter.getOrderBook(symbol, 10).catch(() => null),
       ]);
+
+      // Compute bid+ask USDT depth (top-10 levels average)
+      let orderbookDepthUsdt = 0;
+      if (orderBook) {
+        const bidDepth = orderBook.bids.slice(0, 10).reduce((s, b) => s + b.price * b.size, 0);
+        const askDepth = orderBook.asks.slice(0, 10).reduce((s, a) => s + a.price * a.size, 0);
+        orderbookDepthUsdt = (bidDepth + askDepth) / 2;
+      }
+      detail.orderBookDepth = orderbookDepthUsdt;
 
       detail.spreadPercent = ticker.spread * 100;
       detail.fundingRate = funding?.rate ?? 0;
@@ -368,7 +395,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         spreadPercent: ticker.spread * 100,
         atrPercent: detail.atrPercent,
         fundingRatePercent: Math.abs((funding?.rate ?? 0) * 100),
-        orderbookDepthUsdt: 0,
+        orderbookDepthUsdt,
         volume24hUsdt: ticker.quoteVolume24h,
         btcDirectionAligned: undefined,
       });

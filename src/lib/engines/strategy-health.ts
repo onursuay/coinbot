@@ -102,17 +102,19 @@ export async function calculateStrategyHealth(userId: string): Promise<StrategyH
 
 export async function persistStrategyHealth(userId: string, metrics: StrategyHealthMetrics): Promise<void> {
   if (!supabaseConfigured()) return;
+  const today = new Date().toISOString().slice(0, 10);
   await supabaseAdmin()
     .from("strategy_health")
     .upsert({
       user_id: userId,
+      date: today,
       win_rate: metrics.winRate,
       profit_factor: metrics.profitFactor,
-      max_drawdown: metrics.maxDrawdown,
+      max_drawdown_percent: metrics.maxDrawdown,
       consecutive_losses: metrics.consecutiveLosses,
-      sl_hit_rate: metrics.slHitRate,
-      tp_hit_rate: metrics.tpHitRate,
+      stop_loss_hit_rate: metrics.slHitRate,
+      take_profit_hit_rate: metrics.tpHitRate,
       score: metrics.score,
-      calculated_at: new Date().toISOString(),
-    }, { onConflict: "user_id" });
+      metrics_json: { winRate: metrics.winRate, profitFactor: metrics.profitFactor, avgRiskReward: metrics.avgRiskReward },
+    }, { onConflict: "user_id,date" });
 }
