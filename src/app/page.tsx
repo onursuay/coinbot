@@ -730,6 +730,9 @@ function DynamicUniverseCard({ diagnostics }: { diagnostics: any }) {
   const pool = stats.dynamicCandidates ?? 0;
   const eliminated = stats.dynamicEliminatedLowSignal ?? 0;
   const lowVol = stats.dynamicRejectedLowVolume ?? 0;
+  const insufficientDepth = stats.dynamicRejectedInsufficientDepth ?? 0;
+  const noData = stats.dynamicRejectedNoData ?? 0;
+  const highSpread = stats.dynamicRejectedHighSpread ?? 0;
   const weakMom = stats.dynamicRejectedWeakMomentum ?? 0;
   const pumpDump = stats.dynamicRejectedPumpDump ?? 0;
   const stable = stats.dynamicRejectedStablecoin ?? 0;
@@ -748,6 +751,11 @@ function DynamicUniverseCard({ diagnostics }: { diagnostics: any }) {
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm mt-2">
         <Stat label="Düşük Hacim" value={String(lowVol)} />
+        <Stat label="Yetersiz Likidite" value={String(insufficientDepth)} />
+        <Stat label="Veri Yok" value={String(noData)} />
+        <Stat label="Yüksek Spread" value={String(highSpread)} />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm mt-2">
         <Stat label="Zayıf Momentum" value={String(weakMom)} />
         <Stat label="Pump/Dump" value={String(pumpDump)} />
         <Stat label="Stablecoin/Sentetik" value={String(stable)} />

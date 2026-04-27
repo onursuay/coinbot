@@ -164,31 +164,6 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* Dynamic universe — short summary only. Full breakdown lives on the main Panel. */}
-      {stats && (
-        <div className="card py-2 text-xs">
-          <div className="grid grid-cols-3 gap-3 text-center">
-            <div>
-              <div className="text-muted">Core</div>
-              <div className="font-semibold tabular-nums">10</div>
-            </div>
-            <div>
-              <div className="text-muted">Dinamik Fırsat Adayı</div>
-              <div className={`font-semibold tabular-nums ${(stats.dynamicOpportunityCandidates ?? 0) > 0 ? "text-accent" : "text-muted"}`}>
-                {stats.dynamicOpportunityCandidates ?? 0}
-              </div>
-            </div>
-            <div>
-              <div className="text-muted">Elenen</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.dynamicEliminatedLowSignal ?? 0}</div>
-            </div>
-          </div>
-          <p className="text-center text-muted pt-2">
-            Detaylı dinamik evren kırılımı için <Link href="/" className="text-accent">Panel</Link>&apos;e bakın.
-          </p>
-        </div>
-      )}
-
       {/* No data */}
       {!data && !loading && (
         <div className="card text-muted text-sm text-center py-8">
