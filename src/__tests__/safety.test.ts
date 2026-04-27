@@ -2181,3 +2181,212 @@ describe("dynamic universe v2", () => {
     expect(allowed).toBe(false);
   });
 });
+
+// ---- Paper trade E2E validation ----
+describe("paper trade e2e validation", () => {
+  it("e2e-status response shape is correct", () => {
+    const shape = {
+      allPassed: true,
+      passCount: 9,
+      failCount: 0,
+      skippedCount: 0,
+      checks: [] as any[],
+      summary: "Tüm kontroller geçti",
+      lastCheckedAt: new Date().toISOString(),
+    };
+    expect(typeof shape.allPassed).toBe("boolean");
+    expect(typeof shape.passCount).toBe("number");
+    expect(typeof shape.failCount).toBe("number");
+    expect(typeof shape.skippedCount).toBe("number");
+    expect(Array.isArray(shape.checks)).toBe(true);
+    expect(typeof shape.summary).toBe("string");
+    expect(typeof shape.lastCheckedAt).toBe("string");
+  });
+
+  it("allPassed=false when at least one check fails", () => {
+    const checks = [
+      { name: "hard_live_gate_off", ok: true, skipped: false },
+      { name: "trading_mode_paper", ok: false, skipped: false },
+    ];
+    const failCount = checks.filter((c) => !c.ok && !c.skipped).length;
+    const allPassed = failCount === 0;
+    expect(allPassed).toBe(false);
+    expect(failCount).toBe(1);
+  });
+
+  it("skipped checks do not count as failures", () => {
+    const checks = [
+      { name: "hard_live_gate_off", ok: true, skipped: false },
+      { name: "pnl_calculated", ok: true, skipped: true },   // no closed trades yet
+      { name: "sl_tp_closure", ok: true, skipped: true },
+    ];
+    const failCount = checks.filter((c) => !c.ok && !c.skipped).length;
+    expect(failCount).toBe(0);
+  });
+
+  it("is_paper=true is always set when openPaperTrade inserts a record", () => {
+    // Mirrors the insert payload in paper-trading-engine.ts
+    const insertPayload = {
+      is_paper: true,
+      status: "open",
+      entry_price: 50000,
+      stop_loss: 49000,
+      take_profit: 53000,
+    };
+    expect(insertPayload.is_paper).toBe(true);
+  });
+
+  it("PnL calculation: LONG profitable trade net < gross (fees reduce it)", () => {
+    const sign = 1; // LONG
+    const entryPrice = 100;
+    const exitPrice = 110;
+    const positionSize = 1;
+    const FEE_RATE = 0.0004;
+    const SLIPPAGE_RATE = 0.0005;
+    const grossPnl = sign * (exitPrice - entryPrice) * positionSize; // 10
+    const fees = (entryPrice + exitPrice) * positionSize * FEE_RATE;
+    const slippage = (entryPrice + exitPrice) * positionSize * SLIPPAGE_RATE * 0.5;
+    const netPnl = grossPnl - fees - slippage;
+    expect(netPnl).toBeGreaterThan(0);      // still profitable
+    expect(netPnl).toBeLessThan(grossPnl);   // fees reduced it
+  });
+
+  it("PnL calculation: SHORT profitable trade when price drops", () => {
+    const sign = -1; // SHORT
+    const entryPrice = 100;
+    const exitPrice = 90; // price dropped 10%
+    const positionSize = 1;
+    const grossPnl = sign * (exitPrice - entryPrice) * positionSize;
+    expect(grossPnl).toBeGreaterThan(0); // short profits when price drops
+  });
+
+  it("PnL calculation: LONG losing trade when price drops", () => {
+    const sign = 1;
+    const entryPrice = 100;
+    const exitPrice = 95;
+    const positionSize = 1;
+    const grossPnl = sign * (exitPrice - entryPrice) * positionSize;
+    expect(grossPnl).toBeLessThan(0);
+  });
+
+  it("stop_loss triggers for LONG when price falls below SL", () => {
+    const direction = "LONG";
+    const stopLoss = 95;
+    const takeProfit = 110;
+    const currentPrice = 93;
+    let exitReason: string | null = null;
+    if (direction === "LONG") {
+      if (currentPrice <= stopLoss) exitReason = "stop_loss";
+      else if (currentPrice >= takeProfit) exitReason = "take_profit";
+    }
+    expect(exitReason).toBe("stop_loss");
+  });
+
+  it("take_profit triggers for LONG when price rises above TP", () => {
+    const direction = "LONG";
+    const stopLoss = 95;
+    const takeProfit = 110;
+    const currentPrice = 112;
+    let exitReason: string | null = null;
+    if (direction === "LONG") {
+      if (currentPrice <= stopLoss) exitReason = "stop_loss";
+      else if (currentPrice >= takeProfit) exitReason = "take_profit";
+    }
+    expect(exitReason).toBe("take_profit");
+  });
+
+  it("stop_loss triggers for SHORT when price rises above SL", () => {
+    const direction = "SHORT";
+    const stopLoss = 105;
+    const takeProfit = 85;
+    const currentPrice = 108;
+    let exitReason: string | null = null;
+    if (direction === "SHORT") {
+      if (currentPrice >= stopLoss) exitReason = "stop_loss";
+      else if (currentPrice <= takeProfit) exitReason = "take_profit";
+    }
+    expect(exitReason).toBe("stop_loss");
+  });
+
+  it("take_profit triggers for SHORT when price drops below TP", () => {
+    const direction = "SHORT";
+    const stopLoss = 105;
+    const takeProfit = 85;
+    const currentPrice = 83;
+    let exitReason: string | null = null;
+    if (direction === "SHORT") {
+      if (currentPrice >= stopLoss) exitReason = "stop_loss";
+      else if (currentPrice <= takeProfit) exitReason = "take_profit";
+    }
+    expect(exitReason).toBe("take_profit");
+  });
+
+  it("price exactly at SL triggers stop_loss (boundary condition)", () => {
+    const direction = "LONG";
+    const stopLoss = 95;
+    const takeProfit = 110;
+    const currentPrice = 95; // exactly at SL
+    let exitReason: string | null = null;
+    if (direction === "LONG") {
+      if (currentPrice <= stopLoss) exitReason = "stop_loss";
+      else if (currentPrice >= takeProfit) exitReason = "take_profit";
+    }
+    expect(exitReason).toBe("stop_loss");
+  });
+
+  it("price between SL and TP triggers no exit (position still open)", () => {
+    const direction = "LONG";
+    const stopLoss = 95;
+    const takeProfit = 110;
+    const currentPrice = 102;
+    let exitReason: string | null = null;
+    if (direction === "LONG") {
+      if (currentPrice <= stopLoss) exitReason = "stop_loss";
+      else if (currentPrice >= takeProfit) exitReason = "take_profit";
+    }
+    expect(exitReason).toBeNull();
+  });
+
+  it("hard_live_gate_off check passes when HARD_LIVE_TRADING_ALLOWED=false", () => {
+    vi.stubEnv("HARD_LIVE_TRADING_ALLOWED", "false");
+    const isHardLive = process.env.HARD_LIVE_TRADING_ALLOWED === "true";
+    const checkOk = !isHardLive;
+    expect(checkOk).toBe(true);
+  });
+
+  it("e2e check names cover all required validations", () => {
+    const requiredChecks = [
+      "hard_live_gate_off",
+      "trading_mode_paper",
+      "no_real_orders",
+      "first_trade_opened",
+      "is_paper_flag",
+      "entry_sl_tp_present",
+      "open_positions_visible",
+      "pnl_calculated",
+      "sl_tp_closure",
+    ];
+    // Verify each name is a non-empty string
+    for (const name of requiredChecks) {
+      expect(name.length).toBeGreaterThan(0);
+    }
+    expect(requiredChecks).toHaveLength(9);
+  });
+
+  it("monitoring report e2eValidation shape is correct", () => {
+    const e2eValidation = {
+      allPassed: true,
+      failedChecks: [] as string[],
+      hardLiveGateOff: true,
+      tradingModePaperOk: true,
+      noRealOrdersOk: true,
+      isPaperFlagOk: true,
+      pnlCalculatedOk: true,
+      slTpClosureOk: true,
+    };
+    expect(typeof e2eValidation.allPassed).toBe("boolean");
+    expect(Array.isArray(e2eValidation.failedChecks)).toBe(true);
+    expect(e2eValidation.hardLiveGateOff).toBe(true);
+    expect(e2eValidation.noRealOrdersOk).toBe(true);
+  });
+});

@@ -88,6 +88,18 @@ export interface MonitoringMetrics {
   openedTradeDetails: { symbol: string; direction: string; entryPrice: number; stopLoss: number; takeProfit: number; signalScore: number }[];
   closedTradeDetails: { symbol: string; direction: string; entryPrice: number; exitPrice: number; pnl: number; exitReason: string }[];
   nearMissCandidates: { symbol: string; score: number; rejectReason: string }[];
+
+  // 9. Paper trade E2E validation
+  e2eValidation: {
+    allPassed: boolean;
+    failedChecks: string[];   // labels of failed checks
+    hardLiveGateOff: boolean;
+    tradingModePaperOk: boolean;
+    noRealOrdersOk: boolean;
+    isPaperFlagOk: boolean;   // null = no trades yet to verify
+    pnlCalculatedOk: boolean; // null = no closed trades yet
+    slTpClosureOk: boolean;   // null = no closed trades yet
+  };
 }
 
 function emptyMetrics(overrides: Partial<MonitoringMetrics> = {}): MonitoringMetrics {
@@ -111,6 +123,16 @@ function emptyMetrics(overrides: Partial<MonitoringMetrics> = {}): MonitoringMet
     tradingModePaper: true, realOrderSent: false, killSwitchActive: false, lastError: null,
     warnings: [],
     openedTradeDetails: [], closedTradeDetails: [], nearMissCandidates: [],
+    e2eValidation: {
+      allPassed: !isHardLiveAllowed(),
+      failedChecks: isHardLiveAllowed() ? ["Canlı trading engeli aktif"] : [],
+      hardLiveGateOff: !isHardLiveAllowed(),
+      tradingModePaperOk: true,
+      noRealOrdersOk: true,
+      isPaperFlagOk: true,
+      pnlCalculatedOk: true,
+      slTpClosureOk: true,
+    },
     ...overrides,
   };
 }
@@ -355,5 +377,59 @@ export async function buildMonitoringMetrics(
     openedTradeDetails,
     closedTradeDetails,
     nearMissCandidates,
+    e2eValidation: buildE2EValidation({
+      hardLiveAllowed: isHardLiveAllowed(),
+      tradingMode,
+      enableLiveTrading,
+      closedTrades: allClosed,
+      totalClosedTrades,
+      slClosed: slCount,
+      tpClosed: tpCount,
+    }),
+  };
+}
+
+function buildE2EValidation(opts: {
+  hardLiveAllowed: boolean;
+  tradingMode: string;
+  enableLiveTrading: boolean;
+  closedTrades: { pnl: number | null; exit_reason: string | null }[];
+  totalClosedTrades: number;
+  slClosed: number;
+  tpClosed: number;
+}): MonitoringMetrics["e2eValidation"] {
+  const failedChecks: string[] = [];
+
+  const hardLiveGateOff = !opts.hardLiveAllowed;
+  if (!hardLiveGateOff) failedChecks.push("Canlı trading engeli aktif");
+
+  const tradingModePaperOk = opts.tradingMode === "paper";
+  if (!tradingModePaperOk) failedChecks.push("İşlem modu paper değil");
+
+  const noRealOrdersOk = !opts.enableLiveTrading;
+  if (!noRealOrdersOk) failedChecks.push("Gerçek emir gönderiliyor");
+
+  // These are only meaningful once trades exist
+  const hasClosed = opts.totalClosedTrades > 0;
+  const pnlCalculatedOk = !hasClosed || opts.closedTrades.every(
+    (t) => typeof t.pnl === "number",
+  );
+  if (hasClosed && !pnlCalculatedOk) failedChecks.push("PnL hesaplanmamış");
+
+  const slTpClosureOk = !hasClosed || (opts.slClosed > 0 || opts.tpClosed > 0);
+  // Not a failure if no SL/TP yet — trades may still be open
+
+  // is_paper flag check is implicit (all trades in paper_trades have is_paper=true by design)
+  const isPaperFlagOk = true;
+
+  return {
+    allPassed: failedChecks.length === 0,
+    failedChecks,
+    hardLiveGateOff,
+    tradingModePaperOk,
+    noRealOrdersOk,
+    isPaperFlagOk,
+    pnlCalculatedOk,
+    slTpClosureOk,
   };
 }

@@ -63,6 +63,7 @@ export default function HomePage() {
   const [liveReadiness, setLiveReadiness] = useState<any>(null);
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [e2eStatus, setE2eStatus] = useState<any>(null);
 
   const addToast = (t: Omit<Toast, "id">) => {
     const id = ++toastId;
@@ -72,7 +73,7 @@ export default function HomePage() {
 
   const refresh = async () => {
     const noCache: RequestInit = { cache: "no-store" };
-    const [a, b, c, d, e, f, g, h, i] = await Promise.all([
+    const [a, b, c, d, e, f, g, h, i, j] = await Promise.all([
       fetch("/api/bot/status", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/performance", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/signals?limit=10", noCache).then((r) => r.json()).catch(() => null),
@@ -82,6 +83,7 @@ export default function HomePage() {
       fetch("/api/bot/strategy-health", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/live-readiness", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/diagnostics", noCache).then((r) => r.json()).catch(() => null),
+      fetch("/api/paper-trades/e2e-status", noCache).then((r) => r.json()).catch(() => null),
     ]);
     if (a?.ok) {
       setStatus(a.data);
@@ -95,6 +97,7 @@ export default function HomePage() {
     if (g?.ok) setStrategyHealth(g.data);
     if (h?.ok) setLiveReadiness(h.data);
     if (i?.ok) setDiagnostics(i.data);
+    if (j?.ok) setE2eStatus(j.data);
   };
 
   useEffect(() => {
@@ -379,6 +382,9 @@ export default function HomePage() {
       {/* ===== Live Readiness ===== */}
       <LiveReadinessCard readiness={liveReadiness} />
 
+      {/* Paper Trade E2E Validation */}
+      <PaperE2ECard e2e={e2eStatus} />
+
       {/* System Config Status */}
       <SystemConfigCard envCheck={envCheck} status={status} />
 
@@ -636,6 +642,55 @@ function LiveReadinessCard({ readiness }: { readiness: any }) {
 
       {blockers.length > 0 && (
         <div className="mt-2 text-xs text-warning">Engeller: {blockers.join(" • ")}</div>
+      )}
+    </div>
+  );
+}
+
+function PaperE2ECard({ e2e }: { e2e: any }) {
+  if (!e2e) return null;
+  const allPassed = e2e.allPassed as boolean;
+  const checks: { name: string; label: string; ok: boolean; detail: string; skipped?: boolean }[] = e2e.checks ?? [];
+  const failed = checks.filter((c) => !c.ok && !c.skipped);
+  const skipped = checks.filter((c) => c.skipped);
+
+  return (
+    <div className={`card border ${allPassed ? "border-success/30" : failed.length > 0 ? "border-danger/40" : "border-border"}`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold">Paper İşlem Doğrulaması</h2>
+        <div className="flex items-center gap-2">
+          {allPassed ? (
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-success/20 text-success">TÜMÜ GEÇTİ</span>
+          ) : failed.length > 0 ? (
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-danger/20 text-danger">{failed.length} BAŞARISIZ</span>
+          ) : null}
+          {skipped.length > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-bg-soft text-muted">{skipped.length} atlandı</span>
+          )}
+        </div>
+      </div>
+
+      <ul className="space-y-1.5">
+        {checks.map((c) => (
+          <li key={c.name} className="flex items-start gap-2 text-xs">
+            <span className={`mt-0.5 font-bold flex-shrink-0 ${c.skipped ? "text-muted" : c.ok ? "text-success" : "text-danger"}`}>
+              {c.skipped ? "—" : c.ok ? "+" : "x"}
+            </span>
+            <div className="flex-1 min-w-0">
+              <span className={`font-medium ${c.skipped ? "text-muted" : c.ok ? "" : "text-danger"}`}>{c.label}</span>
+              <span className="text-muted ml-2 truncate">{c.detail}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <p className={`text-xs mt-3 ${allPassed ? "text-success" : failed.length > 0 ? "text-danger" : "text-muted"}`}>
+        {e2e.summary}
+      </p>
+      {e2e.lastCheckedAt && (
+        <p className="text-xs text-muted mt-1">
+          Kontrol: {new Date(e2e.lastCheckedAt).toLocaleTimeString("tr-TR")}
+        </p>
       )}
     </div>
   );
