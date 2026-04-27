@@ -9,6 +9,7 @@ import { generateSignal } from "./signal-engine";
 import { getAdapter } from "@/lib/exchanges/exchange-factory";
 import { getDailyStatus } from "./daily-target";
 import { getUniverseSlice, type ScanUniverse } from "./symbol-universe";
+import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier } from "@/lib/risk-tiers";
 import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
@@ -294,9 +295,47 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
       if (!sig.entryPrice || !sig.stopLoss || !sig.takeProfit) continue;
 
+      // ── WHITELIST + TIER GATE ── (auto-trade only allowed for whitelisted symbols)
+      const allowedSymbols: string[] = Array.isArray(settings.allowed_symbols) && settings.allowed_symbols.length > 0
+        ? settings.allowed_symbols
+        : [];
+      const symbolNorm = symbol.replace("/", ""); // BTC/USDT → BTCUSDT
+      const inDbWhitelist = allowedSymbols.length === 0 || allowedSymbols.includes(symbolNorm) || allowedSymbols.includes(symbol);
+      const inTierWhitelist = isAutoTradeAllowed(symbol);
+      if (!inTierWhitelist || !inDbWhitelist) {
+        result.rejectedSignals.push({ symbol, reason: "Whitelist dışı (tier/db)" });
+        await botLog({
+          userId, exchange, eventType: "whitelist_blocked",
+          message: `${symbol} otomatik işlem whitelist dışı`,
+          metadata: { tier: classifyTier(symbol), dbWhitelist: allowedSymbols.length },
+        });
+        continue;
+      }
+
+      // ── DYNAMIC TIER DOWNGRADE ── (live market conditions can demote/reject)
+      const tierResult = applyDynamicDowngrade(symbol, {
+        spreadPercent: ticker.spread * 100,
+        atrPercent: typeof sig.features.atrPctOfClose === "number" ? sig.features.atrPctOfClose : 0,
+        fundingRatePercent: Math.abs((funding?.rate ?? 0) * 100),
+        orderbookDepthUsdt: 0, // not yet computed at this layer; risk-engine handles
+        volume24hUsdt: ticker.quoteVolume24h,
+        btcDirectionAligned: undefined, // signal-engine already incorporates BTC trend
+      });
+      if (tierResult.rejected) {
+        result.rejectedSignals.push({ symbol, reason: `Tier reject: ${tierResult.reasons.join(", ")}` });
+        await botLog({
+          userId, exchange, eventType: "tier_blocked",
+          message: `${symbol} tier reddetti: ${tierResult.reasons.join(", ")}`,
+          metadata: { tier: tierResult.originalTier, effective: tierResult.effectiveTier },
+        });
+        continue;
+      }
+      // Use tier-policy max leverage as upper cap for risk engine
+      const tierLeverageCap = Math.min(tierResult.policy.maxLeverage, settings.max_leverage ?? 3);
+
       const liq = await adapter.getEstimatedLiquidationPrice({
         symbol, direction: sig.signalType, entryPrice: sig.entryPrice,
-        leverage: settings.max_leverage, marginMode: "isolated",
+        leverage: tierLeverageCap, marginMode: "isolated",
       });
 
       const risk = evaluateRisk({
@@ -311,6 +350,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         webSocketHealthy: true, apiHealthy: true, dataFresh: true,
         fundingRate: funding?.rate,
         estimatedLiquidationPrice: liq,
+        tierMaxLeverage: tierResult.policy.maxLeverage,
+        tierMinRiskRewardRatio: tierResult.policy.minRiskRewardRatio,
+        tierMaxRiskPerTradePercent: tierResult.policy.maxRiskPerTradePercent,
         exchangeMaxLeverage: info?.maxLeverage,
         exchangeMinOrderSize: info?.minOrderSize,
         exchangeStepSize: info?.stepSize,

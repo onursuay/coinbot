@@ -2,6 +2,13 @@
 // Empty strings ("") are treated as MISSING — fallback to default.
 // Numeric values that fail to parse are clamped to safe defaults.
 // Leverage values are hard-clamped to SYSTEM_HARD_LEVERAGE_CAP.
+//
+// PHILOSOPHY: ENV is for HARD SAFETY GATES and SYSTEM DEFAULTS only.
+// Day-to-day paper/live mode toggling is done via dashboard → bot_settings.
+// For live trading to occur, ALL THREE must be true:
+//   1. HARD_LIVE_TRADING_ALLOWED=true (this env)
+//   2. bot_settings.trading_mode='live'
+//   3. bot_settings.enable_live_trading=true
 
 export const SYSTEM_HARD_LEVERAGE_CAP = 5;
 
@@ -26,6 +33,13 @@ const bool = (v: string | undefined, d: boolean): boolean => {
   return t === "true" || t === "1";
 };
 
+const list = (v: string | undefined, d: string[]): string[] => {
+  if (v === undefined) return d;
+  const t = v.trim();
+  if (t.length === 0) return d;
+  return t.split(",").map((s) => s.trim()).filter(Boolean);
+};
+
 const clamp = (n: number, min: number, max: number): number => Math.max(min, Math.min(max, n));
 
 const rawMaxAllowed = num(process.env.MAX_ALLOWED_LEVERAGE, 5);
@@ -34,32 +48,57 @@ const maxAllowedLeverage = clamp(rawMaxAllowed, 1, SYSTEM_HARD_LEVERAGE_CAP);
 const rawMaxLev = num(process.env.MAX_LEVERAGE, 3);
 const maxLeverage = clamp(rawMaxLev, 1, maxAllowedLeverage);
 
+const DEFAULT_WHITELIST = [
+  "BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
+  "AVAXUSDT","LINKUSDT","DOGEUSDT","ADAUSDT","LTCUSDT",
+];
+
 export const env = {
+  // ── Supabase ──
   supabaseUrl: str(process.env.NEXT_PUBLIC_SUPABASE_URL, ""),
   supabaseAnonKey: str(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, ""),
   supabaseServiceRoleKey: str(process.env.SUPABASE_SERVICE_ROLE_KEY, ""),
 
+  // ── Credential encryption ──
   credentialEncryptionKey: str(process.env.CREDENTIAL_ENCRYPTION_KEY, ""),
 
-  liveTrading: bool(process.env.LIVE_TRADING, false),
+  // ── HARD SAFETY GATES (env is the FINAL line of defense; cannot be overridden by DB) ──
+  // Live trading: requires hardLiveTradingAllowed=true + DB.trading_mode='live' + DB.enable_live_trading=true
+  hardLiveTradingAllowed: bool(process.env.HARD_LIVE_TRADING_ALLOWED, false),
+  liveTrading: bool(process.env.LIVE_TRADING, false),  // legacy alias — same gate
+  killSwitchEnabled: bool(process.env.KILL_SWITCH_ENABLED, true),
+
+  // ── System defaults (used on first DB row creation only) ──
   defaultTradingMode: str(process.env.DEFAULT_TRADING_MODE, "paper") as "paper" | "live",
   defaultMarketType: str(process.env.DEFAULT_MARKET_TYPE, "futures") as "futures" | "spot",
   defaultMarginMode: str(process.env.DEFAULT_MARGIN_MODE, "isolated") as "isolated" | "cross",
-  defaultActiveExchange: str(process.env.DEFAULT_ACTIVE_EXCHANGE, "mexc").toLowerCase(),
+  defaultActiveExchange: str(process.env.DEFAULT_ACTIVE_EXCHANGE ?? process.env.DEFAULT_EXCHANGE, "binance").toLowerCase(),
 
+  // ── Leverage / risk caps ──
   maxLeverage,
   maxAllowedLeverage,
   maxRiskPerTradePercent: num(process.env.MAX_RISK_PER_TRADE_PERCENT, 1),
-  maxDailyLossPercent: num(process.env.MAX_DAILY_LOSS_PERCENT, 5),
+  maxDailyLossPercent: num(process.env.MAX_DAILY_LOSS_PERCENT, 3),
   maxWeeklyLossPercent: num(process.env.MAX_WEEKLY_LOSS_PERCENT, 10),
   dailyProfitTargetUsd: num(process.env.DAILY_PROFIT_TARGET_USD, 20),
   maxDailyProfitTargetUsd: num(process.env.MAX_DAILY_PROFIT_TARGET_USD, 50),
   maxOpenPositions: num(process.env.MAX_OPEN_POSITIONS, 2),
   minRiskRewardRatio: num(process.env.MIN_RISK_REWARD_RATIO, 2),
+  maxConsecutiveLosses: num(process.env.MAX_CONSECUTIVE_LOSSES, 3),
+  minStrategyHealthScoreToTrade: num(process.env.MIN_STRATEGY_HEALTH_SCORE_TO_TRADE, 60),
 
+  // ── Whitelist (used as initial seed for bot_settings.allowed_symbols) ──
+  allowedSymbols: list(process.env.ALLOWED_SYMBOLS, DEFAULT_WHITELIST),
+
+  // ── Exchange credentials (server-only) ──
   exchanges: {
+    binance: {
+      key: str(process.env.BINANCE_API_KEY, ""),
+      secret: str(process.env.BINANCE_API_SECRET, ""),
+      futuresBaseUrl: str(process.env.BINANCE_FUTURES_BASE_URL, "https://fapi.binance.com"),
+      futuresWsUrl: str(process.env.BINANCE_FUTURES_WS_URL, "wss://fstream.binance.com"),
+    },
     mexc: { key: str(process.env.MEXC_API_KEY, ""), secret: str(process.env.MEXC_API_SECRET, "") },
-    binance: { key: str(process.env.BINANCE_API_KEY, ""), secret: str(process.env.BINANCE_API_SECRET, "") },
     okx: {
       key: str(process.env.OKX_API_KEY, ""),
       secret: str(process.env.OKX_API_SECRET, ""),
@@ -67,4 +106,20 @@ export const env = {
     },
     bybit: { key: str(process.env.BYBIT_API_KEY, ""), secret: str(process.env.BYBIT_API_SECRET, "") },
   },
+
+  // ── LLM analysis (analysis only — never executes orders) ──
+  llm: {
+    enabled: bool(process.env.LLM_ENABLED, false),
+    provider: str(process.env.LLM_PROVIDER, "openai"),
+    model: str(process.env.LLM_MODEL, "gpt-4o-mini"),
+    apiKey: str(process.env.LLM_API_KEY, ""),
+  },
+
+  // ── Worker identity (for heartbeat) ──
+  workerId: str(process.env.WORKER_ID, "vercel-default"),
 };
+
+// Quick check: are we allowed to even consider live trading at the env layer?
+export function isHardLiveAllowed(): boolean {
+  return env.hardLiveTradingAllowed === true || env.liveTrading === true;
+}

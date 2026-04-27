@@ -36,6 +36,10 @@ export interface RiskCheckInput {
   exchangeStepSize?: number;
   exchangeTickSize?: number;
   marginMode?: MarginMode;
+  // Tier overrides (set by orchestrator from risk-tiers module)
+  tierMaxLeverage?: number;
+  tierMinRiskRewardRatio?: number;
+  tierMaxRiskPerTradePercent?: number;
 }
 
 export interface RiskCheckResult {
@@ -103,7 +107,9 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   if (input.marketSpread > 0.0015) violations.push("Spread çok yüksek");
   if (stopDist === 0) violations.push("Stop-loss tanımsız");
   if (tpDist === 0) violations.push("Take-profit tanımsız");
-  if (rr < env.minRiskRewardRatio) violations.push(`Risk/ödül yetersiz (1:${rr.toFixed(2)} < 1:${env.minRiskRewardRatio})`);
+  // Use tier-specific R:R minimum if provided (stricter than env default)
+  const effectiveMinRr = Math.max(env.minRiskRewardRatio, input.tierMinRiskRewardRatio ?? 0);
+  if (rr < effectiveMinRr) violations.push(`Risk/ödül yetersiz (1:${rr.toFixed(2)} < 1:${effectiveMinRr})`);
 
   // Direction sanity
   if (input.direction === "LONG" && input.stopLoss >= input.entryPrice) violations.push("LONG stop-loss giriş fiyatının altında olmalı");
@@ -116,12 +122,15 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
     violations.push("Funding rate aşırı riskli");
   }
 
-  // Leverage selection
+  // Leverage selection — tier cap is the strictest applicable upper bound
   const desiredLev = env.maxLeverage;
-  const leverage = clampLeverage(desiredLev, input.signalScore, env.maxAllowedLeverage, input.exchangeMaxLeverage);
+  const tierCap = input.tierMaxLeverage ?? SYSTEM_HARD_LEVERAGE_CAP;
+  const effectiveMaxAllowed = Math.min(env.maxAllowedLeverage, tierCap);
+  const leverage = clampLeverage(desiredLev, input.signalScore, effectiveMaxAllowed, input.exchangeMaxLeverage);
 
-  // Risk-based position sizing
-  const riskAmount = (input.accountBalanceUsd * env.maxRiskPerTradePercent) / 100;
+  // Risk-based position sizing — tier may impose stricter risk-per-trade
+  const effectiveRiskPct = Math.min(env.maxRiskPerTradePercent, input.tierMaxRiskPerTradePercent ?? 999);
+  const riskAmount = (input.accountBalanceUsd * effectiveRiskPct) / 100;
   let positionSize = stopDist > 0 ? riskAmount / stopDist : 0;
   if (input.exchangeStepSize) positionSize = roundDown(positionSize, input.exchangeStepSize);
   if (input.exchangeMinOrderSize && positionSize < input.exchangeMinOrderSize) {
