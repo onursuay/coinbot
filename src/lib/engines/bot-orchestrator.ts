@@ -9,7 +9,7 @@ import { generateSignal } from "./signal-engine";
 import { getAdapter } from "@/lib/exchanges/exchange-factory";
 import { getDailyStatus } from "./daily-target";
 import { getUniverseSlice, type ScanUniverse } from "./symbol-universe";
-import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols } from "@/lib/risk-tiers";
+import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist } from "@/lib/risk-tiers";
 import { calculateStrategyHealth } from "./strategy-health";
 import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
@@ -259,8 +259,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         maxFundingRateAbs: Number(settings.max_funding_rate_abs ?? 0.003),
         maxSymbolsPerTick: Number(settings.max_symbols_per_tick ?? 50),
         cursor,
-        // TIER_1 + TIER_2 pinned to every tick — never missed by cursor rotation
-        prioritySymbols: getPrioritySymbols(),
+        // All whitelist coins (TIER_1+2+3) pinned to every tick — never missed by cursor rotation
+        prioritySymbols: tierWhitelist(),
       });
       symbols = universe.batchSymbols;
       universeTotal = universe.totalSymbols;
@@ -328,9 +328,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   // Only TIER_1/2/3 coins (BTC, ETH, SOL, BNB, XRP, LTC, AVAX, LINK, ADA, DOGE)
   // are eligible for analysis. REJECTED tier coins are skipped before any
   // expensive klines/orderbook/ticker fetches.
-  // Priority pins (TIER_1+TIER_2) always pass; TIER_3 still requires vol >= 5M.
+  // All 10 whitelist coins bypass the volume check — pinned to every tick.
   const ANALYSIS_MIN_VOLUME_USDT = 5_000_000;
-  const priorityPinSet = new Set(getPrioritySymbols());
+  const priorityPinSet = new Set(tierWhitelist());
   let lowVolumeSkipped = 0;
   let nonWhitelistSkipped = 0;
   const symbolsToAnalyze = symbols.filter((sym) => {

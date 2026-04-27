@@ -1277,6 +1277,58 @@ describe("scanner prioritization", () => {
     expect(priority).not.toContain("AVAX/USDT");
   });
 
+  it("tierWhitelist returns exactly 10 coins covering TIER_1, TIER_2, and TIER_3", async () => {
+    vi.resetModules();
+    const { tierWhitelist } = await import("@/lib/risk-tiers");
+    const wl = tierWhitelist();
+    expect(wl).toHaveLength(10);
+    // TIER_1
+    expect(wl).toContain("BTC/USDT");
+    expect(wl).toContain("ETH/USDT");
+    // TIER_2
+    expect(wl).toContain("SOL/USDT");
+    expect(wl).toContain("BNB/USDT");
+    expect(wl).toContain("XRP/USDT");
+    expect(wl).toContain("LTC/USDT");
+    // TIER_3
+    expect(wl).toContain("AVAX/USDT");
+    expect(wl).toContain("LINK/USDT");
+    expect(wl).toContain("ADA/USDT");
+    expect(wl).toContain("DOGE/USDT");
+  });
+
+  it("AVAX, LINK, ADA, DOGE always appear in tick batch when pinned via tierWhitelist", async () => {
+    vi.resetModules();
+    // Mirrors new bot-orchestrator logic: prioritySymbols: tierWhitelist()
+    const { tierWhitelist } = await import("@/lib/risk-tiers");
+    const whitelist = tierWhitelist();
+    const mockRegularPool = ["RAND1/USDT", "RAND2/USDT"];
+    const batch = [...whitelist, ...mockRegularPool];
+
+    expect(batch).toContain("AVAX/USDT");
+    expect(batch).toContain("LINK/USDT");
+    expect(batch).toContain("ADA/USDT");
+    expect(batch).toContain("DOGE/USDT");
+    // TIER_3 coins always present regardless of cursor position
+    const whitelistSet = new Set(whitelist);
+    for (const sym of ["AVAX/USDT", "LINK/USDT", "ADA/USDT", "DOGE/USDT"]) {
+      expect(whitelistSet.has(sym)).toBe(true);
+    }
+  });
+
+  it("no non-whitelist coin appears before TIER_3 coins in the pinned batch", () => {
+    const whitelist = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "LTC/USDT", "AVAX/USDT", "LINK/USDT", "ADA/USDT", "DOGE/USDT"];
+    const regularPool = ["RANDOM1/USDT", "RANDOM2/USDT"];
+    const batch = [...whitelist, ...regularPool];
+
+    // All whitelist coins occupy the first 10 slots
+    const first10 = batch.slice(0, 10);
+    expect(first10).toContain("AVAX/USDT");
+    expect(first10).toContain("DOGE/USDT");
+    expect(first10).not.toContain("RANDOM1/USDT");
+    expect(first10).not.toContain("RANDOM2/USDT");
+  });
+
   it("priority symbols always appear first in batch regardless of cursor position", () => {
     // Mirrors getUniverseSlice logic: priority pinned first, cursor rotates the rest
     const filtered = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "RAND1/USDT", "RAND2/USDT", "RAND3/USDT"];
@@ -1332,9 +1384,9 @@ describe("scanner prioritization", () => {
   });
 
   it("24h volume < 5M coins do not enter analysis queue (pre-gate rejects them)", () => {
-    // Mirrors bot-orchestrator pre-gate logic
+    // Mirrors bot-orchestrator pre-gate logic — all 10 whitelist coins bypass volume check
     const ANALYSIS_MIN_VOLUME_USDT = 5_000_000;
-    const prioritySymbols = new Set(["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "LTC/USDT"]);
+    const prioritySymbols = new Set(["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "LTC/USDT", "AVAX/USDT", "LINK/USDT", "ADA/USDT", "DOGE/USDT"]);
 
     const tickerMap: Record<string, { quoteVolume24h: number }> = {
       "BTC/USDT":       { quoteVolume24h: 30_000_000_000 },
@@ -1364,13 +1416,13 @@ describe("scanner prioritization", () => {
     expect(lowVolumeSkipped).toBe(2);
   });
 
-  it("TIER_1/TIER_2 priority symbols bypass volume pre-gate even if ticker volume is missing", () => {
+  it("all whitelist coins (TIER_1/2/3) bypass volume pre-gate even if ticker volume is missing", () => {
     const ANALYSIS_MIN_VOLUME_USDT = 5_000_000;
-    const prioritySymbols = new Set(["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "LTC/USDT"]);
+    const prioritySymbols = new Set(["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "LTC/USDT", "AVAX/USDT", "LINK/USDT", "ADA/USDT", "DOGE/USDT"]);
     const tickerMap: Record<string, { quoteVolume24h: number }> = {};
     // No ticker data for any symbol
 
-    const symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "UNKNOWN/USDT"];
+    const symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "DOGE/USDT", "UNKNOWN/USDT"];
     let lowVolumeSkipped = 0;
     const symbolsToAnalyze = symbols.filter((sym) => {
       if (prioritySymbols.has(sym)) return true;
@@ -1385,6 +1437,8 @@ describe("scanner prioritization", () => {
     expect(symbolsToAnalyze).toContain("BTC/USDT");
     expect(symbolsToAnalyze).toContain("ETH/USDT");
     expect(symbolsToAnalyze).toContain("SOL/USDT");
+    expect(symbolsToAnalyze).toContain("AVAX/USDT");
+    expect(symbolsToAnalyze).toContain("DOGE/USDT");
     expect(symbolsToAnalyze).toContain("UNKNOWN/USDT"); // no ticker → include (signal-engine will handle)
     expect(lowVolumeSkipped).toBe(0);
   });
