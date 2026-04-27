@@ -7,6 +7,7 @@ interface TickStats {
   universe: number;
   prefiltered: number;
   scanned: number;
+  lowVolumeRejected?: number;
   signals: number;
   rejected: number;
   opened: number;
@@ -29,6 +30,14 @@ interface ScanRow {
   opened: boolean;
 }
 
+interface TickIdentity {
+  worker_id:    string | null;
+  container_id: string | null;
+  git_commit:   string | null;
+  process_pid:  number | null;
+  generated_at: string | null;
+}
+
 interface DiagData {
   bot_status: string;
   trading_mode: string;
@@ -37,6 +46,7 @@ interface DiagData {
   tick_stats: TickStats;
   scan_details: ScanRow[];
   worker_health: { online: boolean; status: string | null; ageMs: number | null };
+  tick_identity: TickIdentity | null;
 }
 
 function fmtTime(iso: string | null): string {
@@ -100,7 +110,7 @@ export default function ScannerPage() {
 
       {/* Stats bar */}
       {stats && (
-        <div className="card grid grid-cols-4 gap-3 sm:grid-cols-8 text-center py-2">
+        <div className="card grid grid-cols-4 gap-3 sm:grid-cols-9 text-center py-2">
           <div>
             <div className="text-xs text-muted">Universe</div>
             <div className="font-semibold tabular-nums">{stats.universe}</div>
@@ -108,6 +118,10 @@ export default function ScannerPage() {
           <div>
             <div className="text-xs text-muted">Ön Eleme</div>
             <div className="font-semibold tabular-nums">{stats.prefiltered}</div>
+          </div>
+          <div>
+            <div className="text-xs text-muted">Hacim Filtresi</div>
+            <div className="font-semibold tabular-nums text-muted">{stats.lowVolumeRejected ?? 0}</div>
           </div>
           <div>
             <div className="text-xs text-muted">Analiz</div>
@@ -203,6 +217,20 @@ export default function ScannerPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Worker identity debug panel */}
+      {data?.tick_identity && (
+        <details className="card text-xs">
+          <summary className="cursor-pointer text-muted select-none">Worker Debug</summary>
+          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 font-mono">
+            <div><dt className="text-muted">worker_id</dt><dd className="truncate">{data.tick_identity.worker_id ?? "—"}</dd></div>
+            <div><dt className="text-muted">container_id</dt><dd className="truncate">{data.tick_identity.container_id ?? "—"}</dd></div>
+            <div><dt className="text-muted">git_commit</dt><dd className="truncate">{data.tick_identity.git_commit ?? "—"}</dd></div>
+            <div><dt className="text-muted">pid</dt><dd>{data.tick_identity.process_pid ?? "—"}</dd></div>
+            <div className="col-span-2"><dt className="text-muted">generated_at</dt><dd>{data.tick_identity.generated_at ? new Date(data.tick_identity.generated_at).toLocaleString("tr-TR") : "—"}</dd></div>
+          </dl>
+        </details>
       )}
 
       {lastRefresh && (

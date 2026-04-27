@@ -25,6 +25,7 @@ const EMPTY_WORKER_HEALTH = {
 
 const EMPTY_TICK_STATS = {
   universe: 0, prefiltered: 0, scanned: 0,
+  lowVolumeRejected: 0,
   signals: 0, rejected: 0, opened: 0, errors: 0, durationMs: 0,
 };
 
@@ -150,6 +151,7 @@ export async function GET() {
         universe: tickSummary.universe ?? 0,
         prefiltered: tickSummary.prefiltered ?? 0,
         scanned: tickSummary.scanned ?? 0,
+        lowVolumeRejected: tickSummary.lowVolumePrefilterRejected ?? 0,
         signals: tickSummary.signals ?? 0,
         rejected: tickSummary.rejected ?? 0,
         opened: tickSummary.opened ?? 0,
@@ -157,6 +159,13 @@ export async function GET() {
         durationMs: tickSummary.durationMs ?? 0,
       } : EMPTY_TICK_STATS,
       scan_details: tickSummary?.scanDetails ?? [],
+      tick_identity: tickSummary ? {
+        worker_id:    tickSummary.worker_id    ?? null,
+        container_id: tickSummary.container_id ?? null,
+        git_commit:   tickSummary.git_commit   ?? null,
+        process_pid:  tickSummary.process_pid  ?? null,
+        generated_at: tickSummary.at           ?? null,
+      } : null,
       near_miss_summary: tickSummary ? {
         nearMiss: tickSummary.nearMiss ?? 0,
         topNearMiss: tickSummary.topNearMiss ?? [],

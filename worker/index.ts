@@ -20,14 +20,18 @@
 //
 // Behavior:
 //   - Every TICK_INTERVAL_SEC: calls tickBot() to scan + generate signals + open paper/live trades.
-//   - Every HEARTBEAT_INTERVAL_SEC: writes heartbeat to Supabase.
+//   - Every HEARTBEAT_INTERVAL_SEC: writes heartbeat to Supabase + renews worker lock.
 //   - Every REPORT_EMAIL_INTERVAL_MINUTES: builds monitoring report, emails it, saves to DB.
-//   - On SIGTERM/SIGINT: stops gracefully, writes final heartbeat with status='stopped'.
+//   - On SIGTERM/SIGINT: stops gracefully, writes final heartbeat with status='stopped', releases lock.
 //   - On unhandled error: logs, writes status='error' heartbeat, exits with code 1.
 //
 // The bot's mode (paper/live) and enable flags are read from bot_settings on each tick.
 // The worker process itself does NOT need to be restarted to switch modes — change the
 // row in Supabase via dashboard, and the next tick picks it up.
+//
+// DISTRIBUTED LOCK: Only the lock owner runs tickBot(). The lock is acquired on startup
+// and renewed on every heartbeat. Lock TTL = 90 s. A second worker running in parallel
+// will heartbeat but skip all tick logic until the first worker's lock expires.
 
 import { tickBot, setBotStatus } from "../src/lib/engines/bot-orchestrator";
 import { recordHeartbeat } from "../src/lib/engines/heartbeat";
@@ -38,13 +42,26 @@ import { resolveActiveExchange } from "../src/lib/exchanges/resolve-active-excha
 import { startReportScheduler } from "../src/lib/reports/report-scheduler";
 import { emptyTickStats, type TickPeriodStats } from "../src/lib/reports/monitoring-report";
 import { startLogCleanupScheduler } from "../src/lib/logs/log-cleanup";
+import { acquireLock, renewLock, releaseLock } from "./lock";
 
-const TICK_INTERVAL_SEC = Number(process.env.TICK_INTERVAL_SEC ?? 30);
+const TICK_INTERVAL_SEC      = Number(process.env.TICK_INTERVAL_SEC      ?? 30);
 const HEARTBEAT_INTERVAL_SEC = Number(process.env.HEARTBEAT_INTERVAL_SEC ?? 15);
-const WORKER_ID = process.env.WORKER_ID ?? `worker-${process.pid}`;
-const WORKER_START_MS = Date.now();
+const WORKER_ID              = process.env.WORKER_ID ?? `worker-${process.pid}`;
+const WORKER_START_MS        = Date.now();
 
-let stopping = false;
+// Docker sets HOSTNAME to the short container ID automatically.
+const CONTAINER_ID = process.env.HOSTNAME ?? "";
+const GIT_COMMIT   = process.env.GIT_COMMIT ?? "";
+
+const LOCK_META = {
+  workerId:    WORKER_ID,
+  containerId: CONTAINER_ID || undefined,
+  gitCommit:   GIT_COMMIT   || undefined,
+  processPid:  process.pid,
+};
+
+let stopping     = false;
+let isLockOwner  = false; // updated by heartbeatLoop on every cycle
 
 // ── In-memory tick stats for monitoring reports ───────────────────────────────
 let currentTickStats: TickPeriodStats = emptyTickStats();
@@ -77,6 +94,18 @@ async function heartbeatLoop() {
   const userId = getCurrentUserId();
   while (!stopping) {
     try {
+      // Renew (or acquire for the first time) the distributed lock.
+      // Non-fatal: if renew fails, we log but keep the previous isLockOwner state.
+      try {
+        const owned = await renewLock(LOCK_META);
+        if (owned !== isLockOwner) {
+          console.log(`[lock] ${owned ? "ACQUIRED" : "LOST"} — workerId=${WORKER_ID}`);
+        }
+        isLockOwner = owned;
+      } catch (lockErr: any) {
+        console.error("[lock] renew error:", lockErr?.message ?? lockErr);
+      }
+
       const [mode, activeExchange] = await Promise.all([
         readBotMode(),
         resolveActiveExchange(userId),
@@ -99,13 +128,27 @@ async function heartbeatLoop() {
 async function tickLoop() {
   while (!stopping) {
     try {
+      if (!isLockOwner) {
+        // Another worker holds the active lock — skip tick, stay quiet.
+        await sleep(TICK_INTERVAL_SEC * 1000);
+        continue;
+      }
+
       const mode = await readBotMode();
       if (!mode || mode.status === "stopped" || mode.killSwitch) {
         await sleep(TICK_INTERVAL_SEC * 1000);
         continue;
       }
       const userId = getCurrentUserId();
-      const result = await tickBot(userId);
+      const result = await tickBot(userId, {
+        workerContext: {
+          workerId:    WORKER_ID,
+          containerId: CONTAINER_ID || undefined,
+          gitCommit:   GIT_COMMIT   || undefined,
+          processPid:  process.pid,
+          isLockOwner: true,
+        },
+      });
 
       updateTickStats(result.durationMs, result.scannedSymbols.length, result.errors.length > 0);
 
@@ -155,6 +198,8 @@ async function reconciliationLoop() {
     await sleep(RECON_INTERVAL_MS);
     if (stopping) break;
     try {
+      if (!isLockOwner) continue; // only lock owner reconciles
+
       const mode = await readBotMode();
       if (!mode || mode.status === "stopped" || mode.killSwitch) continue;
       // Paper mode: no real orders on exchange, skip reconciliation
@@ -209,13 +254,17 @@ async function gracefulShutdown(signal: string) {
     status: "stopped",
     lastError: `shutdown by ${signal}`,
   }).catch(() => undefined);
+  if (isLockOwner) {
+    await releaseLock(WORKER_ID).catch(() => undefined);
+    console.log("[lock] released");
+  }
   process.exit(0);
 }
 
 // ── Signal handlers ───────────────────────────────────────────────────────────
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGINT",  () => gracefulShutdown("SIGINT"));
 process.on("unhandledRejection", (e: any) => {
   console.error("[worker] unhandledRejection:", e?.message ?? e);
 });
@@ -228,6 +277,18 @@ process.on("uncaughtException", (e: any) => {
 const userId = getCurrentUserId();
 
 console.log(`[worker] starting workerId=${WORKER_ID} tickSec=${TICK_INTERVAL_SEC} heartbeatSec=${HEARTBEAT_INTERVAL_SEC}`);
+console.log(`[worker] identity containerId=${CONTAINER_ID || "?"} gitCommit=${GIT_COMMIT || "?"} pid=${process.pid}`);
+
+// Attempt initial lock acquisition before starting loops.
+// Non-fatal: loops will retry via heartbeat. We log the result but don't abort startup.
+(async () => {
+  try {
+    isLockOwner = await acquireLock(LOCK_META);
+    console.log(`[lock] initial acquire: ${isLockOwner ? "OWNED" : "NOT_OWNER (another worker active)"}`);
+  } catch (e: any) {
+    console.error("[lock] initial acquire failed:", e?.message ?? e);
+  }
+})();
 
 startLogCleanupScheduler();
 

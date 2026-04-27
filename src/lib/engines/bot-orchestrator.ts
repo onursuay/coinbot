@@ -184,7 +184,15 @@ export async function setBotStatus(userId: string, status: BotStatus, reason?: s
   return { bot_status: dbStatus, kill_switch_active: isKillSwitch };
 }
 
-export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; symbols?: string[] }): Promise<TickResult> {
+export interface WorkerContext {
+  workerId?: string;
+  containerId?: string;
+  gitCommit?: string;
+  processPid?: number;
+  isLockOwner?: boolean;
+}
+
+export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; symbols?: string[]; workerContext?: WorkerContext }): Promise<TickResult> {
   const start = Date.now();
   const result: TickResult = {
     ok: false,
@@ -564,9 +572,18 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   result.deeplyAnalyzedSymbols = symbolsToAnalyze.length;
   result.durationMs = Date.now() - start;
 
-  // Persist last tick summary for diagnostics endpoint
+  // Persist last tick summary for diagnostics endpoint.
+  // Only the lock owner writes this — non-owner workers must not overwrite
+  // the canonical summary produced by the active worker.
+  const wCtx = opts?.workerContext;
+  const generatedAt = new Date().toISOString();
   const lastTickSummary = {
-    at: new Date().toISOString(),
+    at: generatedAt,
+    generated_at: generatedAt,
+    worker_id:    wCtx?.workerId    ?? null,
+    container_id: wCtx?.containerId ?? null,
+    git_commit:   wCtx?.gitCommit   ?? null,
+    process_pid:  wCtx?.processPid  ?? null,
     universe: universeTotal,
     prefiltered: universePrefiltered,
     scanned: symbolsToAnalyze.length,
@@ -582,10 +599,12 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     topRejectReasons: result.rejectedSignals.slice(0, 10).map((r) => `${r.symbol}: ${r.reason}`),
     topNearMiss: result.nearMissSignals.slice(0, 5).map((n) => `${n.direction} ${n.symbol} skor=${n.score}`),
   };
-  await sb.from("bot_settings").update({
-    last_tick_at: lastTickSummary.at,
-    last_tick_summary: lastTickSummary,
-  }).eq("user_id", userId);
+  if (wCtx?.isLockOwner !== false) {
+    await sb.from("bot_settings").update({
+      last_tick_at: lastTickSummary.at,
+      last_tick_summary: lastTickSummary,
+    }).eq("user_id", userId);
+  }
 
   await botLog({
     userId, exchange, eventType: "tick_completed",

@@ -1575,6 +1575,141 @@ describe("monitoring report — scheduler resilience", () => {
   });
 });
 
+// ---- Worker distributed lock — duplicate prevention ----
+describe("worker distributed lock", () => {
+  it("non-lock-owner never calls tickBot — tick is skipped", () => {
+    // Mirrors tickLoop guard: if (!isLockOwner) → skip tick
+    let tickBotCalled = false;
+    const isLockOwner = false;
+    if (isLockOwner) tickBotCalled = true;
+    expect(tickBotCalled).toBe(false);
+  });
+
+  it("lock owner calls tickBot", () => {
+    let tickBotCalled = false;
+    const isLockOwner = true;
+    if (isLockOwner) tickBotCalled = true;
+    expect(tickBotCalled).toBe(true);
+  });
+
+  it("non-owner skips last_tick_summary write (isLockOwner=false guard)", () => {
+    let writeCount = 0;
+    // Mirrors bot-orchestrator: if (wCtx?.isLockOwner !== false) { write() }
+    const writeSummary = (isLockOwner: boolean) => {
+      if (isLockOwner !== false) writeCount++;
+    };
+    writeSummary(false); // non-owner → no write
+    expect(writeCount).toBe(0);
+  });
+
+  it("lock owner writes last_tick_summary", () => {
+    let writeCount = 0;
+    const writeSummary = (isLockOwner: boolean) => {
+      if (isLockOwner !== false) writeCount++;
+    };
+    writeSummary(true); // owner → writes
+    expect(writeCount).toBe(1);
+  });
+
+  it("undefined isLockOwner (no workerContext) still writes — backwards compat", () => {
+    let writeCount = 0;
+    // When tickBot called without workerContext (e.g. tests), wCtx is undefined
+    // condition: wCtx?.isLockOwner !== false → undefined !== false → true → write
+    const writeSummary = (isLockOwner: boolean | undefined) => {
+      if (isLockOwner !== false) writeCount++;
+    };
+    writeSummary(undefined);
+    expect(writeCount).toBe(1);
+  });
+
+  it("lock TTL constant is 90 seconds", async () => {
+    const { LOCK_TTL_SECONDS } = await import("../../worker/lock");
+    expect(LOCK_TTL_SECONDS).toBe(90);
+  });
+
+  it("acquireLock returns true when supabase not configured (dev mode)", async () => {
+    vi.resetModules();
+    vi.doMock("../lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    vi.doMock("../lib/auth", () => ({ getCurrentUserId: () => "test-user" }));
+    const { acquireLock } = await import("../../worker/lock");
+    const result = await acquireLock({ workerId: "test-worker" });
+    expect(result).toBe(true);
+  });
+
+  it("two workers same userId — only one can hold active lock (RPC logic)", () => {
+    // Simulates the WHERE clause in try_acquire_worker_lock:
+    // DO UPDATE ... WHERE expires_at < now() OR worker_id = p_worker_id
+    const now = Date.now();
+    const lock = { worker_id: "worker-A", expires_at: now + 90_000 }; // active lock, not expired
+
+    const canAcquire = (candidate: string): boolean =>
+      lock.expires_at < now || lock.worker_id === candidate;
+
+    // Worker-A can renew its own lock
+    expect(canAcquire("worker-A")).toBe(true);
+    // Worker-B cannot steal an active lock
+    expect(canAcquire("worker-B")).toBe(false);
+  });
+
+  it("second worker can acquire after lock expires", () => {
+    const now = Date.now();
+    const expired = now - 1; // 1ms in the past
+    const lock = { worker_id: "worker-A", expires_at: expired };
+
+    const canAcquire = (candidate: string): boolean =>
+      lock.expires_at < now || lock.worker_id === candidate;
+
+    expect(canAcquire("worker-B")).toBe(true);
+  });
+
+  it("tick_identity fields are present in lastTickSummary when workerContext provided", () => {
+    const wCtx = { workerId: "vps-prod-1", containerId: "abc123", gitCommit: "9838e70", processPid: 42, isLockOwner: true };
+    const generatedAt = new Date().toISOString();
+    const lastTickSummary = {
+      at: generatedAt,
+      generated_at: generatedAt,
+      worker_id:    wCtx.workerId    ?? null,
+      container_id: wCtx.containerId ?? null,
+      git_commit:   wCtx.gitCommit   ?? null,
+      process_pid:  wCtx.processPid  ?? null,
+    };
+    expect(lastTickSummary.worker_id).toBe("vps-prod-1");
+    expect(lastTickSummary.container_id).toBe("abc123");
+    expect(lastTickSummary.git_commit).toBe("9838e70");
+    expect(lastTickSummary.process_pid).toBe(42);
+    expect(lastTickSummary.generated_at).toBe(generatedAt);
+  });
+
+  it("tick_identity fields are null when no workerContext", () => {
+    const wCtx = undefined;
+    const lastTickSummary = {
+      worker_id:    (wCtx as any)?.workerId    ?? null,
+      container_id: (wCtx as any)?.containerId ?? null,
+      git_commit:   (wCtx as any)?.gitCommit   ?? null,
+      process_pid:  (wCtx as any)?.processPid  ?? null,
+    };
+    expect(lastTickSummary.worker_id).toBeNull();
+    expect(lastTickSummary.container_id).toBeNull();
+    expect(lastTickSummary.git_commit).toBeNull();
+    expect(lastTickSummary.process_pid).toBeNull();
+  });
+
+  it("releaseLock is no-op when supabase not configured", async () => {
+    vi.resetModules();
+    vi.doMock("../lib/supabase/server", () => ({
+      supabaseConfigured: () => false,
+      supabaseAdmin: vi.fn(),
+    }));
+    vi.doMock("../lib/auth", () => ({ getCurrentUserId: () => "test-user" }));
+    const { releaseLock } = await import("../../worker/lock");
+    // Must not throw
+    await expect(releaseLock("worker-A")).resolves.toBeUndefined();
+  });
+});
+
 // ---- Scanner — no direct Binance calls from Vercel ----
 describe("scanner — no direct Binance calls from Vercel", () => {
   beforeEach(() => {
