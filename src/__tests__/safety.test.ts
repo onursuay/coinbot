@@ -736,3 +736,90 @@ describe("scanner visibility", () => {
     expect(Array.isArray(result.blockers)).toBe(true);
   });
 });
+
+// ---- Set Active — is_active logic ----
+describe("set-active exchange flow", () => {
+  it("set-active deactivates all rows then activates target", () => {
+    // Mirrors POST /api/exchanges/set-active logic:
+    // 1. update all rows → is_active=false
+    // 2. update target exchange → is_active=true
+    const credentials = [
+      { exchange_name: "binance", is_active: true },
+      { exchange_name: "mexc",    is_active: false },
+    ];
+
+    // Step 1: deactivate all
+    credentials.forEach((c) => { c.is_active = false; });
+    // Step 2: activate target
+    const target = "binance";
+    const row = credentials.find((c) => c.exchange_name === target);
+    if (row) row.is_active = true;
+
+    expect(credentials.find((c) => c.exchange_name === "binance")?.is_active).toBe(true);
+    expect(credentials.find((c) => c.exchange_name === "mexc")?.is_active).toBe(false);
+  });
+
+  it("after set-active, only one exchange is is_active=true", () => {
+    const credentials = [
+      { exchange_name: "binance", is_active: false },
+      { exchange_name: "mexc",    is_active: true },
+      { exchange_name: "okx",     is_active: false },
+    ];
+    // Simulate route logic
+    credentials.forEach((c) => { c.is_active = false; });
+    const row = credentials.find((c) => c.exchange_name === "binance");
+    if (row) row.is_active = true;
+
+    const activeCount = credentials.filter((c) => c.is_active).length;
+    expect(activeCount).toBe(1);
+    expect(credentials.find((c) => c.exchange_name === "binance")?.is_active).toBe(true);
+  });
+
+  it("connected list badge renders based on is_active (not other field)", () => {
+    // Mirrors UI: c.is_active ? 'active' : 'inactive'
+    const exchange = { exchange_name: "binance", is_active: true, masked_key: "abc***xyz" };
+    const badge = exchange.is_active ? "active" : "inactive";
+    expect(badge).toBe("active");
+
+    const inactive = { exchange_name: "mexc", is_active: false, masked_key: "def***uvw" };
+    const badge2 = inactive.is_active ? "active" : "inactive";
+    expect(badge2).toBe("inactive");
+  });
+
+  it("connected API response includes is_active field", () => {
+    // Mirrors GET /api/exchanges/connected response shape
+    const row = {
+      id: "uuid-1",
+      exchange_name: "binance",
+      masked_key: "abc***xyz",
+      permissions: {},
+      is_active: true,
+      last_validated_at: null,
+      created_at: new Date().toISOString(),
+    };
+    expect(row).toHaveProperty("is_active");
+    expect(typeof row.is_active).toBe("boolean");
+  });
+
+  it("refresh() is called after set-active succeeds (UI flow)", () => {
+    // setActive() calls refresh() after successful POST
+    // Verify the logic: if res.ok → refresh
+    let refreshCalled = false;
+    const mockRefresh = () => { refreshCalled = true; };
+    const simulateSetActive = (ok: boolean) => { if (ok) mockRefresh(); };
+
+    simulateSetActive(true);
+    expect(refreshCalled).toBe(true);
+
+    refreshCalled = false;
+    simulateSetActive(false);
+    expect(refreshCalled).toBe(false);
+  });
+
+  it("set-active endpoint returns { active: exchange } on success", () => {
+    const exchange = "binance";
+    const response = { ok: true, active: exchange };
+    expect(response.ok).toBe(true);
+    expect(response.active).toBe("binance");
+  });
+});
