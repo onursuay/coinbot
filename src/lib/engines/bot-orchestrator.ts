@@ -138,8 +138,7 @@ export async function setBotStatus(userId: string, status: BotStatus, reason?: s
     patch.enable_live_trading = false;
   }
 
-  // Update by limit(1) — single-tenant, no user_id filter to avoid PostgREST UUID cast issues
-  const { error } = await sb.from("bot_settings").update(patch).limit(1);
+  const { error } = await sb.from("bot_settings").update(patch).eq("user_id", userId);
 
   if (error) {
     await botLog({
@@ -234,7 +233,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       nextCursor = universe.nextCursor;
 
       // Persist cursor for next tick
-      await sb.from("bot_settings").update({ scanner_cursor: nextCursor }).limit(1);
+      await sb.from("bot_settings").update({ scanner_cursor: nextCursor }).eq("user_id", userId);
     } catch {
       symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
     }
@@ -517,7 +516,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   await sb.from("bot_settings").update({
     last_tick_at: lastTickSummary.at,
     last_tick_summary: lastTickSummary,
-  }).limit(1);
+  }).eq("user_id", userId);
 
   await botLog({
     userId, exchange, eventType: "tick_completed",

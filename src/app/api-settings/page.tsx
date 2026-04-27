@@ -151,14 +151,14 @@ export default function ApiSettings() {
             {connected.length === 0 && <tr><td colSpan={5} className="text-muted">henüz bağlı borsa yok</td></tr>}
             {connected.map((c) => (
               <tr key={c.id}>
-                <td>{c.exchange_name.toUpperCase()}</td>
-                <td className="font-mono">{c.masked_key}</td>
+                <td>{c.exchange.toUpperCase()}</td>
+                <td className="font-mono">{c.masked_api_key}</td>
                 <td>{c.is_active ? <span className="tag-success">active</span> : <span className="tag-muted">inactive</span>}</td>
                 <td className="text-xs text-muted">{c.last_validated_at ?? "—"}</td>
                 <td className="flex gap-2">
-                  <button className="btn-ghost text-xs" onClick={() => validate(c.exchange_name)}>Validate</button>
-                  <button className="btn-ghost text-xs" onClick={() => setActive(c.exchange_name)}>Set Active</button>
-                  <button className="btn-danger text-xs" onClick={() => disconnect(c.exchange_name)}>Disconnect</button>
+                  <button className="btn-ghost text-xs" onClick={() => validate(c.exchange)}>Validate</button>
+                  <button className="btn-ghost text-xs" onClick={() => setActive(c.exchange)}>Set Active</button>
+                  <button className="btn-danger text-xs" onClick={() => disconnect(c.exchange)}>Disconnect</button>
                 </td>
               </tr>
             ))}

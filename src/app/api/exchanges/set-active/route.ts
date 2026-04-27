@@ -22,5 +22,5 @@ export async function POST(req: Request) {
   await supabaseAdmin().from("bot_settings")
     .update({ active_exchange: parsed.exchange }).neq("id", "00000000-0000-0000-0000-000000000000");
 
-  return ok({ active: parsed.exchange });
+  return ok({ is_active: true });
 }

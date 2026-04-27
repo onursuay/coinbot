@@ -777,28 +777,30 @@ describe("set-active exchange flow", () => {
 
   it("connected list badge renders based on is_active (not other field)", () => {
     // Mirrors UI: c.is_active ? 'active' : 'inactive'
-    const exchange = { exchange_name: "binance", is_active: true, masked_key: "abc***xyz" };
+    const exchange = { exchange: "binance", is_active: true, masked_api_key: "abc***xyz" };
     const badge = exchange.is_active ? "active" : "inactive";
     expect(badge).toBe("active");
 
-    const inactive = { exchange_name: "mexc", is_active: false, masked_key: "def***uvw" };
+    const inactive = { exchange: "mexc", is_active: false, masked_api_key: "def***uvw" };
     const badge2 = inactive.is_active ? "active" : "inactive";
     expect(badge2).toBe("inactive");
   });
 
-  it("connected API response includes is_active field", () => {
+  it("connected API response shape has exchange, masked_api_key, is_active", () => {
     // Mirrors GET /api/exchanges/connected response shape
     const row = {
       id: "uuid-1",
-      exchange_name: "binance",
-      masked_key: "abc***xyz",
-      permissions: {},
+      exchange: "binance",
+      masked_api_key: "abc***xyz",
       is_active: true,
       last_validated_at: null,
-      created_at: new Date().toISOString(),
     };
+    expect(row).toHaveProperty("exchange");
+    expect(row).toHaveProperty("masked_api_key");
     expect(row).toHaveProperty("is_active");
     expect(typeof row.is_active).toBe("boolean");
+    expect(row).not.toHaveProperty("exchange_name");
+    expect(row).not.toHaveProperty("masked_key");
   });
 
   it("refresh() is called after set-active succeeds (UI flow)", () => {
@@ -816,10 +818,26 @@ describe("set-active exchange flow", () => {
     expect(refreshCalled).toBe(false);
   });
 
-  it("set-active endpoint returns { active: exchange } on success", () => {
-    const exchange = "binance";
-    const response = { ok: true, active: exchange };
+  it("set-active endpoint returns { is_active: true } on success", () => {
+    // ok() wraps in { ok: true, data: ... }
+    const response = { ok: true, data: { is_active: true } };
     expect(response.ok).toBe(true);
-    expect(response.active).toBe("binance");
+    expect(response.data.is_active).toBe(true);
+  });
+
+  it("diagnostic active=true for exchange matches list endpoint is_active=true", () => {
+    // Both connect-check and connected endpoint read exchange_credentials.is_active.
+    // They must agree — there is no separate 'active' column.
+    const dbRow = { exchange_name: "binance", is_active: true };
+
+    // connect-check diagnostic: active=${r.is_active}
+    const diagActive: boolean = dbRow.is_active;
+
+    // connected list response: is_active: c.is_active
+    const listIsActive: boolean = dbRow.is_active;
+
+    expect(diagActive).toBe(true);
+    expect(listIsActive).toBe(true);
+    expect(diagActive).toBe(listIsActive);
   });
 });

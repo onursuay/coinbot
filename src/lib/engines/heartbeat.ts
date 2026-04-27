@@ -45,7 +45,7 @@ export async function recordHeartbeat(p: HeartbeatPayload): Promise<{ ok: boolea
     websocket_status: p.websocketStatus ?? null,
     binance_api_status: p.binanceApiStatus ?? null,
     last_error: p.lastError ?? null,
-  }).limit(1);
+  }).not("user_id", "is", null);
 
   return { ok: true };
 }
