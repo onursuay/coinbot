@@ -29,7 +29,17 @@ export async function acquireLock(meta: WorkerLockMeta): Promise<boolean> {
     p_git_commit: meta.gitCommit ?? null,
     p_process_pid: meta.processPid ?? null,
   });
-  if (error) throw new Error(`Worker lock acquire hatası: ${error.message}`);
+  if (error) {
+    // Migration 0008 not yet applied — function doesn't exist in schema.
+    // Fall back to sole-owner mode so the worker keeps running.
+    const isMissing = error.message?.includes("Could not find the function") ||
+      (error as any)?.code === "PGRST202";
+    if (isMissing) {
+      console.warn("[lock] try_acquire_worker_lock RPC bulunamadı — migration 0008_worker_lock.sql henüz uygulanmamış. Tek-worker modu ile devam ediliyor.");
+      return true;
+    }
+    throw new Error(`Worker lock acquire hatası: ${error.message}`);
+  }
   return data === true;
 }
 
