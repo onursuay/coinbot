@@ -1,21 +1,22 @@
 "use client";
 import { useEffect, useState } from "react";
 
-const EXCHANGES = ["mexc", "binance", "okx", "bybit"] as const;
+const EXCHANGES = ["binance", "mexc", "okx", "bybit"] as const;
 
 export default function ApiSettings() {
   const [supported, setSupported] = useState<any[]>([]);
   const [connected, setConnected] = useState<any[]>([]);
-  const [form, setForm] = useState({ exchange: "mexc", apiKey: "", apiSecret: "", apiPassphrase: "" });
+  const [form, setForm] = useState({ exchange: "binance", apiKey: "", apiSecret: "", apiPassphrase: "" });
   const [busy, setBusy] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [diagChecks, setDiagChecks] = useState<Record<string, string> | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
 
   const refresh = async () => {
+    const t = Date.now();
     const [s, c] = await Promise.all([
-      fetch("/api/exchanges/supported").then((r) => r.json()),
-      fetch("/api/exchanges/connected").then((r) => r.json()),
+      fetch(`/api/exchanges/supported?t=${t}`, { cache: "no-store" }).then((r) => r.json()),
+      fetch(`/api/exchanges/connected?t=${t}`, { cache: "no-store" }).then((r) => r.json()),
     ]);
     if (s.ok) setSupported(s.data);
     if (c.ok) setConnected(c.data);
