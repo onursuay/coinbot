@@ -48,6 +48,8 @@ export interface MonitoringMetrics {
   topRejectedReasons: { reason: string; count: number }[];
   recentSignalCount: number;
   recentSignalSymbols: string[];
+  universe: number;
+  deepAnalyzed: number;
 
   // 4. Paper trading
   openedPaperTrades30m: number;
@@ -80,6 +82,11 @@ export interface MonitoringMetrics {
 
   // 7. Warnings
   warnings: string[];
+
+  // 8. Trade details (last 30 min)
+  openedTradeDetails: { symbol: string; direction: string; entryPrice: number; stopLoss: number; takeProfit: number; signalScore: number }[];
+  closedTradeDetails: { symbol: string; direction: string; entryPrice: number; exitPrice: number; pnl: number; exitReason: string }[];
+  nearMissCandidates: { symbol: string; score: number; rejectReason: string }[];
 }
 
 function emptyMetrics(overrides: Partial<MonitoringMetrics> = {}): MonitoringMetrics {
@@ -93,6 +100,7 @@ function emptyMetrics(overrides: Partial<MonitoringMetrics> = {}): MonitoringMet
     tickCount: 0, avgTickDurationMs: 0, maxTickDurationMs: 0,
     tickErrorCount: 0, totalScannedSymbols: 0, avgScannedSymbols: 0, lastTickAt: null,
     topRejectedReasons: [], recentSignalCount: 0, recentSignalSymbols: [],
+    universe: 0, deepAnalyzed: 0,
     openedPaperTrades30m: 0, closedPaperTrades30m: 0, openPaperPositions: 0,
     totalPaperPnl: 0, pnl30m: 0, winRate: 0, profitFactor: 0, maxDrawdown: 0,
     slClosedCount: 0, tpClosedCount: 0, totalClosedTrades: 0,
@@ -101,6 +109,7 @@ function emptyMetrics(overrides: Partial<MonitoringMetrics> = {}): MonitoringMet
     hardLiveTradingAllowedFalse: !isHardLiveAllowed(), enableLiveTradingFalse: true,
     tradingModePaper: true, realOrderSent: false, killSwitchActive: false, lastError: null,
     warnings: [],
+    openedTradeDetails: [], closedTradeDetails: [], nearMissCandidates: [],
     ...overrides,
   };
 }
@@ -149,6 +158,8 @@ export async function buildMonitoringMetrics(
     allClosedRes,
     openPosRes,
     signalsRes,
+    openedDetailRes,
+    closedDetailRes,
   ] = await Promise.all([
     sb.from("bot_settings")
       .select("bot_status, trading_mode, enable_live_trading, kill_switch_active, last_tick_at, last_tick_summary, last_error")
@@ -167,6 +178,12 @@ export async function buildMonitoringMetrics(
       .eq("user_id", userId).eq("status", "open"),
     sb.from("signals").select("symbol, rejected_reason, signal_type")
       .eq("user_id", userId).gte("created_at", thirtyMinAgo).limit(300),
+    sb.from("paper_trades")
+      .select("symbol, direction, entry_price, stop_loss, take_profit, signal_score")
+      .eq("user_id", userId).gte("opened_at", thirtyMinAgo).limit(10),
+    sb.from("paper_trades")
+      .select("symbol, direction, entry_price, exit_price, pnl, exit_reason")
+      .eq("user_id", userId).not("closed_at", "is", null).gte("closed_at", thirtyMinAgo).limit(10),
   ]);
 
   const settings = settingsRes.data?.[0] ?? null;
@@ -217,6 +234,38 @@ export async function buildMonitoringMetrics(
       ? [...rejMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([reason, count]) => ({ reason, count }))
       : (tickSummary?.topRejectReasons ?? []).slice(0, 5).map((r: string) => ({ reason: r, count: 1 }));
 
+  // Near-miss candidates from last tick scan details (top scored but not opened)
+  const scanDetails = (tickSummary?.scanDetails ?? []) as any[];
+  const nearMissCandidates = scanDetails
+    .filter((d: any) => !d.opened && (d.signalScore ?? 0) > 0)
+    .sort((a: any, b: any) => (b.signalScore ?? 0) - (a.signalScore ?? 0))
+    .slice(0, 5)
+    .map((d: any) => ({
+      symbol: d.symbol,
+      score: d.signalScore ?? 0,
+      rejectReason: d.rejectReason ?? d.riskRejectReason ?? "—",
+    }));
+
+  // Opened trade details (last 30 min)
+  const openedTradeDetails = (openedDetailRes.data ?? []).map((t: any) => ({
+    symbol: t.symbol,
+    direction: t.direction,
+    entryPrice: Number(t.entry_price ?? 0),
+    stopLoss: Number(t.stop_loss ?? 0),
+    takeProfit: Number(t.take_profit ?? 0),
+    signalScore: Number(t.signal_score ?? 0),
+  }));
+
+  // Closed trade details (last 30 min)
+  const closedTradeDetails = (closedDetailRes.data ?? []).map((t: any) => ({
+    symbol: t.symbol,
+    direction: t.direction,
+    entryPrice: Number(t.entry_price ?? 0),
+    exitPrice: Number(t.exit_price ?? 0),
+    pnl: Number(t.pnl ?? 0),
+    exitReason: t.exit_reason ?? "—",
+  }));
+
   // Warnings
   const warnings: string[] = [];
   if (!workerHealth.online) warnings.push("Worker OFFLINE — heartbeat kesildi");
@@ -257,6 +306,8 @@ export async function buildMonitoringMetrics(
     topRejectedReasons,
     recentSignalCount: successSignals.length,
     recentSignalSymbols,
+    universe: tickSummary?.universe ?? 0,
+    deepAnalyzed: tickSummary?.scanned ?? 0,
     openedPaperTrades30m,
     closedPaperTrades30m,
     openPaperPositions: openPosRes.count ?? 0,
@@ -281,5 +332,8 @@ export async function buildMonitoringMetrics(
     killSwitchActive,
     lastError,
     warnings,
+    openedTradeDetails,
+    closedTradeDetails,
+    nearMissCandidates,
   };
 }

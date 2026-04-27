@@ -997,27 +997,27 @@ describe("resolveActiveExchange", () => {
 
 // ---- Monitoring report email subject ----
 describe("monitoring report — email subject", () => {
-  it("subject contains trading mode uppercase", async () => {
+  it("subject contains trading mode in Turkish", async () => {
     const { buildSubject } = await import("@/lib/reports/email-reporter");
     const metrics: any = {
       generatedAt: "2026-04-27T14:30:00.000Z",
       tradingMode: "paper",
     };
     const subject = buildSubject(metrics);
-    expect(subject).toContain("PAPER");
+    expect(subject).toContain("SANAL MOD");
     expect(subject).toContain("CoinBot");
-    expect(subject).toContain("30 Dakika Raporu");
+    expect(subject).toContain("İşlem Raporu");
     expect(subject).toContain("2026-04-27");
   });
 
-  it("subject contains live mode uppercase when live", async () => {
+  it("subject contains CANLI MOD when live", async () => {
     vi.resetModules();
     const { buildSubject } = await import("@/lib/reports/email-reporter");
     const metrics: any = {
       generatedAt: "2026-04-27T14:30:00.000Z",
       tradingMode: "live",
     };
-    expect(buildSubject(metrics)).toContain("LIVE");
+    expect(buildSubject(metrics)).toContain("CANLI MOD");
   });
 });
 
@@ -1047,8 +1047,8 @@ describe("monitoring report — security invariants", () => {
       warnings: [],
     };
     const html = buildHtmlBody(metrics);
-    expect(html).toContain("HARD_LIVE");
-    expect(html).toContain("FALSE");
+    expect(html).toContain("Canlı işlem kilidi");
+    expect(html).toContain("Kapalı");
     expect(html).toContain("Gerçek emir");
     expect(html).not.toContain("ALARM");
   });
