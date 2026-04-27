@@ -43,13 +43,17 @@ if docker image inspect "${IMAGE_NAME}:latest" &>/dev/null; then
 fi
 
 # ─── Build new image ─────────────────────────────────────────────────────────
-BUILD_ARGS=""
+# Pass current git commit as build arg → invalidates COPY layer when commit changes.
+# Required: BuildKit's COPY caching has shown false-positives where stale layers
+# were reused even after source files updated (observed Apr 2026).
+GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_ARGS="--build-arg GIT_COMMIT=${GIT_COMMIT}"
 if [ "$FORCE_REBUILD" = "true" ]; then
-  BUILD_ARGS="--no-cache"
+  BUILD_ARGS="$BUILD_ARGS --no-cache"
   log "Force rebuild requested (no cache)"
 fi
 
-log "Building Docker image..."
+log "Building Docker image (commit=${GIT_COMMIT})..."
 # shellcheck disable=SC2086
 docker compose -f "$COMPOSE_FILE" build $BUILD_ARGS
 
