@@ -326,8 +326,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   const symbolsToAnalyze = symbols.filter((sym) => {
     if (priorityPinSet.has(sym)) return true;
     const vol = tickerMap[sym]?.quoteVolume24h;
-    // vol > 0 guard removed: vol=0 means dead/no-data coin, must be excluded too.
-    if (typeof vol === "number" && vol < ANALYSIS_MIN_VOLUME_USDT) {
+    // Strict: vol must be present AND >= 5M USDT.
+    // Missing (undefined) / zero / below threshold → all rejected.
+    if (typeof vol !== "number" || vol < ANALYSIS_MIN_VOLUME_USDT) {
       lowVolumeSkipped++;
       return false;
     }

@@ -81,12 +81,14 @@ export async function getUniverseSlice(opts: UniverseOptions): Promise<UniverseS
   }
 
   // 3. Pre-filter: volume + spread
+  // vol=0 / spread=0 in ticker = stale/missing data → reject (do NOT use > 0 guard).
+  // Missing ticker entry entirely (!t) = unknown coin → reject (cannot verify liquidity).
   const maxSpreadFrac = opts.maxSpreadPct / 100;
   const filtered = allSymbols.filter((sym) => {
     const t = tickerMap[sym];
-    if (!t) return true; // no ticker data → include (deep analysis will filter)
-    if (t.quoteVolume24h > 0 && t.quoteVolume24h < opts.min24hVolumeUsd) return false;
-    if (t.spread > 0 && t.spread > maxSpreadFrac) return false;
+    if (!t) return false; // no ticker data → exclude (cannot verify volume/spread)
+    if (t.quoteVolume24h < opts.min24hVolumeUsd) return false;
+    if (t.spread > maxSpreadFrac) return false;
     return true;
   });
 
