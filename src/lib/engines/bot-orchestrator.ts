@@ -316,18 +316,24 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   let btcKlines: any[] = [];
   try { btcKlines = await adapter.getKlines("BTC/USDT", tf, 250); } catch { /* non-fatal */ }
 
-  // ── Volume pre-gate ──
-  // Coins with 24h volume < 5M USDT will be rejected in signal-engine anyway (hard floor).
-  // Pre-filtering here avoids the expensive klines/orderbook fetches and keeps scanDetails clean.
-  // Priority symbols (TIER_1/2) bypass this check — they're pinned and always sufficiently liquid.
+  // ── Pre-gate: tier whitelist + volume ──
+  // Only TIER_1/2/3 coins (BTC, ETH, SOL, BNB, XRP, LTC, AVAX, LINK, ADA, DOGE)
+  // are eligible for analysis. REJECTED tier coins are skipped before any
+  // expensive klines/orderbook/ticker fetches.
+  // Priority pins (TIER_1+TIER_2) always pass; TIER_3 still requires vol >= 5M.
   const ANALYSIS_MIN_VOLUME_USDT = 5_000_000;
   const priorityPinSet = new Set(getPrioritySymbols());
   let lowVolumeSkipped = 0;
+  let nonWhitelistSkipped = 0;
   const symbolsToAnalyze = symbols.filter((sym) => {
     if (priorityPinSet.has(sym)) return true;
+    // Tier whitelist: REJECTED tier (anything outside TIER_1/2/3) → skip silently
+    if (!isAutoTradeAllowed(sym)) {
+      nonWhitelistSkipped++;
+      return false;
+    }
+    // Volume check for TIER_3 coins (priority pins already returned above)
     const vol = tickerMap[sym]?.quoteVolume24h;
-    // Strict: vol must be present AND >= 5M USDT.
-    // Missing (undefined) / zero / below threshold → all rejected.
     if (typeof vol !== "number" || vol < ANALYSIS_MIN_VOLUME_USDT) {
       lowVolumeSkipped++;
       return false;
@@ -336,7 +342,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   });
   result.lowVolumePrefilterRejected = lowVolumeSkipped;
 
-  await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbolsToAnalyze.length} sembol taranıyor (${tf}) universe=${universeTotal} prefiltered=${universePrefiltered} lowVolSkipped=${lowVolumeSkipped}` });
+  await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbolsToAnalyze.length} sembol taranıyor (${tf}) universe=${universeTotal} prefiltered=${universePrefiltered} nonWhitelist=${nonWhitelistSkipped} lowVolSkipped=${lowVolumeSkipped}` });
 
   for (const symbol of symbolsToAnalyze) {
     const detail: ScanDetail = {
