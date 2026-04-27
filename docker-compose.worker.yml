@@ -1,0 +1,19 @@
+version: "3.9"
+
+services:
+  coinbot-worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    image: coinbot-worker:latest
+    container_name: coinbot-worker
+    restart: unless-stopped
+    env_file:
+      - worker/.env   # copy worker/.env.example → worker/.env and fill in values
+    environment:
+      - NODE_ENV=production
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
