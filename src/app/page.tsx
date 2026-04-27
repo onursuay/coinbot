@@ -389,66 +389,89 @@ export default function HomePage() {
       <SystemConfigCard envCheck={envCheck} status={status} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <section className="card">
+        <section className="card min-w-0 overflow-hidden">
           <h2 className="font-semibold mb-3">Son Sinyaller</h2>
-          <table className="t">
-            <thead><tr><th>Sym</th><th>TF</th><th>Tip</th><th>Skor</th><th>R:R</th><th>Neden / Red</th></tr></thead>
-            <tbody>
-              {signals.length === 0 && (
-                <tr><td colSpan={6} className="text-muted text-sm py-3">Henüz sinyal yok — Taramayı Çalıştır ile tarama başlatın.</td></tr>
-              )}
-              {signals.map((s) => (
-                <tr key={s.id}>
-                  <td className="font-medium">{s.symbol}</td>
-                  <td>{s.timeframe}</td>
-                  <td>
-                    <span className={`tag-${s.signal_type === "LONG" ? "success" : s.signal_type === "SHORT" ? "danger" : "muted"}`}>
-                      {s.signal_type}
-                    </span>
-                  </td>
-                  <td>{fmtNum(s.signal_score, 0)}</td>
-                  <td>{s.risk_reward_ratio ? `1:${fmtNum(s.risk_reward_ratio)}` : "—"}</td>
-                  <td className="text-xs text-muted truncate max-w-xs">
-                    {s.rejected_reason ?? (Array.isArray(s.reasons) ? s.reasons[0] : "")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-hidden">
+            <table className="t table-fixed w-full">
+              <colgroup>
+                <col className="w-[22%]" />
+                <col className="w-[10%]" />
+                <col className="w-[14%]" />
+                <col className="w-[10%]" />
+                <col className="w-[12%]" />
+                <col className="w-[32%]" />
+              </colgroup>
+              <thead><tr><th>Sym</th><th>TF</th><th>Tip</th><th>Skor</th><th>R:R</th><th>Neden / Red</th></tr></thead>
+              <tbody>
+                {signals.length === 0 && (
+                  <tr><td colSpan={6} className="text-muted text-sm py-3">Henüz sinyal yok — Taramayı Çalıştır ile tarama başlatın.</td></tr>
+                )}
+                {signals.map((s) => {
+                  const reason = s.rejected_reason ?? (Array.isArray(s.reasons) ? s.reasons[0] : "") ?? "";
+                  return (
+                    <tr key={s.id}>
+                      <td className="font-medium truncate" title={s.symbol}>{s.symbol}</td>
+                      <td className="truncate">{s.timeframe}</td>
+                      <td className="truncate">
+                        <span className={`tag-${s.signal_type === "LONG" ? "success" : s.signal_type === "SHORT" ? "danger" : "muted"}`}>
+                          {s.signal_type}
+                        </span>
+                      </td>
+                      <td className="truncate">{fmtNum(s.signal_score, 0)}</td>
+                      <td className="truncate">{s.risk_reward_ratio ? `1:${fmtNum(s.risk_reward_ratio)}` : "—"}</td>
+                      <td className="text-xs text-muted truncate" title={reason}>
+                        {reason}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
           <Link href="/scanner" className="text-accent text-sm mt-2 inline-block">Scanner →</Link>
         </section>
 
-        <section className="card">
+        <section className="card min-w-0 overflow-hidden">
           <h2 className="font-semibold mb-3">Açık Pozisyonlar ({paper.open.length})</h2>
-          <table className="t">
-            <thead><tr><th>Sym</th><th>Yön</th><th>Lev</th><th>Entry</th><th>SL</th><th>TP</th></tr></thead>
-            <tbody>
-              {paper.open.length === 0 && (
-                <tr><td colSpan={6} className="text-muted text-sm py-3">Açık pozisyon yok</td></tr>
-              )}
-              {paper.open.map((t) => (
-                <tr key={t.id}>
-                  <td className="font-medium">{t.symbol}</td>
-                  <td><span className={`tag-${t.direction === "LONG" ? "success" : "danger"}`}>{t.direction}</span></td>
-                  <td>{t.leverage}x</td>
-                  <td>{fmtNum(t.entry_price, 4)}</td>
-                  <td>{fmtNum(t.stop_loss, 4)}</td>
-                  <td>{fmtNum(t.take_profit, 4)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-hidden">
+            <table className="t table-fixed w-full">
+              <colgroup>
+                <col className="w-[22%]" />
+                <col className="w-[14%]" />
+                <col className="w-[10%]" />
+                <col className="w-[18%]" />
+                <col className="w-[18%]" />
+                <col className="w-[18%]" />
+              </colgroup>
+              <thead><tr><th>Sym</th><th>Yön</th><th>Lev</th><th>Entry</th><th>SL</th><th>TP</th></tr></thead>
+              <tbody>
+                {paper.open.length === 0 && (
+                  <tr><td colSpan={6} className="text-muted text-sm py-3">Açık pozisyon yok</td></tr>
+                )}
+                {paper.open.map((t) => (
+                  <tr key={t.id}>
+                    <td className="font-medium truncate" title={t.symbol}>{t.symbol}</td>
+                    <td className="truncate"><span className={`tag-${t.direction === "LONG" ? "success" : "danger"}`}>{t.direction}</span></td>
+                    <td className="truncate">{t.leverage}x</td>
+                    <td className="truncate">{fmtNum(t.entry_price, 4)}</td>
+                    <td className="truncate">{fmtNum(t.stop_loss, 4)}</td>
+                    <td className="truncate">{fmtNum(t.take_profit, 4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <Link href="/paper-trades" className="text-accent text-sm mt-2 inline-block">Tüm işlemler →</Link>
         </section>
 
-        <section className="card">
+        <section className="card min-w-0 overflow-hidden">
           <h2 className="font-semibold mb-3">Son Reddedilen Sinyaller</h2>
           {lastTick?.rejectedSignals && lastTick.rejectedSignals.length > 0 ? (
             <div className="space-y-1">
               {lastTick.rejectedSignals.slice(0, 8).map((s, i) => (
-                <div key={i} className="text-xs text-muted flex items-center gap-2">
-                  <span className="font-medium text-slate-300">{s.symbol}</span>
-                  <span className="truncate">{s.reason}</span>
+                <div key={i} className="text-xs text-muted flex items-center gap-2 min-w-0">
+                  <span className="font-medium text-slate-300 flex-shrink-0">{s.symbol}</span>
+                  <span className="truncate min-w-0 flex-1" title={s.reason}>{s.reason}</span>
                 </div>
               ))}
             </div>
