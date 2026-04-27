@@ -16,7 +16,7 @@ GitHub Actions ile VPS worker otomatik deploy sistemi.
    - Yeni container `--restart always` ile başlatılır
    - Health check (container Up mu?)
    - Başarısız olursa previous image'a rollback
-5. (Opsiyonel) Vercel heartbeat API kontrolü: `workerOnline=true`, `trading_mode=paper`, `hard_live_gate=false`
+5. (Opsiyonel) Heartbeat API kontrolü `https://coin.onursuay.com/api/bot/heartbeat`: `workerOnline=true`, `trading_mode=paper`, `hard_live_gate=false`
 
 ---
 
@@ -45,7 +45,7 @@ GitHub repo → Settings → Secrets and variables → Actions → **Secrets** (
 
 | Variable adı | Değer |
 |--------------|-------|
-| `VERCEL_APP_URL` | Vercel app URL'i (ör. `https://coinbot.vercel.app`) — heartbeat check için opsiyonel |
+| `VERCEL_APP_URL` | `https://coin.onursuay.com` — production domain, heartbeat check için |
 
 ### Kesinlikle GitHub'a konulmayacak secretler
 
@@ -58,54 +58,55 @@ Bu değerler sadece **VPS üzerindeki `worker/.env`** içinde yaşar:
 
 ---
 
-## SSH Key Kurulumu (Tek seferlik)
+## Tek Seferlik Manuel Adımlar
 
-### 1. Deploy key oluştur (yerel makinede veya VPS'te)
+VPS zaten çalışıyor (`72.62.146.159`), `/opt/coinbot` ve `worker/.env` mevcut. Yapılacak tek şey GitHub Actions secrets eklemek ve deploy SSH key'ini VPS'e tanıtmak.
+
+### 1. Deploy SSH key oluştur (yerel makinede)
 
 ```bash
 ssh-keygen -t ed25519 -C "coinbot-deploy" -f ~/.ssh/coinbot_deploy -N ""
 ```
 
+Bu komut iki dosya oluşturur:
+- `~/.ssh/coinbot_deploy` — private key (GitHub Secret'a gidecek)
+- `~/.ssh/coinbot_deploy.pub` — public key (VPS'e eklenecek)
+
 ### 2. Public key'i VPS'e ekle
 
-```bash
-# VPS'te:
-cat ~/.ssh/coinbot_deploy.pub >> /root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
-```
-
-### 3. Private key'i GitHub Secret'a ekle
+Mevcut SSH erişiminle VPS'e bağlan ve public key'i ekle:
 
 ```bash
-cat ~/.ssh/coinbot_deploy
-# Çıktıyı kopyala → GitHub Secret: VPS_SSH_PRIVATE_KEY
+# Yerel makineden tek komutla:
+ssh root@72.62.146.159 "cat >> /root/.ssh/authorized_keys" < ~/.ssh/coinbot_deploy.pub
 ```
 
-### 4. SSH bağlantısını test et
+### 3. Bağlantıyı test et
 
 ```bash
-ssh -i ~/.ssh/coinbot_deploy -p 22 root@VPS_IP "echo OK"
+ssh -i ~/.ssh/coinbot_deploy -p 22 root@72.62.146.159 "echo OK"
 ```
 
-`OK` çıktısı alıyorsan GitHub Actions da bağlanabilir.
+`OK` çıktısı alıyorsan devam et.
 
----
+### 4. GitHub Actions Secrets ekle
 
-## Repo İlk Kez VPS'e Klonlama (Tek seferlik)
+GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
 
-GitHub Actions çalışmadan önce repo VPS'te `/opt/coinbot` altında olmalıdır:
+| Secret adı | Değer |
+|------------|-------|
+| `VPS_HOST` | `72.62.146.159` |
+| `VPS_USER` | `root` |
+| `VPS_PORT` | `22` |
+| `VPS_SSH_PRIVATE_KEY` | `cat ~/.ssh/coinbot_deploy` çıktısının tamamı (`-----BEGIN...END-----` dahil) |
 
-```bash
-# VPS'te:
-mkdir -p /opt/coinbot
-cd /opt
-git clone https://github.com/KULLANICI/coinbot.git coinbot
-cd coinbot
-cp worker/.env.example worker/.env
-nano worker/.env   # değerleri doldur
-```
+**Variable** olarak ekle → **Actions → Variables → New repository variable**:
 
-`worker/.env` doldurup kaydettikten sonra ilk deploy çalışır.
+| Variable | Değer |
+|----------|-------|
+| `VERCEL_APP_URL` | `https://coin.onursuay.com` |
+
+Bu 4 adımdan sonra bir sonraki `main` push'u worker'ı otomatik deploy eder.
 
 ---
 
@@ -161,11 +162,10 @@ Sistem tamamen bağımsız çalışır:
 
 ## Ne Zaman Manuel Terminal Gerekir?
 
-Sadece şu durumlarda VPS'e girmen gerekir:
+Kod değişikliklerinde asla terminal gerekmez. Sadece şu durumlarda:
 
 | Durum | Ne yapılır? |
 |-------|-------------|
-| İlk kurulum | Repo clone + `worker/.env` oluşturma |
 | `worker/.env` güncelleme | Supabase key değişti, yeni env var eklendi vb. |
 | Docker Engine güncelleme | VPS bakımı |
 | Disk doldu / kritik hata | Manuel müdahale |
