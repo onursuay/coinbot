@@ -6,6 +6,7 @@ import { getCurrentUserId } from "@/lib/auth";
 import { supabaseAdmin, supabaseConfigured } from "@/lib/supabase/server";
 import { env, SYSTEM_HARD_LEVERAGE_CAP, isHardLiveAllowed } from "@/lib/env";
 import { checkEnv } from "@/lib/env-validation";
+import { resolveActiveExchange } from "@/lib/exchanges/resolve-active-exchange";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,11 +51,18 @@ export async function GET() {
   }
 
   try {
-    const state = await getBotState(userId);
-    const daily = await getDailyStatus(userId, PAPER_BALANCE);
-    const { count } = await supabaseAdmin().from("paper_trades")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId).eq("status", "open");
+    const [state, daily, posResult, activeExchange] = await Promise.all([
+      getBotState(userId),
+      getDailyStatus(userId, PAPER_BALANCE),
+      supabaseAdmin().from("paper_trades")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId).eq("status", "open"),
+      resolveActiveExchange(userId),
+    ]);
+    const count = posResult.count;
+
+    // Normalize bot row's active_exchange to match the credential-based source of truth.
+    if (state && activeExchange) state.active_exchange = activeExchange;
 
     return ok({
       bot: state,
@@ -67,7 +75,7 @@ export async function GET() {
         tradingMode: state?.trading_mode ?? env.defaultTradingMode,
         marketType: state?.market_type ?? env.defaultMarketType,
         marginMode: state?.margin_mode ?? env.defaultMarginMode,
-        activeExchange: state?.active_exchange ?? env.defaultActiveExchange,
+        activeExchange,
         maxLeverage: state?.max_leverage ?? env.maxLeverage,
         maxAllowedLeverage: state?.max_allowed_leverage ?? env.maxAllowedLeverage,
         killSwitchActive: Boolean(state?.kill_switch_active),
@@ -83,7 +91,7 @@ export async function GET() {
         systemHardCap: SYSTEM_HARD_LEVERAGE_CAP,
         defaultMarketType: env.defaultMarketType,
         defaultMarginMode: env.defaultMarginMode,
-        defaultExchange: env.defaultActiveExchange,
+        defaultExchange: activeExchange,
       },
     });
   } catch (e: any) {
