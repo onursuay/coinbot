@@ -57,29 +57,30 @@ export default function ApiSettings() {
         <div>⚠ Trade izni olan API key'ler risk içerir; live trading varsayılan kapalıdır.</div>
       </div>
 
-      <section className="card grid md:grid-cols-2 gap-3">
-        <div>
-          <div className="label">Exchange</div>
-          <select className="input" value={form.exchange} onChange={(e) => setForm({ ...form, exchange: e.target.value })}>
-            {EXCHANGES.map((e) => <option key={e} value={e}>{e.toUpperCase()}</option>)}
-          </select>
-        </div>
-        <div />
-        <div>
-          <div className="label">API Key</div>
-          <input className="input" autoComplete="off" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} />
-        </div>
-        <div>
-          <div className="label">API Secret</div>
-          <input className="input" type="password" autoComplete="off" value={form.apiSecret} onChange={(e) => setForm({ ...form, apiSecret: e.target.value })} />
+      <section className="card space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <div className="label">Exchange</div>
+            <select className="input" value={form.exchange} onChange={(e) => setForm({ ...form, exchange: e.target.value })}>
+              {EXCHANGES.map((e) => <option key={e} value={e}>{e.toUpperCase()}</option>)}
+            </select>
+          </div>
+          <div>
+            <div className="label">API Key</div>
+            <input className="input" autoComplete="off" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} />
+          </div>
+          <div>
+            <div className="label">API Secret</div>
+            <input className="input" type="password" autoComplete="off" value={form.apiSecret} onChange={(e) => setForm({ ...form, apiSecret: e.target.value })} />
+          </div>
         </div>
         {requiresPassphrase && (
-          <div className="md:col-span-2">
+          <div>
             <div className="label">API Passphrase (OKX)</div>
             <input className="input" type="password" autoComplete="off" value={form.apiPassphrase} onChange={(e) => setForm({ ...form, apiPassphrase: e.target.value })} />
           </div>
         )}
-        <div className="md:col-span-2">
+        <div>
           <button className="btn-primary" onClick={connect} disabled={busy || !form.apiKey || !form.apiSecret}>Bağlan</button>
         </div>
       </section>
