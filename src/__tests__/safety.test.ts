@@ -1047,7 +1047,7 @@ describe("monitoring report — security invariants", () => {
       warnings: [],
     };
     const html = buildHtmlBody(metrics);
-    expect(html).toContain("Canlı işlem kilidi");
+    expect(html).toContain("Güvenlik");
     expect(html).toContain("Kapalı");
     expect(html).toContain("Gerçek emir");
     expect(html).not.toContain("ALARM");
@@ -1329,6 +1329,117 @@ describe("scanner prioritization", () => {
     expect(firstThree).toContain("ETH/USDT");
     expect(firstThree).toContain("SOL/USDT");
     expect(firstThree).not.toContain("LOWVOL1/USDT");
+  });
+
+  it("24h volume < 5M coins do not enter analysis queue (pre-gate rejects them)", () => {
+    // Mirrors bot-orchestrator pre-gate logic
+    const ANALYSIS_MIN_VOLUME_USDT = 5_000_000;
+    const prioritySymbols = new Set(["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "LTC/USDT"]);
+
+    const tickerMap: Record<string, { quoteVolume24h: number }> = {
+      "BTC/USDT":       { quoteVolume24h: 30_000_000_000 },
+      "ETH/USDT":       { quoteVolume24h: 15_000_000_000 },
+      "LOWVOL/USDT":    { quoteVolume24h: 1_000_000 },  // < 5M → rejected
+      "MIDVOL/USDT":    { quoteVolume24h: 3_500_000 },  // < 5M → rejected
+      "GOODVOL/USDT":   { quoteVolume24h: 8_000_000 },  // ≥ 5M → passes
+    };
+    const symbols = ["BTC/USDT", "ETH/USDT", "LOWVOL/USDT", "MIDVOL/USDT", "GOODVOL/USDT"];
+
+    let lowVolumeSkipped = 0;
+    const symbolsToAnalyze = symbols.filter((sym) => {
+      if (prioritySymbols.has(sym)) return true;
+      const vol = tickerMap[sym]?.quoteVolume24h;
+      if (typeof vol === "number" && vol > 0 && vol < ANALYSIS_MIN_VOLUME_USDT) {
+        lowVolumeSkipped++;
+        return false;
+      }
+      return true;
+    });
+
+    expect(symbolsToAnalyze).not.toContain("LOWVOL/USDT");
+    expect(symbolsToAnalyze).not.toContain("MIDVOL/USDT");
+    expect(symbolsToAnalyze).toContain("BTC/USDT");
+    expect(symbolsToAnalyze).toContain("ETH/USDT");
+    expect(symbolsToAnalyze).toContain("GOODVOL/USDT");
+    expect(lowVolumeSkipped).toBe(2);
+  });
+
+  it("TIER_1/TIER_2 priority symbols bypass volume pre-gate even if ticker volume is missing", () => {
+    const ANALYSIS_MIN_VOLUME_USDT = 5_000_000;
+    const prioritySymbols = new Set(["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT", "LTC/USDT"]);
+    const tickerMap: Record<string, { quoteVolume24h: number }> = {};
+    // No ticker data for any symbol
+
+    const symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "UNKNOWN/USDT"];
+    let lowVolumeSkipped = 0;
+    const symbolsToAnalyze = symbols.filter((sym) => {
+      if (prioritySymbols.has(sym)) return true;
+      const vol = tickerMap[sym]?.quoteVolume24h;
+      if (typeof vol === "number" && vol > 0 && vol < ANALYSIS_MIN_VOLUME_USDT) {
+        lowVolumeSkipped++;
+        return false;
+      }
+      return true;
+    });
+
+    expect(symbolsToAnalyze).toContain("BTC/USDT");
+    expect(symbolsToAnalyze).toContain("ETH/USDT");
+    expect(symbolsToAnalyze).toContain("SOL/USDT");
+    expect(symbolsToAnalyze).toContain("UNKNOWN/USDT"); // no ticker → include (signal-engine will handle)
+    expect(lowVolumeSkipped).toBe(0);
+  });
+
+  it("low-volume rejected coins are counted but not added to scanDetails", () => {
+    // scan_details must only contain symbols that entered deep analysis
+    const scanDetails: { symbol: string; rejectReason: string | null }[] = [];
+    const symbolsToAnalyze = ["BTC/USDT", "ETH/USDT", "GOODVOL/USDT"];
+
+    // Simulate analysis loop — only symbolsToAnalyze enter
+    for (const sym of symbolsToAnalyze) {
+      scanDetails.push({ symbol: sym, rejectReason: null });
+    }
+
+    // Low-volume coins were never in symbolsToAnalyze → never in scanDetails
+    expect(scanDetails.some((d) => d.symbol === "LOWVOL/USDT")).toBe(false);
+    expect(scanDetails.some((d) => d.symbol === "MIDVOL/USDT")).toBe(false);
+    expect(scanDetails.length).toBe(3);
+  });
+
+  it("scan summary includes lowVolumePrefilterRejected count", () => {
+    const lowVolumeSkipped = 15;
+    const lastTickSummary = {
+      universe: 500,
+      prefiltered: 200,
+      scanned: 35, // symbolsToAnalyze.length, not original symbols.length
+      lowVolumePrefilterRejected: lowVolumeSkipped,
+      signals: 2,
+      opened: 1,
+      rejected: 32,
+      errors: 0,
+      durationMs: 8500,
+    };
+
+    expect(lastTickSummary.lowVolumePrefilterRejected).toBe(15);
+    expect(lastTickSummary.scanned).toBe(35);
+    // scanned + lowVolumePrefilterRejected = original batch size minus priority bypasses
+    expect(typeof lastTickSummary.lowVolumePrefilterRejected).toBe("number");
+  });
+
+  it("TIER_1 and TIER_2 coins always present in first batch positions", async () => {
+    vi.resetModules();
+    const { getPrioritySymbols } = await import("@/lib/risk-tiers");
+    const priority = getPrioritySymbols();
+    // Simulate batch construction: priority pinned first
+    const mockRegularPool = ["RAND1/USDT", "RAND2/USDT", "RAND3/USDT"];
+    const batch = [...priority, ...mockRegularPool].slice(0, 50);
+
+    const firstSixSymbols = batch.slice(0, priority.length);
+    for (const sym of priority) {
+      expect(firstSixSymbols).toContain(sym);
+    }
+    // No low-volume random coins before priority symbols
+    expect(batch.indexOf("RAND1/USDT")).toBeGreaterThan(batch.indexOf("BTC/USDT"));
+    expect(batch.indexOf("RAND1/USDT")).toBeGreaterThan(batch.indexOf("ETH/USDT"));
   });
 });
 

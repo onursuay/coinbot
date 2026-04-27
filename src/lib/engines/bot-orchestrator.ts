@@ -45,6 +45,9 @@ export interface TickResult {
   totalUniverseSymbols?: number;
   prefilteredSymbols?: number;
   deeplyAnalyzedSymbols?: number;
+  // Coins removed before deep analysis because 24h volume < 5M USDT (signal-engine hard floor).
+  // Counted but never added to scanDetails — keeps the table clean.
+  lowVolumePrefilterRejected?: number;
   nextCursor?: string;
 }
 
@@ -313,9 +316,28 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   let btcKlines: any[] = [];
   try { btcKlines = await adapter.getKlines("BTC/USDT", tf, 250); } catch { /* non-fatal */ }
 
-  await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbols.length} sembol taranıyor (${tf}) universe=${universeTotal} prefiltered=${universePrefiltered}` });
+  // ── Volume pre-gate ──
+  // Coins with 24h volume < 5M USDT will be rejected in signal-engine anyway (hard floor).
+  // Pre-filtering here avoids the expensive klines/orderbook fetches and keeps scanDetails clean.
+  // Priority symbols (TIER_1/2) bypass this check — they're pinned and always sufficiently liquid.
+  const ANALYSIS_MIN_VOLUME_USDT = 5_000_000;
+  const priorityPinSet = new Set(getPrioritySymbols());
+  let lowVolumeSkipped = 0;
+  const symbolsToAnalyze = symbols.filter((sym) => {
+    if (priorityPinSet.has(sym)) return true;
+    const vol = tickerMap[sym]?.quoteVolume24h;
+    // vol > 0 guard removed: vol=0 means dead/no-data coin, must be excluded too.
+    if (typeof vol === "number" && vol < ANALYSIS_MIN_VOLUME_USDT) {
+      lowVolumeSkipped++;
+      return false;
+    }
+    return true;
+  });
+  result.lowVolumePrefilterRejected = lowVolumeSkipped;
 
-  for (const symbol of symbols) {
+  await botLog({ userId, exchange, eventType: "scanner_started", message: `${symbolsToAnalyze.length} sembol taranıyor (${tf}) universe=${universeTotal} prefiltered=${universePrefiltered} lowVolSkipped=${lowVolumeSkipped}` });
+
+  for (const symbol of symbolsToAnalyze) {
     const detail: ScanDetail = {
       symbol,
       tier: classifyTier(symbol),
@@ -532,7 +554,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   }
 
   result.ok = true;
-  result.deeplyAnalyzedSymbols = symbols.length;
+  result.deeplyAnalyzedSymbols = symbolsToAnalyze.length;
   result.durationMs = Date.now() - start;
 
   // Persist last tick summary for diagnostics endpoint
@@ -540,7 +562,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     at: new Date().toISOString(),
     universe: universeTotal,
     prefiltered: universePrefiltered,
-    scanned: symbols.length,
+    scanned: symbolsToAnalyze.length,
+    lowVolumePrefilterRejected: lowVolumeSkipped,
     signals: result.generatedSignals.length,
     opened: result.openedPaperTrades.length,
     rejected: result.rejectedSignals.length,
@@ -559,7 +582,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
   await botLog({
     userId, exchange, eventType: "tick_completed",
-    message: `Tick tamamlandı — universe=${universeTotal} prefilter=${universePrefiltered} tarandı=${symbols.length} sinyal=${result.generatedSignals.length} açıldı=${result.openedPaperTrades.length} red=${result.rejectedSignals.length} hata=${result.errors.length} cursor=${nextCursor} (${result.durationMs}ms)`,
+    message: `Tick tamamlandı — universe=${universeTotal} prefilter=${universePrefiltered} lowVolSkip=${lowVolumeSkipped} tarandı=${symbolsToAnalyze.length} sinyal=${result.generatedSignals.length} açıldı=${result.openedPaperTrades.length} red=${result.rejectedSignals.length} hata=${result.errors.length} cursor=${nextCursor} (${result.durationMs}ms)`,
     metadata: summary(result),
   });
 

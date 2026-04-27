@@ -102,15 +102,11 @@ export function buildHtmlBody(metrics: MonitoringMetrics): string {
     workerOnline = false, workerAgeMs = null, lastTickAt = null,
     activeExchange = "binance", tradingMode = "paper",
     tickCount = 0, tickErrorCount = 0,
-    totalScannedSymbols = 0, universe = 0, deepAnalyzed = 0,
-    topRejectedReasons = [],
+    topRejectedReasons = [], lowVolumeRejectedCount = 0,
     openedPaperTrades30m = 0, closedPaperTrades30m = 0,
     openPaperPositions = 0, totalPaperPnl = 0, pnl30m = 0,
     openedTradeDetails = [], closedTradeDetails = [], nearMissCandidates = [],
-    strategyScore = 100, strategyBlocked = false,
-    paperTradesCompleted = 0, paperTradesRequired = 100,
     realOrderSent = false, killSwitchActive = false, lastError = null,
-    hardLiveTradingAllowedFalse = true,
   } = metrics;
 
   const modeLabel = tradingMode === "paper" ? "Sanal" : "Canlı";
@@ -155,11 +151,11 @@ export function buildHtmlBody(metrics: MonitoringMetrics): string {
   // ── 1. Özet Karar ────────────────────────────────────────────────────────
   let ozet: string;
   if (openedPaperTrades30m > 0) {
-    ozet = `Bu 30 dakikada <strong>${openedPaperTrades30m} sanal işlem açıldı</strong>. Bot ${universe > 0 ? universe : totalScannedSymbols} Binance vadeli işlem paritesini taradı, ${deepAnalyzed > 0 ? deepAnalyzed : "seçilen"} coini detaylı analiz etti.`;
+    ozet = `Bu 30 dakikada <strong>${openedPaperTrades30m} sanal işlem açıldı</strong>. Bot piyasayı taradı, risk kurallarına uygun pozisyon açtı.`;
   } else {
     const topReject = topRejectedReasons[0]?.reason;
     const humanReason = topReject ? humanizeReject(topReject) : "sinyal yeterince güçlü değildi";
-    ozet = `Bu 30 dakikada <strong>işlem açılmadı</strong>. Bot ${universe > 0 ? universe : totalScannedSymbols} Binance vadeli işlem paritesini taradı, ${deepAnalyzed > 0 ? deepAnalyzed : "seçilen"} coini detaylı analiz etti. En yaygın red nedeni: <em>${humanReason}</em>.`;
+    ozet = `Bu 30 dakikada <strong>işlem açılmadı</strong>. Bot piyasayı taradı ancak işlem kalitesini geçen coin bulamadı. En yaygın neden: <em>${humanReason}</em>.`;
   }
   html += section("1. Özet Karar",
     `<p style="margin:4px 0 0;color:#333;font-size:13px">${ozet}</p>`
@@ -218,24 +214,30 @@ export function buildHtmlBody(metrics: MonitoringMetrics): string {
   }
 
   // ── 5. Neden İşlem Açılmadı? ─────────────────────────────────────────────
-  if (openedPaperTrades30m === 0 && topRejectedReasons.length > 0) {
+  if (openedPaperTrades30m > 0) {
+    html += section("5. Neden İşlem Açılmadı?",
+      `<p style="color:#16a34a;font-size:12px;margin:4px 0">Bu periyotta işlem açıldı — red analizi gerekmedi.</p>`
+    );
+  } else if (topRejectedReasons.length > 0 || lowVolumeRejectedCount > 0) {
     const topReason = topRejectedReasons[0];
-    const secondReason = topRejectedReasons[1];
-    let explanation = `İşlem açılmamasının ana sebebi: <strong>${humanizeReject(topReason.reason)}</strong>.`;
-    if (secondReason) {
-      explanation += ` Ayrıca: ${humanizeReject(secondReason.reason).toLowerCase()}.`;
+    let explanation = topReason
+      ? `İşlem açılmamasının ana sebebi: <strong>${humanizeReject(topReason.reason)}</strong>.`
+      : "Bu periyotta sinyal eşiğini aşan coin oluşmadı.";
+    if (topRejectedReasons[1]) {
+      explanation += ` Ayrıca: ${humanizeReject(topRejectedReasons[1].reason).toLowerCase()}.`;
     }
-    const rejectList = topRejectedReasons.slice(0, 5).map((r) =>
+    // Low-volume is always the first bullet (summary, not detailed technical string)
+    let rejectList = "";
+    if (lowVolumeRejectedCount > 0) {
+      rejectList += `<li>Likiditesi düşük coinler analize alınmadı <span style="color:#aaa;font-size:11px">(${lowVolumeRejectedCount} coin)</span></li>`;
+    }
+    rejectList += topRejectedReasons.slice(0, 4).map((r) =>
       `<li>${humanizeReject(r.reason)} <span style="color:#aaa;font-size:11px">(${r.count}x)</span></li>`
     ).join("");
     html += section("5. Neden İşlem Açılmadı?", `
       <p style="margin:4px 0 8px;color:#444;font-size:13px">${explanation}</p>
       <ul style="margin:0;padding-left:18px;color:#555;font-size:12px">${rejectList}</ul>
     `);
-  } else if (openedPaperTrades30m > 0) {
-    html += section("5. Neden İşlem Açılmadı?",
-      `<p style="color:#16a34a;font-size:12px;margin:4px 0">Bu periyotta işlem açıldı — red analizi gerekmedi.</p>`
-    );
   } else {
     html += section("5. Neden İşlem Açılmadı?",
       `<p style="color:#888;font-size:12px;margin:4px 0">Bu periyotta sinyal üretilmedi veya red sebebi kaydedilmedi.</p>`
@@ -268,25 +270,23 @@ export function buildHtmlBody(metrics: MonitoringMetrics): string {
     yorum = `✅ Piyasada ${openedPaperTrades30m} işlem için yeterli sinyal oluştu. Bot risk kurallarına uygun pozisyon açtı.`;
   } else if (tickCount === 0) {
     yorum = "⚠️ Bu periyotta tick çalışmadı. Worker durumu kontrol edilmeli.";
-  } else if (topRejectedReasons.length > 0) {
-    yorum = `🔍 Piyasa bu periyotta işlem açmak için yeterince güçlü sinyal üretmedi. Bot risk kurallarına uygun şekilde beklemede kaldı. (${tickCount} tarama yapıldı)`;
+  } else if (topRejectedReasons.length > 0 || lowVolumeRejectedCount > 0) {
+    yorum = `🔍 Piyasa bu periyotta işlem açmak için yeterince güçlü sinyal üretmedi. Bot risk kurallarına uygun şekilde beklemede kaldı.`;
   } else {
-    yorum = `🔍 ${tickCount} tarama tamamlandı, beklenmedik bir durum gözlemlenmedi.`;
+    yorum = `🔍 Bot bu periyotta piyasayı izledi, beklenmedik bir durum gözlemlenmedi.`;
   }
   html += section("7. Botun Yorumu",
     `<p style="margin:4px 0;color:#333;font-size:13px;font-style:italic">${yorum}</p>`
   );
 
-  // ── 8. Canlı İşlem Durumu ────────────────────────────────────────────────
-  html += section("8. Canlı İşlem Durumu", infoTable([
+  // ── 8. Güvenlik ──────────────────────────────────────────────────────────
+  html += section("8. Güvenlik", infoTable([
+    row("Mod", badge(modeLabel, "#16a34a")),
     row("Canlı işlem", badge("Kapalı", "#16a34a")),
-    row("Mod", modeLabel),
     row("Gerçek emir gönderildi mi?", realOrderSent
       ? `<span style="color:#dc2626;font-weight:700">❌ EVET — ALARM</span>`
-      : `<span style="color:#16a34a">✅ Hayır</span>`),
-    row("Kill switch", killSwitchActive
-      ? `<span style="color:#dc2626;font-weight:700">⚠️ AKTİF</span>`
-      : "—"),
+      : `<span style="color:#16a34a">✅ Hayır — Gönderilmedi</span>`),
+    ...(killSwitchActive ? [row("Kill switch", `<span style="color:#dc2626;font-weight:700">⚠️ AKTİF</span>`)] : []),
   ].join("")));
 
   // ── 9. Sistem Sağlığı ────────────────────────────────────────────────────
@@ -300,10 +300,7 @@ export function buildHtmlBody(metrics: MonitoringMetrics): string {
       ? `<span style="color:#dc2626">⚠️ ${tickErrorCount}</span>`
       : "0"),
     row("Son tarama", fmtTs(lastTickAt)),
-    row("Canlı işlem kilidi", hardLiveTradingAllowedFalse
-      ? `${badge("Kapalı", "#16a34a")}` : `<span style="color:#c00">⚠️ AÇIK</span>`),
-    row("Strateji skoru", `${strategyScore}/100${strategyBlocked ? " ⚠️ Bloklandı" : ""}`),
-    row("Sanal trade ilerlemesi", `${paperTradesCompleted} / ${paperTradesRequired}`),
+    ...(lowVolumeRejectedCount > 0 ? [row("Düşük hacim nedeniyle analiz dışı", `${lowVolumeRejectedCount} coin`)] : []),
     ...(lastError ? [row("Son hata", `<span style="color:#dc2626;font-size:11px">${lastError}</span>`)] : []),
   ].join("")));
 

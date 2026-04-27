@@ -46,6 +46,7 @@ export interface MonitoringMetrics {
 
   // 3. Scanner
   topRejectedReasons: { reason: string; count: number }[];
+  lowVolumeRejectedCount: number;
   recentSignalCount: number;
   recentSignalSymbols: string[];
   universe: number;
@@ -99,7 +100,7 @@ function emptyMetrics(overrides: Partial<MonitoringMetrics> = {}): MonitoringMet
     tradingMode: "paper", hardLiveAllowed: isHardLiveAllowed(), enableLiveTrading: false,
     tickCount: 0, avgTickDurationMs: 0, maxTickDurationMs: 0,
     tickErrorCount: 0, totalScannedSymbols: 0, avgScannedSymbols: 0, lastTickAt: null,
-    topRejectedReasons: [], recentSignalCount: 0, recentSignalSymbols: [],
+    topRejectedReasons: [], lowVolumeRejectedCount: 0, recentSignalCount: 0, recentSignalSymbols: [],
     universe: 0, deepAnalyzed: 0,
     openedPaperTrades30m: 0, closedPaperTrades30m: 0, openPaperPositions: 0,
     totalPaperPnl: 0, pnl30m: 0, winRate: 0, profitFactor: 0, maxDrawdown: 0,
@@ -140,6 +141,7 @@ export async function buildMonitoringMetrics(
       tickErrorCount: tickStats.errorCount,
       totalScannedSymbols: tickStats.totalScanned,
       avgScannedSymbols: tickCount > 0 ? Math.round(tickStats.totalScanned / tickCount) : 0,
+      lowVolumeRejectedCount: 0,
       readinessBlockers: ["Supabase not configured"],
       warnings: ["Supabase yapılandırılmamış — DB metrikleri alınamadı"],
     });
@@ -224,15 +226,32 @@ export async function buildMonitoringMetrics(
   const recentSignals = signalsRes.data ?? [];
   const successSignals = recentSignals.filter((s) => !s.rejected_reason);
   const recentSignalSymbols = [...new Set(successSignals.map((s) => s.symbol))].slice(0, 10);
+
+  // Volume-based rejections are counted separately — never pollute the top reject reason list.
+  const isVolumeReject = (r: string) => /hacim|volume|likid/i.test(r);
   const rejMap = new Map<string, number>();
+  let signalVolumeRejectCount = 0;
   for (const s of recentSignals) {
-    if (s.rejected_reason) rejMap.set(s.rejected_reason, (rejMap.get(s.rejected_reason) ?? 0) + 1);
+    if (s.rejected_reason) {
+      if (isVolumeReject(s.rejected_reason)) {
+        signalVolumeRejectCount++;
+      } else {
+        rejMap.set(s.rejected_reason, (rejMap.get(s.rejected_reason) ?? 0) + 1);
+      }
+    }
   }
-  // Fall back to last_tick_summary top reject reasons when no recent signal data
+  // Fall back to last_tick_summary top reject reasons when no recent signal data;
+  // filter volume reasons from the fallback too.
   const topRejectedReasons: { reason: string; count: number }[] =
     rejMap.size > 0
       ? [...rejMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([reason, count]) => ({ reason, count }))
-      : (tickSummary?.topRejectReasons ?? []).slice(0, 5).map((r: string) => ({ reason: r, count: 1 }));
+      : (tickSummary?.topRejectReasons ?? [])
+          .filter((r: string) => !isVolumeReject(r))
+          .slice(0, 5)
+          .map((r: string) => ({ reason: r, count: 1 }));
+
+  // Total low-volume excluded = prefilter gate + signal-engine volume rejects that slipped through
+  const lowVolumeRejectedCount = (tickSummary?.lowVolumePrefilterRejected ?? 0) + signalVolumeRejectCount;
 
   // Near-miss candidates from last tick scan details (top scored but not opened)
   const scanDetails = (tickSummary?.scanDetails ?? []) as any[];
@@ -304,6 +323,7 @@ export async function buildMonitoringMetrics(
     avgScannedSymbols: tickCount > 0 ? Math.round(tickStats.totalScanned / tickCount) : 0,
     lastTickAt,
     topRejectedReasons,
+    lowVolumeRejectedCount,
     recentSignalCount: successSignals.length,
     recentSignalSymbols,
     universe: tickSummary?.universe ?? 0,
