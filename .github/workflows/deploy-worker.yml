@@ -1,0 +1,101 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: "Force Docker rebuild without cache"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false  # never cancel mid-deploy; queue instead
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Validate secrets present
+        run: |
+          if [ -z "${{ secrets.VPS_HOST }}" ]; then
+            echo "ERROR: VPS_HOST secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.VPS_USER }}" ]; then
+            echo "ERROR: VPS_USER secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.VPS_SSH_PRIVATE_KEY }}" ]; then
+            echo "ERROR: VPS_SSH_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+
+      - name: Deploy worker via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 12m
+          script: |
+            set -euo pipefail
+
+            DEPLOY_DIR="/opt/coinbot"
+            FORCE_REBUILD="${{ github.event.inputs.force_rebuild || 'false' }}"
+
+            if [ ! -d "$DEPLOY_DIR" ]; then
+              echo "ERROR: Deploy directory $DEPLOY_DIR does not exist"
+              echo "One-time setup required: git clone the repo to $DEPLOY_DIR"
+              exit 1
+            fi
+
+            cd "$DEPLOY_DIR"
+
+            echo "[deploy] Pulling latest code from main..."
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+
+            echo "[deploy] Running deploy script..."
+            export FORCE_REBUILD="$FORCE_REBUILD"
+            bash scripts/deploy-worker.sh
+
+      - name: Verify heartbeat (optional)
+        if: vars.VERCEL_APP_URL != ''
+        env:
+          VERCEL_APP_URL: ${{ vars.VERCEL_APP_URL }}
+        run: |
+          echo "[check] Waiting 30s for worker to send first heartbeat..."
+          sleep 30
+
+          RESPONSE=$(curl -sf --max-time 10 "${VERCEL_APP_URL}/api/bot/heartbeat" 2>/dev/null || echo "{}")
+          ONLINE=$(echo "$RESPONSE" | grep -o '"workerOnline":true' || echo "")
+          MODE=$(echo "$RESPONSE" | grep -o '"trading_mode":"paper"' || echo "")
+          GATE=$(echo "$RESPONSE" | grep -o '"hard_live_gate":false' || echo "")
+
+          echo "[check] Response snippet: $(echo "$RESPONSE" | head -c 300)"
+
+          if [ -z "$ONLINE" ]; then
+            echo "WARNING: workerOnline is not true — worker may still be starting up"
+          else
+            echo "OK: workerOnline=true"
+          fi
+
+          if [ -n "$MODE" ]; then
+            echo "OK: trading_mode=paper"
+          fi
+
+          if [ -n "$GATE" ]; then
+            echo "OK: hard_live_gate=false"
+          fi
+
+          echo "[check] Heartbeat check complete"
