@@ -147,7 +147,7 @@ export default function ScannerPage() {
 
       {rows.length === 0 && data && (
         <div className="card text-muted text-sm text-center py-6">
-          Son tick'te scan_details boş. Worker bir sonraki tick'te dolduracak.
+          Son tick tarama verisi boş. Worker bir sonraki tickte dolduracak.
         </div>
       )}
 
