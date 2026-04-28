@@ -3,7 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
-import { badgeLabelForWaitReason, WAIT_REASON_BADGE_LABEL } from "@/lib/wait-reason-badges";
+import { buildReasonItems } from "@/lib/wait-reason-badges";
 
 interface TickStats {
   universe: number;
@@ -77,34 +77,29 @@ const DIRECTION_CANDIDATE_LABEL: Record<DirectionCandidate, string> = {
   NONE: "Yok",
 };
 
-function ReasonBadges({ row }: { row: ScanRow }) {
-  if (row.signalType === "WAIT") {
-    const codes = row.waitReasonCodes ?? [];
-    if (codes.length === 0) {
-      return <span className="text-muted text-xs">—</span>;
-    }
-    return (
-      <div className="flex flex-wrap gap-1">
-        {codes.map((code) => (
-          <span
-            key={code}
-            className="inline-flex items-center rounded-md border border-border bg-slate-800/70 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-200 whitespace-nowrap"
-          >
-            {badgeLabelForWaitReason(code)}
-          </span>
-        ))}
-      </div>
-    );
-  }
-  const reason = row.rejectReason ?? row.riskRejectReason;
-  if (!reason) return <span className="text-muted">—</span>;
+function ReasonList({ row }: { row: ScanRow }) {
+  const items = buildReasonItems({
+    signalType: row.signalType,
+    waitReasonCodes: row.waitReasonCodes,
+    rejectReason: row.rejectReason,
+    riskRejectReason: row.riskRejectReason,
+  });
+  if (items.length === 0) return <span className="text-muted">—</span>;
   return (
-    <span
-      className="inline-flex items-center rounded-md border border-border bg-slate-800/70 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-200"
-      title={reason}
-    >
-      {reason.length > 28 ? `${reason.slice(0, 26)}…` : reason}
-    </span>
+    <ul className="space-y-1.5 leading-tight">
+      {items.map((it, i) => (
+        <li key={`${it.title}-${i}`}>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-muted text-[11px]">•</span>
+            <span className="text-[11px] font-semibold tracking-wide text-slate-100">{it.title}</span>
+          </div>
+          <div className="ml-3 flex items-baseline gap-1.5">
+            <span className="text-muted text-[11px]">•</span>
+            <span className="text-[11px] text-slate-300">{it.status}</span>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -345,14 +340,14 @@ export default function ScannerPage() {
                       <span className="text-muted text-xs">—</span>
                     )}
                   </td>
-                  <td className="align-middle"
+                  <td className="align-top"
                     title={
                       r.signalType === "WAIT"
-                        ? (r.waitReasonCodes ?? []).map((c) => WAIT_REASON_BADGE_LABEL[c as keyof typeof WAIT_REASON_BADGE_LABEL] ?? c).join(" · ")
+                        ? (r.waitReasonCodes ?? []).join(", ")
                         : (r.rejectReason ?? r.riskRejectReason ?? "")
                     }
                   >
-                    <ReasonBadges row={r} />
+                    <ReasonList row={r} />
                   </td>
                   <td>
                     {r.opened
