@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
@@ -136,6 +136,17 @@ function StatTile({
 export default function ScannerPage() {
   const [data, setData] = useState<DiagData | null>(null);
   const [loading, setLoading] = useState(false);
+  // Worker Debug paneli yalnızca geliştirici görünümünde açılır:
+  // ?debug=1 query param ya da NEXT_PUBLIC_SCANNER_DEBUG=true env'i.
+  // Müşteri/abonelik görünümünde panel render edilmez.
+  const [debugMode, setDebugMode] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const qs = new URLSearchParams(window.location.search);
+    const fromQuery = qs.get("debug") === "1";
+    const fromEnv = process.env.NEXT_PUBLIC_SCANNER_DEBUG === "true";
+    setDebugMode(fromQuery || fromEnv);
+  }, []);
 
   const refresh = async () => {
     setLoading(true);
@@ -358,8 +369,8 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* Worker identity debug panel */}
-      {data?.tick_identity && (
+      {/* Worker identity debug panel — sadece debug modunda görünür */}
+      {debugMode && data?.tick_identity && (
         <details className="card text-xs">
           <summary className="cursor-pointer text-muted select-none">Worker Debug</summary>
           <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 font-mono">
