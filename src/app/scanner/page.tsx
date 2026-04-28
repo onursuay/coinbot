@@ -70,6 +70,42 @@ interface DiagData {
   tick_identity: TickIdentity | null;
 }
 
+type StatTone = "success" | "danger" | "accent";
+function StatTile({
+  label, value, tone, dim, highlight, title,
+}: {
+  label: string;
+  value: number | string;
+  tone?: StatTone;
+  dim?: boolean;
+  highlight?: boolean;
+  title?: string;
+}) {
+  const labelClass =
+    tone === "success" ? "text-success"
+    : tone === "danger" ? "text-danger"
+    : tone === "accent" ? "text-accent"
+    : "text-muted";
+  const valueClass =
+    tone === "success" ? "text-success"
+    : tone === "danger" ? "text-danger"
+    : tone === "accent" ? "text-accent"
+    : dim ? "text-slate-400"
+    : "text-slate-100";
+  const tileClass = highlight
+    ? "bg-accent/10 border-accent/30"
+    : "bg-bg-soft/40 border-border/40";
+  return (
+    <div
+      className={`rounded-lg border ${tileClass} px-2 py-1.5 text-center transition-colors`}
+      title={title}
+    >
+      <div className={`text-[10px] uppercase tracking-wider ${labelClass} font-medium`}>{label}</div>
+      <div className={`mt-0.5 text-lg font-semibold tabular-nums ${valueClass}`}>{value}</div>
+    </div>
+  );
+}
+
 export default function ScannerPage() {
   const [data, setData] = useState<DiagData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -106,88 +142,60 @@ export default function ScannerPage() {
     <div className="space-y-4">
       {/* Stats bar */}
       {stats && (
-        <div className="card py-2 relative space-y-2">
-          <div className="grid grid-cols-4 gap-3 sm:grid-cols-9 text-center">
-            <div>
-              <div className="text-xs text-muted">Evren</div>
-              <div className="font-semibold tabular-nums">{stats.universe}</div>
+        <div className="rounded-2xl border border-border bg-gradient-to-br from-bg-card via-bg-card to-bg-soft/40 shadow-lg shadow-black/20 overflow-hidden">
+          {/* Section: Tarama Akışı */}
+          <div className="px-4 pt-3 pb-2">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+              <span className="text-[10px] uppercase tracking-[0.18em] text-muted font-medium">Tarama Akışı</span>
             </div>
-            <div>
-              <div className="text-xs text-muted">Ön Eleme</div>
-              <div className="font-semibold tabular-nums">{stats.prefiltered}</div>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-9">
+              <StatTile label="Evren" value={stats.universe} />
+              <StatTile label="Ön Eleme" value={stats.prefiltered} />
+              <StatTile label="Hacim Filtresi" value={stats.lowVolumeRejected ?? 0} dim />
+              <StatTile label="Analiz Edilen" value={analyzedCount} title="Worker'ın değerlendirdiği toplam coin" />
+              <StatTile label="Sinyal" value={stats.signals} tone="success" />
+              <StatTile label="Reddedilen" value={stats.rejected} />
+              <StatTile label="Açılan" value={stats.opened} tone="accent" />
+              <StatTile label="Hata" value={stats.errors} tone={stats.errors > 0 ? "danger" : undefined} />
+              <StatTile label="Süre" value={`${stats.durationMs}ms`} />
             </div>
-            <div>
-              <div className="text-xs text-muted">Hacim Filtresi</div>
-              <div className="font-semibold tabular-nums text-muted">{stats.lowVolumeRejected ?? 0}</div>
+          </div>
+
+          {/* Section: Görünürlük */}
+          <div className="px-4 pt-2 pb-3 border-t border-border/60 bg-bg-soft/20">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-success" />
+              <span className="text-[10px] uppercase tracking-[0.18em] text-muted font-medium">Görünürlük</span>
             </div>
-            <div>
-              <div className="text-xs text-muted" title="Worker'ın değerlendirdiği toplam coin">Analiz Edilen</div>
-              <div className="font-semibold tabular-nums">{analyzedCount}</div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <StatTile label="Tabloda Gösterilen" value={visibleCount} highlight title="Scanner görünürlük filtresini geçen ve tabloda listelenen coin sayısı" />
+              <StatTile label="Core Gösterilen" value={visibleCoreCount} />
+              <StatTile label="Dynamic Gösterilen" value={visibleDynamicCount} tone={visibleDynamicCount > 0 ? "accent" : undefined} />
+              <StatTile label="Dynamic Filtrelenen" value={filteredDynamicCount} dim title="Dynamic havuzdan filtrelenip tabloya alınmayan coin sayısı (kalite/setup/sinyal/likidite)" />
             </div>
-            <div>
-              <div className="text-xs text-success">Sinyal</div>
-              <div className="font-semibold tabular-nums text-success">{stats.signals}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted">Reddedilen</div>
-              <div className="font-semibold tabular-nums">{stats.rejected}</div>
-            </div>
-            <div>
-              <div className="text-xs text-accent">Açılan</div>
-              <div className="font-semibold tabular-nums text-accent">{stats.opened}</div>
-            </div>
-            <div>
-              <div className="text-xs text-danger">Hata</div>
-              <div className={`font-semibold tabular-nums ${stats.errors > 0 ? "text-danger" : ""}`}>
-                {stats.errors}
+
+            {/* Açıklama banner */}
+            {analyzedCount > 0 && (
+              <div className="mt-3 flex items-start gap-2 rounded-lg bg-bg-soft/60 border border-border/60 px-3 py-2 text-xs text-slate-300">
+                <span className="mt-0.5 text-muted shrink-0">ℹ</span>
+                <span>
+                  {visibleDynamicCount === 0 ? (
+                    <>
+                      Bu taramada <span className="text-slate-100 font-medium">dynamic fırsat adayı bulunmadı</span>. Bu nedenle tabloda yalnızca <span className="text-slate-100 font-medium">{visibleCoreCount} core</span> coin gösteriliyor.
+                    </>
+                  ) : (
+                    <>
+                      Bu taramada <span className="text-slate-100 font-medium">{visibleCoreCount} core + {visibleDynamicCount} dynamic</span> fırsat adayı gösteriliyor.
+                    </>
+                  )}
+                  {analyzedCount !== visibleCount && (
+                    <span className="text-muted"> · {analyzedCount} analiz edildi · {visibleCount} gösteriliyor</span>
+                  )}
+                </span>
               </div>
-            </div>
-            <div>
-              <div className="text-xs text-muted">Süre</div>
-              <div className="font-semibold tabular-nums">{stats.durationMs}ms</div>
-            </div>
+            )}
           </div>
-
-          {/* Görünürlük satırı — analiz edilen ile tabloda gösterilen ayrımı */}
-          <div className="border-t border-default/40 pt-2 grid grid-cols-2 gap-3 sm:grid-cols-4 text-center">
-            <div title="Scanner görünürlük filtresini geçen ve tabloda listelenen coin sayısı">
-              <div className="text-xs text-muted">Tabloda Gösterilen</div>
-              <div className="font-semibold tabular-nums">{visibleCount}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted">Core Gösterilen</div>
-              <div className="font-semibold tabular-nums">{visibleCoreCount}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted">Dynamic Gösterilen</div>
-              <div className="font-semibold tabular-nums">{visibleDynamicCount}</div>
-            </div>
-            <div title="Dynamic havuzdan filtrelenip tabloya alınmayan coin sayısı (kalite/setup/sinyal/likidite)">
-              <div className="text-xs text-muted">Dynamic Filtrelenen</div>
-              <div className="font-semibold tabular-nums text-muted">{filteredDynamicCount}</div>
-            </div>
-          </div>
-
-          {/* Açıklama satırı */}
-          {analyzedCount > 0 && (
-            <div className="text-xs text-muted text-center px-2">
-              {visibleDynamicCount === 0 ? (
-                <>
-                  Bu taramada dynamic fırsat adayı bulunmadı. Bu nedenle tabloda yalnızca {visibleCoreCount} core coin gösteriliyor.
-                  {analyzedCount !== visibleCount && (
-                    <> ({analyzedCount} analiz edildi · {visibleCount} gösteriliyor)</>
-                  )}
-                </>
-              ) : (
-                <>
-                  Bu taramada {visibleCoreCount} core + {visibleDynamicCount} dynamic fırsat adayı gösteriliyor.
-                  {analyzedCount !== visibleCount && (
-                    <> ({analyzedCount} analiz edildi · {visibleCount} gösteriliyor)</>
-                  )}
-                </>
-              )}
-            </div>
-          )}
         </div>
       )}
 
