@@ -242,7 +242,7 @@ export default function ScannerPage() {
       {/* Scan details table */}
       {rows.length > 0 && (
         <div className="card overflow-x-auto">
-          <table className="t">
+          <table className="t t-centered">
             <thead>
               <tr>
                 <th>SEMBOL</th>

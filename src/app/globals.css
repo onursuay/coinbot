@@ -23,6 +23,8 @@ html, body { background: #0b0e13; color: #e2e8f0; }
 table.t { @apply w-full text-sm; }
 table.t th { @apply text-left text-muted font-normal py-2 px-2 border-b border-border; }
 table.t td { @apply py-2 px-2 border-b border-border/60; }
+table.t-centered th,
+table.t-centered td { @apply text-center; }
 
 /* Animated "snake" border — soft white glow chasing around the tile edge.
    Uses @property + conic-gradient + mask trick so only the 1.5px border ring
