@@ -77,6 +77,35 @@ const DIRECTION_CANDIDATE_LABEL: Record<DirectionCandidate, string> = {
   NONE: "YOK",
 };
 
+// Advanced (toggleable) columns — controlled by the GELİŞMİŞ METRİKLER picker.
+// Core columns (SEMBOL/SINIF/KADEME/SİNYAL/YÖN EĞİLİMİ/KALİTE/FIRSAT/İŞLEM/AÇILDI)
+// are always rendered and never appear in the picker.
+type AdvancedColumnKey =
+  | "SPREAD" | "ATR_PCT" | "FUNDING"
+  | "MA" | "EMA" | "MACD" | "RSI" | "ADX" | "VWAP"
+  | "HACIM" | "BB" | "ATR" | "BTC" | "SKOR";
+
+const ADVANCED_COLUMNS: { key: AdvancedColumnKey; header: string }[] = [
+  { key: "SPREAD",  header: "SPREAD" },
+  { key: "ATR_PCT", header: "ATR%" },
+  { key: "FUNDING", header: "FONLAMA" },
+  { key: "MA",      header: "MA" },
+  { key: "EMA",     header: "EMA" },
+  { key: "MACD",    header: "MACD" },
+  { key: "RSI",     header: "RSI" },
+  { key: "ADX",     header: "ADX" },
+  { key: "VWAP",    header: "VWAP" },
+  { key: "HACIM",   header: "HACİM" },
+  { key: "BB",      header: "BB" },
+  { key: "ATR",     header: "ATR" },
+  { key: "BTC",     header: "BTC" },
+  { key: "SKOR",    header: "SKOR" },
+];
+
+const ADVANCED_COLUMN_KEYS: AdvancedColumnKey[] = ADVANCED_COLUMNS.map((c) => c.key);
+const STORAGE_KEY = "scanner:visibleAdvancedColumns";
+const DEFAULT_VISIBLE_ADVANCED: AdvancedColumnKey[] = []; // varsayılan: hepsi kapalı
+
 function ReasonCell({ value }: { value?: string }) {
   if (!value) return <span className="text-muted">—</span>;
   return <span className="text-xs font-medium text-danger">{value}</span>;
@@ -147,6 +176,41 @@ export default function ScannerPage() {
     const fromEnv = process.env.NEXT_PUBLIC_SCANNER_DEBUG === "true";
     setDebugMode(fromQuery || fromEnv);
   }, []);
+
+  // Gelişmiş kolon görünürlüğü — kullanıcı tercihi localStorage'a yazılır,
+  // her oturum açılışında geri yüklenir. Yalnızca presentation; backend
+  // ile alışverişi yok.
+  const [visibleAdvanced, setVisibleAdvanced] = useState<Set<AdvancedColumnKey>>(
+    () => new Set(DEFAULT_VISIBLE_ADVANCED),
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const arr = JSON.parse(raw) as unknown;
+      if (!Array.isArray(arr)) return;
+      const allowed = new Set<AdvancedColumnKey>(ADVANCED_COLUMN_KEYS);
+      const filtered = arr.filter((k): k is AdvancedColumnKey => typeof k === "string" && allowed.has(k as AdvancedColumnKey));
+      setVisibleAdvanced(new Set(filtered));
+    } catch {
+      /* corrupt storage — bırak default */
+    }
+  }, []);
+  const persistVisible = (next: Set<AdvancedColumnKey>) => {
+    setVisibleAdvanced(next);
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(next))); } catch { /* ignore */ }
+  };
+  const toggleColumn = (k: AdvancedColumnKey) => {
+    const next = new Set(visibleAdvanced);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    persistVisible(next);
+  };
+  const showAllColumns = () => persistVisible(new Set(ADVANCED_COLUMN_KEYS));
+  const hideAllColumns = () => persistVisible(new Set());
+  const resetColumns = () => persistVisible(new Set(DEFAULT_VISIBLE_ADVANCED));
+  const isAdvVisible = (k: AdvancedColumnKey) => visibleAdvanced.has(k);
 
   const refresh = async () => {
     setLoading(true);
@@ -250,6 +314,54 @@ export default function ScannerPage() {
         </div>
       )}
 
+      {/* Column picker — GELİŞMİŞ METRİKLER */}
+      {rows.length > 0 && (
+        <div className="relative flex justify-end">
+          <button
+            type="button"
+            onClick={() => setPickerOpen((o) => !o)}
+            className="btn-ghost text-[11px] uppercase tracking-wider"
+            aria-expanded={pickerOpen}
+          >
+            Gelişmiş Metrikler
+            {visibleAdvanced.size > 0 && (
+              <span className="ml-2 inline-flex items-center rounded-md bg-accent/15 text-accent px-1.5 py-0.5 text-[10px] font-semibold">
+                {visibleAdvanced.size}/{ADVANCED_COLUMNS.length}
+              </span>
+            )}
+          </button>
+          {pickerOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-10"
+                onClick={() => setPickerOpen(false)}
+                aria-hidden
+              />
+              <div className="absolute right-0 top-full z-20 mt-2 w-80 rounded-xl border border-border bg-bg-card p-3 shadow-lg shadow-black/40">
+                <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-wider">
+                  <button onClick={showAllColumns} className="rounded-md border border-border bg-bg-soft px-2 py-1 hover:border-accent">Tümünü Göster</button>
+                  <button onClick={hideAllColumns} className="rounded-md border border-border bg-bg-soft px-2 py-1 hover:border-accent">Tümünü Gizle</button>
+                  <button onClick={resetColumns}   className="rounded-md border border-border bg-bg-soft px-2 py-1 hover:border-accent">Varsayılana Dön</button>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {ADVANCED_COLUMNS.map((c) => (
+                    <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-xs text-slate-200 hover:bg-bg-soft">
+                      <input
+                        type="checkbox"
+                        className="accent-accent"
+                        checked={isAdvVisible(c.key)}
+                        onChange={() => toggleColumn(c.key)}
+                      />
+                      <span className="font-medium tracking-wide">{c.header}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Scan details table */}
       {rows.length > 0 && (
         <div className="card overflow-x-auto">
@@ -259,15 +371,15 @@ export default function ScannerPage() {
                 <th>SEMBOL</th>
                 <th>SINIF</th>
                 <th>KADEME</th>
-                <th>SPREAD</th>
-                <th>ATR%</th>
-                <th>FONLAMA</th>
+                {isAdvVisible("SPREAD")  && <th>SPREAD</th>}
+                {isAdvVisible("ATR_PCT") && <th>ATR%</th>}
+                {isAdvVisible("FUNDING") && <th>FONLAMA</th>}
                 <th>SİNYAL</th>
                 <th className="whitespace-nowrap">YÖN EĞİLİMİ</th>
                 <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">KALİTE</th>
                 <th title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu; WAIT dahil hesaplanır">FIRSAT</th>
                 <th title="İşlem güven skoru — 70+ = işlem açılır; sadece yön belirlenen coinlerde anlamlı">İŞLEM</th>
-                {REASON_COLUMNS.map((c) => (
+                {REASON_COLUMNS.filter((c) => isAdvVisible(c.key as AdvancedColumnKey)).map((c) => (
                   <th key={c.key}>{c.header}</th>
                 ))}
                 <th>AÇILDI</th>
@@ -291,9 +403,9 @@ export default function ScannerPage() {
                       {r.tier}
                     </span>
                   </td>
-                  <td>{fmtPct(r.spreadPercent, 3)}</td>
-                  <td>{fmtPct(r.atrPercent, 2)}</td>
-                  <td>{fmtPct(r.fundingRate * 100, 4)}</td>
+                  {isAdvVisible("SPREAD")  && <td>{fmtPct(r.spreadPercent, 3)}</td>}
+                  {isAdvVisible("ATR_PCT") && <td>{fmtPct(r.atrPercent, 2)}</td>}
+                  {isAdvVisible("FUNDING") && <td>{fmtPct(r.fundingRate * 100, 4)}</td>}
                   <td>
                     <SignalTag signalType={r.signalType} />
                   </td>
@@ -351,11 +463,13 @@ export default function ScannerPage() {
                       rejectReason: r.rejectReason,
                       riskRejectReason: r.riskRejectReason,
                     });
-                    return REASON_COLUMNS.map((c) => (
-                      <td key={c.key}>
-                        <ReasonCell value={cols[c.key]} />
-                      </td>
-                    ));
+                    return REASON_COLUMNS
+                      .filter((c) => isAdvVisible(c.key as AdvancedColumnKey))
+                      .map((c) => (
+                        <td key={c.key}>
+                          <ReasonCell value={cols[c.key]} />
+                        </td>
+                      ));
                   })()}
                   <td>
                     {r.opened
