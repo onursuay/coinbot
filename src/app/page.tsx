@@ -4,6 +4,8 @@ import Link from "next/link";
 import { fmtNum, fmtPct, fmtUsd } from "@/lib/format";
 import { getTopOpportunities } from "@/lib/top-opportunities";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
+import { useTradeOpenSound } from "@/lib/hooks/use-trade-open-sound";
+import { useSoundPref } from "@/lib/sound-pref";
 
 interface TickResult {
   ok: boolean;
@@ -102,6 +104,15 @@ export default function HomePage() {
   };
 
   useAutoRefresh(refresh);
+
+  // Sesli bildirim — yeni paper veya live pozisyon açıldığında /sounds/hedef.mp3 çalar.
+  // Live infra hazır; canlı trade fetcher eklendiğinde liveTradeIds doldurulur.
+  const { enabled: soundEnabled } = useSoundPref();
+  useTradeOpenSound({
+    enabled: soundEnabled,
+    paperTradeIds: (paper.open ?? []).map((t: any) => String(t.id)),
+    liveTradeIds: [],
+  });
 
   const actWithBody = async (path: string, label: string, body?: object) => {
     if (path.endsWith("/start") && envCheck && !envCheck.ok) {

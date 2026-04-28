@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import KillSwitch from "./KillSwitch";
+import { useSoundPref } from "@/lib/sound-pref";
 
 interface Status {
   bot: any | null;
@@ -17,6 +18,21 @@ export default function TopBar() {
   const [s, setS] = useState<Status | null>(null);
   const [workerOnline, setWorkerOnline] = useState<boolean | null>(null);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
+  const { enabled: soundEnabled, setEnabled: setSoundEnabled } = useSoundPref();
+
+  const toggleSound = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    if (next && typeof Audio !== "undefined") {
+      // Audio unlock — happens inside a user gesture so subsequent
+      // programmatic plays from the trade-open hook are allowed.
+      try {
+        const a = new Audio("/sounds/hedef.mp3");
+        a.volume = 0.7;
+        a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => { /* ignore */ });
+      } catch { /* ignore */ }
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -80,8 +96,17 @@ export default function TopBar() {
         )}
       </div>
 
-      {/* Right: P&L + kill switch */}
+      {/* Right: sound toggle + P&L + kill switch */}
       <div className="flex items-center gap-2 shrink-0">
+        <button
+          onClick={toggleSound}
+          className={`${PILL} ${soundEnabled ? "bg-success/15 text-success" : "bg-slate-700/40 text-slate-300"} cursor-pointer hover:opacity-90`}
+          title={soundEnabled ? "Sesli bildirim açık — kapatmak için tıkla" : "Sesli bildirim kapalı — açmak için tıkla"}
+          type="button"
+        >
+          <span aria-hidden>{soundEnabled ? "🔊" : "🔇"}</span>
+          SES: {soundEnabled ? "AÇIK" : "KAPALI"}
+        </button>
         {s && (
           <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
             K/Z:&nbsp;
