@@ -25,7 +25,8 @@ export interface SignalResult {
   symbol: string;
   timeframe: Timeframe;
   signalType: SignalType;
-  score: number;
+  score: number;         // trade confidence — 0 for WAIT / early-exit NO_TRADE
+  setupScore: number;    // market quality (trend+vol+volatility), >0 whenever indicators computed
   entryPrice: number | null;
   stopLoss: number | null;
   takeProfit: number | null;
@@ -55,6 +56,9 @@ export function generateSignal(ctx: SignalContext): SignalResult {
 
   const earlyExit = (kind: SignalType, reason: string): SignalResult => ({
     symbol, timeframe, signalType: kind, score: 0,
+    // setupScore: populated after indicators are computed (line ~117 onward).
+    // For pre-indicator exits (insufficient candles, EMA fail) this is 0.
+    setupScore: typeof features.setupScore === "number" ? (features.setupScore as number) : 0,
     entryPrice: null, stopLoss: null, takeProfit: null, riskRewardRatio: null,
     reasons: [reason], rejectedReason: kind === "NO_TRADE" ? reason : undefined,
     features: { ...features },
@@ -113,6 +117,15 @@ export function generateSignal(ctx: SignalContext): SignalResult {
     spread: +ticker.spread.toFixed(6),
     atrPctOfClose: Number.isFinite(a14) && last > 0 ? +((a14 / last) * 100).toFixed(4) : null,
   });
+
+  // setupScore: market quality, independent of direction / trade decision.
+  // Computed once here so all downstream earlyExit calls carry it via { ...features }.
+  // Weights: trend 50%, volume confirmation 30%, volatility suitability 20%.
+  // This score is deliberately free of R:R and EMA alignment bonuses (those are trade-specific).
+  const setupScore = Math.max(0, Math.min(100, Math.round(
+    trendScore * 0.50 + volConf * 0.30 + volScore * 0.20,
+  )));
+  features.setupScore = setupScore;
 
   // ── Spread filter ──
   if (ticker.spread > MAX_SPREAD_FRACTION) {
@@ -250,6 +263,7 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   if (score < 70) {
     return {
       symbol, timeframe, signalType: "NO_TRADE", score,
+      setupScore,
       entryPrice: last, stopLoss: stop, takeProfit: take, riskRewardRatio: rr,
       reasons,
       rejectedReason: `Sinyal skoru düşük (${score}/100 < 70)`,
@@ -261,6 +275,7 @@ export function generateSignal(ctx: SignalContext): SignalResult {
 
   return {
     symbol, timeframe, signalType: direction, score,
+    setupScore,
     entryPrice: last, stopLoss: stop, takeProfit: take, riskRewardRatio: rr,
     reasons, features: { ...features },
   };

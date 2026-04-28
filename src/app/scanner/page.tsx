@@ -36,6 +36,9 @@ interface ScanRow {
   orderBookDepth: number;
   signalType: string;
   signalScore: number;
+  setupScore?: number;
+  scoreType?: "signal" | "setup" | "none";
+  scoreReason?: string;
   rejectReason: string | null;
   riskAllowed: boolean | null;
   riskRejectReason: string | null;
@@ -198,7 +201,8 @@ export default function ScannerPage() {
                 <th>ATR%</th>
                 <th>Fonlama</th>
                 <th>Sinyal</th>
-                <th>Skor</th>
+                <th title="Piyasa kalitesi (trend+hacim+volatilite) — WAIT dahil tüm coinlerde hesaplanır">Piyasa</th>
+                <th title="İşlem güven skoru — sadece yön belirlenen coinlerde anlamlı, 70+ = işlem açılır">İşlem</th>
                 <th>Red Nedeni</th>
                 <th>Açıldı</th>
               </tr>
@@ -229,7 +233,24 @@ export default function ScannerPage() {
                       {r.signalType || "—"}
                     </span>
                   </td>
-                  <td>{fmtNum(r.signalScore, 0)}</td>
+                  <td title={r.scoreReason ?? ""}>
+                    {(r.setupScore ?? 0) > 0 ? (
+                      <span className={`font-semibold ${(r.setupScore ?? 0) >= 70 ? "text-success" : (r.setupScore ?? 0) >= 50 ? "text-warning" : ""}`}>
+                        {r.setupScore}
+                      </span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
+                  <td>
+                    {r.signalScore > 0 ? (
+                      <span className={`text-xs font-medium ${r.signalScore >= 70 ? "text-success" : r.signalScore >= 50 ? "text-warning" : "text-muted"}`}>
+                        {r.signalScore}
+                      </span>
+                    ) : (
+                      <span className="text-muted text-xs">—</span>
+                    )}
+                  </td>
                   <td className="text-xs text-muted max-w-xs truncate">
                     {r.rejectReason ?? r.riskRejectReason ?? "—"}
                   </td>

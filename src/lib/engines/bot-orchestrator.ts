@@ -25,7 +25,10 @@ export interface ScanDetail {
   fundingRate: number;
   orderBookDepth: number;    // USDT — top-10 bid+ask average
   signalType: string;
-  signalScore: number;
+  signalScore: number;       // trade confidence (0 for WAIT / early-exit NO_TRADE)
+  setupScore: number;        // market quality: trend+vol+volatility, >0 whenever indicators are computed
+  scoreType: "signal" | "setup" | "none";  // which score is meaningful to display
+  scoreReason: string;       // brief label for the scanner UI
   rejectReason: string | null;
   riskAllowed: boolean | null;
   riskRejectReason: string | null;
@@ -421,6 +424,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       orderBookDepth: 0,
       signalType: "UNKNOWN",
       signalScore: 0,
+      setupScore: 0,
+      scoreType: "none",
+      scoreReason: "",
       rejectReason: null,
       riskAllowed: null,
       riskRejectReason: null,
@@ -453,6 +459,13 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       const sig = generateSignal({ symbol, timeframe: tf, klines, ticker, funding, btcKlines });
       detail.signalType = sig.signalType;
       detail.signalScore = sig.score;
+      detail.setupScore = sig.setupScore;
+      detail.scoreType = sig.score > 0 ? "signal" : sig.setupScore > 0 ? "setup" : "none";
+      detail.scoreReason = sig.score > 0
+        ? `İşlem skoru (${sig.score}/100)`
+        : sig.setupScore > 0
+          ? `Piyasa kalitesi (${sig.setupScore}/100)`
+          : "Yetersiz veri";
       detail.atrPercent = typeof sig.features.atrPctOfClose === "number" ? sig.features.atrPctOfClose : 0;
 
       // Mark opportunity candidates: score >= 50 (covers near-miss 50-69 and full LONG/SHORT >=70),
