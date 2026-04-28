@@ -30,6 +30,19 @@ interface TickStats {
   dynamicRejectedInsufficientDepth?: number;
 }
 
+type DirectionCandidate = "LONG_CANDIDATE" | "SHORT_CANDIDATE" | "MIXED" | "NONE";
+type WaitReasonCode =
+  | "EMA_ALIGNMENT_MISSING"
+  | "MA_FAST_SLOW_CONFLICT"
+  | "MACD_CONFLICT"
+  | "RSI_NEUTRAL"
+  | "ADX_FLAT"
+  | "VWAP_NOT_CONFIRMED"
+  | "VOLUME_WEAK"
+  | "BOLLINGER_NO_CONFIRMATION"
+  | "ATR_REGIME_UNCLEAR"
+  | "BTC_DIRECTION_CONFLICT";
+
 interface ScanRow {
   symbol: string;
   coinClass?: "CORE" | "DYNAMIC";
@@ -42,6 +55,11 @@ interface ScanRow {
   signalScore: number;
   setupScore?: number;
   marketQualityScore?: number;
+  longSetupScore?: number;
+  shortSetupScore?: number;
+  directionCandidate?: DirectionCandidate;
+  directionConfidence?: number;
+  waitReasonCodes?: WaitReasonCode[] | string[];
   scoreType?: "signal" | "setup" | "none";
   scoreReason?: string;
   rejectReason: string | null;
@@ -49,6 +67,36 @@ interface ScanRow {
   riskRejectReason: string | null;
   opened: boolean;
   opportunityCandidate?: boolean;
+}
+
+const DIRECTION_CANDIDATE_LABEL: Record<DirectionCandidate, string> = {
+  LONG_CANDIDATE: "LONG adayı",
+  SHORT_CANDIDATE: "SHORT adayı",
+  MIXED: "Karışık",
+  NONE: "Yön yok",
+};
+
+const WAIT_REASON_LABEL: Record<string, string> = {
+  EMA_ALIGNMENT_MISSING: "EMA dizilimi eksik",
+  MA_FAST_SLOW_CONFLICT: "MA8/MA55 uyumsuz",
+  MACD_CONFLICT: "MACD uyumsuz",
+  RSI_NEUTRAL: "RSI nötr",
+  ADX_FLAT: "ADX zayıf",
+  VWAP_NOT_CONFIRMED: "VWAP teyit yok",
+  VOLUME_WEAK: "Hacim zayıf",
+  BOLLINGER_NO_CONFIRMATION: "Bollinger teyit yok",
+  ATR_REGIME_UNCLEAR: "ATR rejimi belirsiz",
+  BTC_DIRECTION_CONFLICT: "BTC yönü ters",
+};
+
+function describeWaitReason(row: ScanRow): string {
+  const codes = (row.waitReasonCodes ?? []).map((c) => WAIT_REASON_LABEL[c] ?? c);
+  const cand = row.directionCandidate ?? "NONE";
+  const top = codes.slice(0, 2);
+  if (cand === "LONG_CANDIDATE") return top.length ? `LONG adayı — ${top.join(", ")}` : "LONG adayı, yön teyidi bekleniyor";
+  if (cand === "SHORT_CANDIDATE") return top.length ? `SHORT adayı — ${top.join(", ")}` : "SHORT adayı, yön teyidi bekleniyor";
+  if (cand === "MIXED") return top.length ? `Karışık: ${top.join(", ")}` : "Karışık — yön teyidi bekleniyor";
+  return top.length ? `Yön yok: ${top.join(", ")}` : "Yön teyidi bekleniyor";
 }
 
 interface TickIdentity {
@@ -207,6 +255,7 @@ export default function ScannerPage() {
                 <th>ATR%</th>
                 <th>Fonlama</th>
                 <th>Sinyal</th>
+                <th title="Yön adayı — sadece gözlem/raporlama amaçlı, işlem açma kararını etkilemez">Yön Adayı</th>
                 <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">Kalite</th>
                 <th title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu; WAIT dahil hesaplanır">Fırsat</th>
                 <th title="İşlem güven skoru — 70+ = işlem açılır; sadece yön belirlenen coinlerde anlamlı">İşlem</th>
@@ -241,6 +290,26 @@ export default function ScannerPage() {
                     </span>
                   </td>
                   <td>
+                    {r.directionCandidate ? (
+                      <span
+                        className={`text-xs font-medium ${
+                          r.directionCandidate === "LONG_CANDIDATE" ? "text-success" :
+                          r.directionCandidate === "SHORT_CANDIDATE" ? "text-danger" :
+                          r.directionCandidate === "MIXED" ? "text-warning" : "text-muted"
+                        }`}
+                        title={
+                          (r.longSetupScore !== undefined || r.shortSetupScore !== undefined)
+                            ? `LONG: ${r.longSetupScore ?? 0} / SHORT: ${r.shortSetupScore ?? 0} · güven ${r.directionConfidence ?? 0}`
+                            : undefined
+                        }
+                      >
+                        {DIRECTION_CANDIDATE_LABEL[r.directionCandidate]}
+                      </span>
+                    ) : (
+                      <span className="text-muted text-xs">—</span>
+                    )}
+                  </td>
+                  <td>
                     {(r.marketQualityScore ?? 0) > 0 ? (
                       <span className={`text-xs font-medium ${(r.marketQualityScore ?? 0) >= 70 ? "text-success" : (r.marketQualityScore ?? 0) >= 50 ? "text-warning" : "text-muted"}`}>
                         {r.marketQualityScore}
@@ -267,8 +336,16 @@ export default function ScannerPage() {
                       <span className="text-muted text-xs">—</span>
                     )}
                   </td>
-                  <td className="text-xs text-muted max-w-xs truncate">
-                    {r.rejectReason ?? r.riskRejectReason ?? "—"}
+                  <td className="text-xs text-muted max-w-xs truncate"
+                    title={
+                      r.signalType === "WAIT"
+                        ? describeWaitReason(r)
+                        : (r.rejectReason ?? r.riskRejectReason ?? "")
+                    }
+                  >
+                    {r.signalType === "WAIT"
+                      ? describeWaitReason(r)
+                      : (r.rejectReason ?? r.riskRejectReason ?? "—")}
                   </td>
                   <td>
                     {r.opened

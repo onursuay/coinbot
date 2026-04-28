@@ -13,6 +13,27 @@ import {
 
 export type SignalType = "LONG" | "SHORT" | "WAIT" | "EXIT_LONG" | "EXIT_SHORT" | "NO_TRADE";
 
+// Direction explainability — observation-only, never gates trade opening.
+// LONG_CANDIDATE / SHORT_CANDIDATE: directional bias is clearly leaning one way.
+// MIXED: both sides have non-trivial scores, no clear lean.
+// NONE: neither side accumulated meaningful score (flat / pre-indicator).
+export type DirectionCandidate = "LONG_CANDIDATE" | "SHORT_CANDIDATE" | "MIXED" | "NONE";
+
+// Granular WAIT/no-direction sub-reasons. Surfaced in scan_details so the
+// dashboard can explain why a coin stayed WAIT instead of the generic
+// "Trend/momentum belirsiz" message. Diagnostic only — does not affect trade logic.
+export type WaitReasonCode =
+  | "EMA_ALIGNMENT_MISSING"
+  | "MA_FAST_SLOW_CONFLICT"
+  | "MACD_CONFLICT"
+  | "RSI_NEUTRAL"
+  | "ADX_FLAT"
+  | "VWAP_NOT_CONFIRMED"
+  | "VOLUME_WEAK"
+  | "BOLLINGER_NO_CONFIRMATION"
+  | "ATR_REGIME_UNCLEAR"
+  | "BTC_DIRECTION_CONFLICT";
+
 export interface SignalContext {
   symbol: string;
   timeframe: Timeframe;
@@ -29,6 +50,13 @@ export interface SignalResult {
   score: number;              // trade confidence — 0 for WAIT / early-exit NO_TRADE (= tradeSignalScore)
   setupScore: number;         // opportunity quality (10-component), >0 whenever indicators computed
   marketQualityScore: number; // coin tradability quality (volume/spread/ATR/funding/data)
+  // Direction explainability — informational only, NEVER used as a trade-open gate.
+  // signalType / score remain the only fields that decide whether a trade is opened.
+  longSetupScore: number;          // 0-100 bull-side hypothesis strength
+  shortSetupScore: number;         // 0-100 bear-side hypothesis strength
+  directionCandidate: DirectionCandidate;
+  directionConfidence: number;     // 0-100 normalised lead margin between long/short setups
+  waitReasonCodes: WaitReasonCode[];
   entryPrice: number | null;
   stopLoss: number | null;
   takeProfit: number | null;
@@ -39,7 +67,7 @@ export interface SignalResult {
   // Allows orchestrator to log near-miss signals without opening a trade.
   nearMissDirection?: "LONG" | "SHORT";
   // Always populated — scanner depends on these even for NO_TRADE returns.
-  features: Record<string, number | string | boolean | null>;
+  features: Record<string, number | string | boolean | null | string[]>;
 }
 
 const MAX_SPREAD_FRACTION = 0.0015; // 15 bps cap
@@ -50,7 +78,7 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   const { symbol, timeframe, klines, ticker, funding, btcKlines } = ctx;
 
   // ── Baseline features — populated incrementally, returned in every path ──
-  const features: Record<string, number | string | boolean | null> = {
+  const features: Record<string, number | string | boolean | null | string[]> = {
     candleCount: klines.length,
     lastCandleTime: klines.at(-1)?.closeTime ?? null,
     indicatorStatus: "pending",
@@ -62,6 +90,13 @@ export function generateSignal(ctx: SignalContext): SignalResult {
     // For pre-indicator exits (insufficient candles, EMA fail) these are 0.
     setupScore: typeof features.setupScore === "number" ? (features.setupScore as number) : 0,
     marketQualityScore: typeof features.marketQualityScore === "number" ? (features.marketQualityScore as number) : 0,
+    longSetupScore: typeof features.longSetupScore === "number" ? (features.longSetupScore as number) : 0,
+    shortSetupScore: typeof features.shortSetupScore === "number" ? (features.shortSetupScore as number) : 0,
+    directionCandidate: (typeof features.directionCandidate === "string"
+      ? features.directionCandidate as DirectionCandidate
+      : "NONE"),
+    directionConfidence: typeof features.directionConfidence === "number" ? (features.directionConfidence as number) : 0,
+    waitReasonCodes: Array.isArray((features as any).waitReasonCodes) ? ((features as any).waitReasonCodes as WaitReasonCode[]) : [],
     entryPrice: null, stopLoss: null, takeProfit: null, riskRewardRatio: null,
     reasons: [reason], rejectedReason: kind === "NO_TRADE" ? reason : undefined,
     features: { ...features },
@@ -362,6 +397,36 @@ export function generateSignal(ctx: SignalContext): SignalResult {
     // Capped at 85: orchestrator can add up to 15pts for order book depth to reach 100
   }
 
+  // ── BTC trend reference (computed early so directional scoring can include it) ──
+  // The reasons[] push is deferred until after the WAIT branch, so existing user-facing
+  // text ordering is preserved.
+  let btcUp: boolean | null = null;
+  if (btcKlines && btcKlines.length >= 60) {
+    const bc = btcKlines.map((k) => k.close);
+    const be20 = ema(bc, 20).at(-1) ?? NaN;
+    const be50 = ema(bc, 50).at(-1) ?? NaN;
+    if (Number.isFinite(be20) && Number.isFinite(be50)) {
+      btcUp = be20 >= be50;
+      features.btcUp = btcUp;
+    }
+  }
+
+  // ── Direction explainability — long/short setup hypotheses + WAIT reason codes ──
+  // Diagnostic-only: these scores describe which side the indicator stack leans towards.
+  // They NEVER gate trade opening; the LONG/SHORT bias check below is the real gate.
+  const dirExp = computeDirectionExplainability({
+    last, e20, e50, e200, ma8: ma8Val, ma55: ma55Val,
+    macdHist, rsi: r,
+    bbBreakoutUp, bbBreakoutDown, bbMiddle, bbPosition,
+    adxVal, vwapVal, priceAboveVwap,
+    volumeImpulse, atrPctileVal, btcUp,
+  });
+  features.longSetupScore = dirExp.longSetupScore;
+  features.shortSetupScore = dirExp.shortSetupScore;
+  features.directionCandidate = dirExp.directionCandidate;
+  features.directionConfidence = dirExp.directionConfidence;
+  features.waitReasonCodes = dirExp.waitReasonCodes;
+
   // ── Spread filter ──
   if (ticker.spread > MAX_SPREAD_FRACTION) {
     return earlyExit("NO_TRADE", `Spread çok yüksek (${(ticker.spread * 100).toFixed(3)}%) — max ${(MAX_SPREAD_FRACTION * 100).toFixed(1)}bps`);
@@ -383,20 +448,15 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   const reasons: string[] = [];
   if (wickAnom) reasons.push("Son mumda anormal iğne (uyarı)");
 
-  // ── BTC trend reference ──
-  let btcUp: boolean | null = null;
-  if (btcKlines && btcKlines.length >= 60) {
-    const bc = btcKlines.map((k) => k.close);
-    const be20 = ema(bc, 20).at(-1) ?? NaN;
-    const be50 = ema(bc, 50).at(-1) ?? NaN;
-    if (Number.isFinite(be20) && Number.isFinite(be50)) {
-      btcUp = be20 >= be50;
-      reasons.push(`BTC trend ${btcUp ? "pozitif" : "negatif"} (EMA20 vs EMA50)`);
-      features.btcUp = btcUp;
-    }
+  // BTC trend reference text is appended once direction/no-direction is known so the
+  // ordering matches the previous output (BTC line came right before direction text).
+  if (btcUp !== null) {
+    reasons.push(`BTC trend ${btcUp ? "pozitif" : "negatif"} (EMA20 vs EMA50)`);
   }
 
   // ── Direction determination ──
+  // Strict AND-gate that has always governed real trade-opening — UNCHANGED.
+  // The new long/short setup scores feed scan diagnostics only and never replace this.
   const rsiOk = Number.isFinite(r);
   const longBias =
     last > e50 && e20 > e50 &&
@@ -409,10 +469,14 @@ export function generateSignal(ctx: SignalContext): SignalResult {
 
   if (!longBias && !shortBias) {
     const why = buildNoDirectionReason(last, e20, e50, macdHist, r, rsiOk);
-    return { ...earlyExit("WAIT", `Trend/momentum belirsiz — ${why}`), signalType: "WAIT" };
+    const dirText = buildDirectionWaitText(dirExp);
+    return { ...earlyExit("WAIT", `${dirText} — ${why}`), signalType: "WAIT" };
   }
 
   const direction: "LONG" | "SHORT" = longBias ? "LONG" : "SHORT";
+
+  // Direction firing — no longer "waiting"; keep features in sync with returned object.
+  features.waitReasonCodes = [];
 
   // ── BTC alignment veto ──
   if (btcUp !== null) {
@@ -502,6 +566,11 @@ export function generateSignal(ctx: SignalContext): SignalResult {
       symbol, timeframe, signalType: "NO_TRADE", score,
       setupScore,
       marketQualityScore: mqs,
+      longSetupScore: dirExp.longSetupScore,
+      shortSetupScore: dirExp.shortSetupScore,
+      directionCandidate: dirExp.directionCandidate,
+      directionConfidence: dirExp.directionConfidence,
+      waitReasonCodes: dirExp.waitReasonCodes,
       entryPrice: last, stopLoss: stop, takeProfit: take, riskRewardRatio: rr,
       reasons,
       rejectedReason: `Sinyal skoru düşük (${score}/100 < 70)`,
@@ -515,6 +584,12 @@ export function generateSignal(ctx: SignalContext): SignalResult {
     symbol, timeframe, signalType: direction, score,
     setupScore,
     marketQualityScore: mqs,
+    longSetupScore: dirExp.longSetupScore,
+    shortSetupScore: dirExp.shortSetupScore,
+    directionCandidate: dirExp.directionCandidate,
+    directionConfidence: dirExp.directionConfidence,
+    // For a fired LONG/SHORT signal we keep waitReasonCodes empty — there is no "waiting".
+    waitReasonCodes: [],
     entryPrice: last, stopLoss: stop, takeProfit: take, riskRewardRatio: rr,
     reasons, features: { ...features },
   };
@@ -538,4 +613,255 @@ function buildNoDirectionReason(
     else parts.push(`RSI=${r.toFixed(0)}`);
   }
   return parts.join(", ") || "yeterli koşul yok";
+}
+
+// ── Direction explainability helpers ───────────────────────────────────────────
+// Compute long/short setup scores + WAIT reason codes from the same indicator
+// stack the trade engine already evaluates. These are observation outputs only —
+// they NEVER substitute for the strict longBias/shortBias AND-gate that opens
+// real trades. Keeping them as a separate function makes the diagnostic intent
+// explicit and easy to test.
+
+interface DirExplainability {
+  longSetupScore: number;
+  shortSetupScore: number;
+  directionCandidate: DirectionCandidate;
+  directionConfidence: number;
+  waitReasonCodes: WaitReasonCode[];
+}
+
+interface DirInputs {
+  last: number;
+  e20: number; e50: number; e200: number;
+  ma8: number; ma55: number;
+  macdHist: number;
+  rsi: number;
+  bbBreakoutUp: boolean; bbBreakoutDown: boolean;
+  bbMiddle: number; bbPosition: number;
+  adxVal: number;
+  vwapVal: number; priceAboveVwap: boolean | null;
+  volumeImpulse: number;
+  atrPctileVal: number;
+  btcUp: boolean | null;
+}
+
+function clamp01_100(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function computeDirectionExplainability(p: DirInputs): DirExplainability {
+  let lng = 0;
+  let sht = 0;
+
+  // 1. EMA alignment (15) + price-vs-EMA50 (10) = 25 total
+  if (Number.isFinite(p.e20) && Number.isFinite(p.e50) && Number.isFinite(p.e200)) {
+    if (p.e20 > p.e50 && p.e50 > p.e200) lng += 15;
+    else if (p.e20 < p.e50 && p.e50 < p.e200) sht += 15;
+    else if (p.e20 > p.e50) lng += 8;
+    else if (p.e20 < p.e50) sht += 8;
+    if (p.last > p.e50) lng += 10;
+    else if (p.last < p.e50) sht += 10;
+  }
+
+  // 2. MA8 / MA55 short-mid trend alignment (12)
+  if (Number.isFinite(p.ma8) && Number.isFinite(p.ma55)) {
+    if (p.ma8 > p.ma55 && p.last > p.ma8) lng += 12;
+    else if (p.ma8 < p.ma55 && p.last < p.ma8) sht += 12;
+    else if (p.ma8 > p.ma55) lng += 6;
+    else if (p.ma8 < p.ma55) sht += 6;
+  }
+
+  // 3. MACD histogram (12)
+  if (Number.isFinite(p.macdHist)) {
+    if (p.macdHist > 0) lng += 12;
+    else if (p.macdHist < 0) sht += 12;
+  }
+
+  // 4. RSI (8) — neutral zones reward both sides slightly; extremes penalise the trend side
+  if (Number.isFinite(p.rsi)) {
+    if (p.rsi >= 50 && p.rsi <= 65) lng += 8;
+    else if (p.rsi >= 40 && p.rsi <= 55) { lng += 4; sht += 4; }
+    else if (p.rsi >= 35 && p.rsi <= 50) sht += 8;
+    else if (p.rsi > 70) sht += 4;       // overbought: bull exhaustion
+    else if (p.rsi < 30) lng += 4;       // oversold: bounce candidate
+  }
+
+  // 5. Bollinger (10)
+  if (p.bbBreakoutUp && Number.isFinite(p.volumeImpulse) && p.volumeImpulse >= 1.3) lng += 10;
+  else if (p.bbBreakoutDown && Number.isFinite(p.volumeImpulse) && p.volumeImpulse >= 1.3) sht += 10;
+  else if (p.bbBreakoutUp) lng += 6;
+  else if (p.bbBreakoutDown) sht += 6;
+  else if (Number.isFinite(p.bbMiddle) && p.last > p.bbMiddle) lng += 4;
+  else if (Number.isFinite(p.bbMiddle) && p.last < p.bbMiddle) sht += 4;
+
+  // 6. ADX (8) — amplifies whichever side is currently leading
+  if (Number.isFinite(p.adxVal)) {
+    const lead = lng - sht;
+    if (p.adxVal >= 25) {
+      if (lead > 0) lng += 8;
+      else if (lead < 0) sht += 8;
+      else { lng += 3; sht += 3; }
+    } else if (p.adxVal >= 20) {
+      if (lead > 0) lng += 5;
+      else if (lead < 0) sht += 5;
+    } else if (p.adxVal >= 15) {
+      lng += 2; sht += 2;
+    }
+  }
+
+  // 7. VWAP (8)
+  if (p.priceAboveVwap === true) lng += 8;
+  else if (p.priceAboveVwap === false) sht += 8;
+
+  // 8. Volume impulse (10) — supports the leading side
+  if (Number.isFinite(p.volumeImpulse)) {
+    const lead = lng - sht;
+    if (p.volumeImpulse >= 1.5) {
+      if (lead > 0) lng += 10;
+      else if (lead < 0) sht += 10;
+      else { lng += 4; sht += 4; }
+    } else if (p.volumeImpulse >= 1.1) {
+      if (lead > 0) lng += 6;
+      else if (lead < 0) sht += 6;
+    } else if (p.volumeImpulse >= 0.8) {
+      lng += 2; sht += 2;
+    }
+  }
+
+  // 9. BTC trend (5)
+  if (p.btcUp === true) lng += 5;
+  else if (p.btcUp === false) sht += 5;
+
+  const longSetupScore = clamp01_100(lng);
+  const shortSetupScore = clamp01_100(sht);
+
+  // ── directionCandidate / directionConfidence ──
+  // LONG_CANDIDATE: long score clearly leads (>=15 lead) and is meaningful (>=40).
+  // SHORT_CANDIDATE: mirror.
+  // MIXED: both sides have non-trivial scores (>=30 each) but neither dominates.
+  // NONE: neither side reached a meaningful score (<30 both).
+  let directionCandidate: DirectionCandidate;
+  const lead = longSetupScore - shortSetupScore;
+  const top = Math.max(longSetupScore, shortSetupScore);
+  const bottom = Math.min(longSetupScore, shortSetupScore);
+  if (top < 30) {
+    directionCandidate = "NONE";
+  } else if (lead >= 15 && longSetupScore >= 40) {
+    directionCandidate = "LONG_CANDIDATE";
+  } else if (-lead >= 15 && shortSetupScore >= 40) {
+    directionCandidate = "SHORT_CANDIDATE";
+  } else if (bottom >= 30) {
+    directionCandidate = "MIXED";
+  } else if (longSetupScore >= 40) {
+    directionCandidate = "LONG_CANDIDATE";
+  } else if (shortSetupScore >= 40) {
+    directionCandidate = "SHORT_CANDIDATE";
+  } else {
+    directionCandidate = "MIXED";
+  }
+  // Confidence: normalised lead margin clamped to 0-100. With top in [0,100],
+  // |lead| in [0,100] — division stays sane.
+  const directionConfidence = top > 0 ? clamp01_100((Math.abs(lead) / top) * 100) : 0;
+
+  // ── waitReasonCodes ──
+  // Always at least one code if the dominant indicator stack failed to converge.
+  // Codes are evaluated relative to the leading candidate; for MIXED/NONE we
+  // still report the structural gaps so the dashboard can explain the pause.
+  const codes: WaitReasonCode[] = [];
+  const want: "LONG" | "SHORT" | null =
+    directionCandidate === "LONG_CANDIDATE" ? "LONG" :
+    directionCandidate === "SHORT_CANDIDATE" ? "SHORT" : null;
+
+  // EMA alignment missing — neither stack is fully aligned with the candidate side
+  if (Number.isFinite(p.e20) && Number.isFinite(p.e50) && Number.isFinite(p.e200)) {
+    const bullStack = p.e20 > p.e50 && p.e50 > p.e200 && p.last > p.e50;
+    const bearStack = p.e20 < p.e50 && p.e50 < p.e200 && p.last < p.e50;
+    if (want === "LONG" && !bullStack) codes.push("EMA_ALIGNMENT_MISSING");
+    else if (want === "SHORT" && !bearStack) codes.push("EMA_ALIGNMENT_MISSING");
+    else if (!want && !bullStack && !bearStack) codes.push("EMA_ALIGNMENT_MISSING");
+  }
+
+  // MA8/MA55 conflict with the candidate side
+  if (Number.isFinite(p.ma8) && Number.isFinite(p.ma55)) {
+    if (want === "LONG" && !(p.ma8 > p.ma55 && p.last > p.ma8)) codes.push("MA_FAST_SLOW_CONFLICT");
+    else if (want === "SHORT" && !(p.ma8 < p.ma55 && p.last < p.ma8)) codes.push("MA_FAST_SLOW_CONFLICT");
+    else if (!want && (p.ma8 > p.ma55) === (p.last > p.ma8)) {
+      // mixed: only report when ma8 vs price disagree with ma8 vs ma55
+      // (handled above for the want path; no additional push for the !want true case)
+    }
+  }
+
+  // MACD conflict
+  if (Number.isFinite(p.macdHist)) {
+    if (want === "LONG" && p.macdHist <= 0) codes.push("MACD_CONFLICT");
+    else if (want === "SHORT" && p.macdHist >= 0) codes.push("MACD_CONFLICT");
+    else if (!want && Math.abs(p.macdHist) < 1e-9) codes.push("MACD_CONFLICT");
+  }
+
+  // RSI neutral / extreme
+  if (Number.isFinite(p.rsi)) {
+    if (p.rsi >= 45 && p.rsi <= 55) codes.push("RSI_NEUTRAL");
+    else if (want === "LONG" && p.rsi > 70) codes.push("RSI_NEUTRAL");
+    else if (want === "SHORT" && p.rsi < 30) codes.push("RSI_NEUTRAL");
+  }
+
+  // ADX flat
+  if (Number.isFinite(p.adxVal) && p.adxVal < 20) codes.push("ADX_FLAT");
+
+  // VWAP not confirmed for the candidate side
+  if (p.priceAboveVwap !== null) {
+    if (want === "LONG" && p.priceAboveVwap === false) codes.push("VWAP_NOT_CONFIRMED");
+    else if (want === "SHORT" && p.priceAboveVwap === true) codes.push("VWAP_NOT_CONFIRMED");
+  }
+
+  // Weak volume
+  if (Number.isFinite(p.volumeImpulse) && p.volumeImpulse < 1.0) codes.push("VOLUME_WEAK");
+
+  // Bollinger no confirmation — no breakout in the candidate side direction
+  if (want === "LONG" && !p.bbBreakoutUp) codes.push("BOLLINGER_NO_CONFIRMATION");
+  else if (want === "SHORT" && !p.bbBreakoutDown) codes.push("BOLLINGER_NO_CONFIRMATION");
+  else if (!want && !p.bbBreakoutUp && !p.bbBreakoutDown) codes.push("BOLLINGER_NO_CONFIRMATION");
+
+  // ATR regime unclear (extreme low or high percentile)
+  if (Number.isFinite(p.atrPctileVal) && (p.atrPctileVal < 10 || p.atrPctileVal > 90)) {
+    codes.push("ATR_REGIME_UNCLEAR");
+  }
+
+  // BTC direction conflict
+  if (p.btcUp !== null) {
+    if (want === "LONG" && p.btcUp === false) codes.push("BTC_DIRECTION_CONFLICT");
+    else if (want === "SHORT" && p.btcUp === true) codes.push("BTC_DIRECTION_CONFLICT");
+  }
+
+  return { longSetupScore, shortSetupScore, directionCandidate, directionConfidence, waitReasonCodes: codes };
+}
+
+// ── User-facing WAIT message builder ──
+// Replaces the generic "Trend/momentum belirsiz" with a richer line that names the
+// direction lean and the top blocking sub-reasons.
+function buildDirectionWaitText(d: DirExplainability): string {
+  const codeLabels: Record<WaitReasonCode, string> = {
+    EMA_ALIGNMENT_MISSING: "EMA dizilimi eksik",
+    MA_FAST_SLOW_CONFLICT: "MA8/MA55 uyumsuz",
+    MACD_CONFLICT: "MACD uyumsuz",
+    RSI_NEUTRAL: "RSI nötr",
+    ADX_FLAT: "ADX zayıf",
+    VWAP_NOT_CONFIRMED: "VWAP teyit yok",
+    VOLUME_WEAK: "hacim zayıf",
+    BOLLINGER_NO_CONFIRMATION: "Bollinger teyit yok",
+    ATR_REGIME_UNCLEAR: "ATR rejimi belirsiz",
+    BTC_DIRECTION_CONFLICT: "BTC yönü ters",
+  };
+  const top = d.waitReasonCodes.slice(0, 2).map((c) => codeLabels[c]).filter(Boolean);
+  if (d.directionCandidate === "LONG_CANDIDATE") {
+    return top.length > 0 ? `LONG adayı ama ${top.join(", ")}` : "LONG adayı, yön teyidi bekleniyor";
+  }
+  if (d.directionCandidate === "SHORT_CANDIDATE") {
+    return top.length > 0 ? `SHORT adayı ama ${top.join(", ")}` : "SHORT adayı, yön teyidi bekleniyor";
+  }
+  if (d.directionCandidate === "MIXED") {
+    return top.length > 0 ? `Yön karışık: ${top.join(", ")}` : "Yön karışık, teyit bekleniyor";
+  }
+  return top.length > 0 ? `Yön yok: ${top.join(", ")}` : "Yön teyidi bekleniyor";
 }

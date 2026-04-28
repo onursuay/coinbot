@@ -76,6 +76,12 @@ export interface ScanDetail {
   signalScore: number;
   setupScore: number;           // opportunity quality (10-component), >0 whenever indicators computed
   marketQualityScore: number;   // coin tradability quality (volume/spread/depth/ATR/funding)
+  // Direction explainability — observation-only, never gates trades.
+  longSetupScore?: number;
+  shortSetupScore?: number;
+  directionCandidate?: "LONG_CANDIDATE" | "SHORT_CANDIDATE" | "MIXED" | "NONE";
+  directionConfidence?: number;
+  waitReasonCodes?: string[];
   scoreType: "signal" | "setup" | "none";  // which score is meaningful to display
   scoreReason: string;          // brief label for the scanner UI
   rejectReason: string | null;
@@ -560,6 +566,11 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       signalScore: 0,
       setupScore: 0,
       marketQualityScore: 0,
+      longSetupScore: 0,
+      shortSetupScore: 0,
+      directionCandidate: "NONE",
+      directionConfidence: 0,
+      waitReasonCodes: [],
       scoreType: "none",
       scoreReason: "",
       rejectReason: null,
@@ -596,6 +607,12 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       detail.tradeSignalScore = sig.score;
       detail.signalScore = sig.score;
       detail.setupScore = sig.setupScore;
+      // Direction explainability — diagnostic mirror of signal-engine output.
+      detail.longSetupScore = sig.longSetupScore;
+      detail.shortSetupScore = sig.shortSetupScore;
+      detail.directionCandidate = sig.directionCandidate;
+      detail.directionConfidence = sig.directionConfidence;
+      detail.waitReasonCodes = sig.waitReasonCodes;
       detail.scoreType = sig.score > 0 ? "signal" : sig.setupScore > 0 ? "setup" : "none";
       detail.scoreReason = sig.score > 0
         ? `İşlem skoru (${sig.score}/100)`
