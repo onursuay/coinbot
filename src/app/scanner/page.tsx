@@ -74,7 +74,6 @@ function fmtTime(iso: string | null): string {
 export default function ScannerPage() {
   const [data, setData] = useState<DiagData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -82,7 +81,6 @@ export default function ScannerPage() {
       const res = await fetch("/api/bot/diagnostics", { cache: "no-store" }).then((r) => r.json());
       if (res.ok && res.data) {
         setData(res.data);
-        setLastRefresh(new Date());
       }
     } finally {
       setLoading(false);
@@ -94,83 +92,65 @@ export default function ScannerPage() {
   const stats = data?.tick_stats;
   const rows = data?.scan_details ?? [];
   const exchange = data?.active_exchange ?? "binance";
-  const workerOnline = data?.worker_health?.online ?? false;
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold">Piyasa Tarayıcı</h1>
-          <p className="text-xs text-muted mt-0.5">
-            Tarama VPS worker tarafından otomatik yapılır. Bu buton sadece son tarama verilerini yeniler.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 text-xs text-muted">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-            <span>Otomatik yenileme: Açık</span>
-            {lastRefresh && (
-              <span className="ml-1">· Son güncelleme: {lastRefresh.toLocaleTimeString("tr-TR")}</span>
-            )}
-          </div>
-          <span className={`tag ${workerOnline ? "tag-success" : "tag-danger"}`}>
-            {workerOnline ? "SUNUCU BOT ÇEVRİMİÇİ" : "SUNUCU BOT ÇEVRİMDIŞI"}
-          </span>
-          <span className="tag-muted">{exchange.toUpperCase()}</span>
-          {data?.last_tick_at && (
-            <span className="text-xs text-muted">Son tick: {fmtTime(data.last_tick_at)}</span>
-          )}
-          <button
-            className="btn-primary whitespace-nowrap px-4"
-            onClick={refresh}
-            disabled={loading}
-          >
-            {loading ? "Yükleniyor..." : "Verileri Yenile"}
-          </button>
-        </div>
-      </div>
-
       {/* Stats bar */}
       {stats && (
-        <div className="card grid grid-cols-4 gap-3 sm:grid-cols-9 text-center py-2">
-          <div>
-            <div className="text-xs text-muted">Universe</div>
-            <div className="font-semibold tabular-nums">{stats.universe}</div>
-          </div>
-          <div>
-            <div className="text-xs text-muted">Ön Eleme</div>
-            <div className="font-semibold tabular-nums">{stats.prefiltered}</div>
-          </div>
-          <div>
-            <div className="text-xs text-muted">Hacim Filtresi</div>
-            <div className="font-semibold tabular-nums text-muted">{stats.lowVolumeRejected ?? 0}</div>
-          </div>
-          <div>
-            <div className="text-xs text-muted">Analiz</div>
-            <div className="font-semibold tabular-nums">{stats.scanned}</div>
-          </div>
-          <div>
-            <div className="text-xs text-success">Sinyal</div>
-            <div className="font-semibold tabular-nums text-success">{stats.signals}</div>
-          </div>
-          <div>
-            <div className="text-xs text-muted">Reddedilen</div>
-            <div className="font-semibold tabular-nums">{stats.rejected}</div>
-          </div>
-          <div>
-            <div className="text-xs text-accent">Açılan</div>
-            <div className="font-semibold tabular-nums text-accent">{stats.opened}</div>
-          </div>
-          <div>
-            <div className="text-xs text-danger">Hata</div>
-            <div className={`font-semibold tabular-nums ${stats.errors > 0 ? "text-danger" : ""}`}>
-              {stats.errors}
+        <div className="card py-2 relative">
+          <div className="flex items-center justify-between mb-2 px-1">
+            <div className="flex items-center gap-2 text-xs text-muted">
+              {data?.last_tick_at && (
+                <span>Son tick: {fmtTime(data.last_tick_at)}</span>
+              )}
             </div>
+            <button
+              className="btn-secondary text-xs px-3 py-1"
+              onClick={refresh}
+              disabled={loading}
+            >
+              {loading ? "Yükleniyor..." : "Yenile"}
+            </button>
           </div>
-          <div>
-            <div className="text-xs text-muted">Süre</div>
-            <div className="font-semibold tabular-nums">{stats.durationMs}ms</div>
+          <div className="grid grid-cols-4 gap-3 sm:grid-cols-9 text-center">
+            <div>
+              <div className="text-xs text-muted">Universe</div>
+              <div className="font-semibold tabular-nums">{stats.universe}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted">Ön Eleme</div>
+              <div className="font-semibold tabular-nums">{stats.prefiltered}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted">Hacim Filtresi</div>
+              <div className="font-semibold tabular-nums text-muted">{stats.lowVolumeRejected ?? 0}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted">Analiz</div>
+              <div className="font-semibold tabular-nums">{stats.scanned}</div>
+            </div>
+            <div>
+              <div className="text-xs text-success">Sinyal</div>
+              <div className="font-semibold tabular-nums text-success">{stats.signals}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted">Reddedilen</div>
+              <div className="font-semibold tabular-nums">{stats.rejected}</div>
+            </div>
+            <div>
+              <div className="text-xs text-accent">Açılan</div>
+              <div className="font-semibold tabular-nums text-accent">{stats.opened}</div>
+            </div>
+            <div>
+              <div className="text-xs text-danger">Hata</div>
+              <div className={`font-semibold tabular-nums ${stats.errors > 0 ? "text-danger" : ""}`}>
+                {stats.errors}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-muted">Süre</div>
+              <div className="font-semibold tabular-nums">{stats.durationMs}ms</div>
+            </div>
           </div>
         </div>
       )}
