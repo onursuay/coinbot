@@ -1,13 +1,14 @@
 # CoinBot — Project Instructions
 
-## Her kod değişikliğinden sonra otomatik yapılacaklar
+## Her işlem sonrasında otomatik yapılacaklar
 
-Kullanıcı bir task verdiğinde ve kodda değişiklik yapıldıysa (typecheck/build/test
-yeşil olduktan sonra), **kullanıcı ayrıca istemese bile** şu üç adımı sırayla uygula:
+**Her görev tamamlandığında** (kod değişikliği içersin ya da içermesin),
+kullanıcı ayrıca istemese bile şu adımları sırayla uygula:
 
 1. **Commit** — değişen dosyaları stage et, anlamlı bir commit mesajı yaz.
-2. **Push** — `git push origin main`. Bu adım otomatik olarak GitHub Actions
-   `Deploy Worker` workflow'unu tetikler.
+2. **Push + GitHub Actions tetikle** — `git push origin main`.
+   Push, GitHub Actions `Deploy Worker` workflow'unu otomatik tetikler;
+   VPS'te worker yeniden deploy edilir.
 3. **VPS deploy doğrulaması** — `gh run watch <run-id> --exit-status` ile
    workflow'u sonuna kadar izle, başarılı bittiğini ve heartbeat verification
    adımının `online:true, status:running_paper` döndüğünü doğrula.
