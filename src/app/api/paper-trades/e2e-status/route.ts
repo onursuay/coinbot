@@ -34,11 +34,11 @@ export async function GET(): Promise<Response> {
   const hardLive = isHardLiveAllowed();
   checks.push({
     name: "hard_live_gate_off",
-    label: "Canlı trading engeli aktif",
+    label: "Canlı işlem engeli",
     ok: !hardLive,
     detail: hardLive
-      ? "UYARI: HARD_LIVE_TRADING_ALLOWED=true — gerçek emir açılabilir!"
-      : "HARD_LIVE_TRADING_ALLOWED=false — güvenli",
+      ? "UYARI: Canlı işlem engeli kapalı — gerçek emir açılabilir!"
+      : "Canlı işlem kapalı — güvenli",
   });
 
   if (!supabaseConfigured()) {
@@ -76,8 +76,8 @@ export async function GET(): Promise<Response> {
     label: "Gerçek emir gönderilmiyor",
     ok: !enableLive,
     detail: enableLive
-      ? "UYARI: enable_live_trading=true — gerçek emir açık!"
-      : "enable_live_trading=false — gerçek emir gönderilmiyor",
+      ? "UYARI: Canlı işlem aktif — gerçek emir açık!"
+      : "Gerçek emir gönderilmedi",
   });
 
   // ── Check 4: at least 1 paper trade exists ──────────────────────────────────
@@ -89,7 +89,7 @@ export async function GET(): Promise<Response> {
   const hasTrades = (totalCount ?? 0) > 0;
   checks.push({
     name: "first_trade_opened",
-    label: "İlk paper trade açıldı",
+    label: "İlk sanal işlem açıldı",
     ok: hasTrades,
     detail: hasTrades
       ? `Toplam ${totalCount} paper trade kaydı mevcut`

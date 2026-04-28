@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fmtNum, fmtPct, fmtUsd } from "@/lib/format";
+import { getTopOpportunities } from "@/lib/top-opportunities";
 
 interface TickResult {
   ok: boolean;
@@ -76,7 +77,7 @@ export default function HomePage() {
     const [a, b, c, d, e, f, g, h, i, j] = await Promise.all([
       fetch("/api/bot/status", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/performance", noCache).then((r) => r.json()).catch(() => null),
-      fetch("/api/signals?limit=10", noCache).then((r) => r.json()).catch(() => null),
+      fetch("/api/signals?limit=5", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades?limit=20", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/system/env-check", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/heartbeat", noCache).then((r) => r.json()).catch(() => null),
@@ -345,6 +346,9 @@ export default function HomePage() {
       {/* ===== Dinamik Evren Özeti ===== */}
       <DynamicUniverseCard diagnostics={diagnostics} />
 
+      {/* ===== Fırsata En Yakın 5 Coin ===== */}
+      <TopOpportunityCard diagnostics={diagnostics} />
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Kpi label="Günlük Kâr/Zarar" value={fmtUsd(daily?.realizedPnlUsd ?? 0)} accent={(daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
         <Kpi label="Günlük Hedef" value={fmtUsd(daily?.dailyTargetUsd ?? 20)} sub={daily?.targetHit ? "Hedef tamam!" : `Kalan ${fmtUsd(distance)}`} />
@@ -381,9 +385,6 @@ export default function HomePage() {
           )}
         </div>
       )}
-
-      {/* ===== Live Readiness ===== */}
-      <LiveReadinessCard readiness={liveReadiness} />
 
       {/* Paper Trade E2E Validation */}
       <PaperE2ECard e2e={e2eStatus} />
@@ -489,13 +490,15 @@ export default function HomePage() {
           className="text-xs text-muted hover:text-accent w-full text-left flex items-center justify-between"
           onClick={() => setDebugOpen((v) => !v)}
         >
-          <span>Debug {debugOpen ? "▾" : "▸"}</span>
+          <span>Gelişmiş / Debug {debugOpen ? "▾" : "▸"}</span>
           <span className="text-muted">
             {(status?.debug?.botStatus ?? "—").toString().toUpperCase()} • src:{status?.debug?.source ?? "—"} • row:{status?.debug?.hasSettingsRow ? "yes" : "no"}
           </span>
         </button>
         {debugOpen && (
-          <pre className="text-xs text-muted bg-bg-soft border border-border rounded-lg p-3 mt-2 overflow-x-auto">
+          <div className="mt-3 space-y-3">
+            <LiveReadinessCard readiness={liveReadiness} />
+            <pre className="text-xs text-muted bg-bg-soft border border-border rounded-lg p-3 overflow-x-auto">
 {JSON.stringify({
   statusSource: status?.debug?.source,
   hasSettingsRow: status?.debug?.hasSettingsRow,
@@ -508,18 +511,9 @@ export default function HomePage() {
   workerStatus: workerHealth?.status,
   lastStartResponse,
 }, null, 2)}
-          </pre>
+            </pre>
+          </div>
         )}
-      </div>
-
-      <div className="card">
-        <h2 className="font-semibold mb-2">Sistem Garantileri</h2>
-        <p className="text-sm text-muted">
-          Varsayılan mod <span className="text-success">PAPER</span> — live trading{" "}
-          <code className="mx-1 text-warning">HARD_LIVE_TRADING_ALLOWED=true</code> + DB enable_live_trading olmadan emir göndermez.
-          Maks. kaldıraç <span className="text-warning">5x</span> ile kilitlidir.
-          Triple gate: env + DB.trading_mode + DB.enable_live_trading.
-        </p>
       </div>
     </div>
   );
@@ -765,6 +759,103 @@ function DynamicUniverseCard({ diagnostics }: { diagnostics: any }) {
       )}
       {opportunity === 0 && pool > 0 && (
         <p className="text-xs text-muted mt-2">Aday havuzu dolu ama sinyal potansiyeli olan dynamic coin yok — tarayıcı sadece 10 core gösteriyor.</p>
+      )}
+    </div>
+  );
+}
+
+function TopOpportunityCard({ diagnostics }: { diagnostics: any }) {
+  const scanDetails: any[] = diagnostics?.scan_details ?? [];
+  const { items, hasStrongOpportunity, insufficientData } = getTopOpportunities(scanDetails);
+
+  if (scanDetails.length === 0) {
+    return (
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-semibold">Fırsata En Yakın 5 Coin</h2>
+        </div>
+        <p className="text-sm text-muted">Bot başlatıldığında tarama verisi gelir.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold">Fırsata En Yakın 5 Coin</h2>
+        <div className="flex items-center gap-2">
+          {hasStrongOpportunity && (
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-success/20 text-success">
+              Eşik geçildi
+            </span>
+          )}
+          {!hasStrongOpportunity && insufficientData && (
+            <span className="text-xs text-muted">Güçlü fırsat yok</span>
+          )}
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <p className="text-sm text-muted">Skoru 0 üzeri coin bulunamadı — tarama sonrası veriler gelir.</p>
+      ) : (
+        <>
+          {insufficientData && !hasStrongOpportunity && (
+            <p className="text-xs text-muted mb-2">Güçlü fırsat yok — mevcut en yüksek skorlar gösteriliyor.</p>
+          )}
+          <div className="overflow-x-auto">
+            <table className="t table-fixed w-full text-sm">
+              <colgroup>
+                <col className="w-[18%]" />
+                <col className="w-[12%]" />
+                <col className="w-[12%]" />
+                <col className="w-[13%]" />
+                <col className="w-[25%]" />
+                <col className="w-[20%]" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Coin</th>
+                  <th>Yön</th>
+                  <th>Skor</th>
+                  <th>Eksik</th>
+                  <th>Ana Sebep</th>
+                  <th>Bot Kararı</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr
+                    key={item.symbol}
+                    className={item.aboveThreshold || item.opened ? "bg-success/5" : ""}
+                  >
+                    <td className="font-medium truncate" title={item.symbol}>{item.symbol}</td>
+                    <td>
+                      {item.signalType === "NO_TRADE" || !item.signalType ? (
+                        <span className="text-muted">—</span>
+                      ) : (
+                        <span className={`tag-${item.signalType === "LONG" ? "success" : "danger"}`}>
+                          {item.signalType}
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      <span className={`font-semibold ${item.aboveThreshold ? "text-success" : item.score >= 60 ? "text-warning" : ""}`}>
+                        {item.score}/100
+                      </span>
+                    </td>
+                    <td className="text-muted">
+                      {item.missingPoints > 0 ? `${item.missingPoints} puan` : <span className="text-success">—</span>}
+                    </td>
+                    <td className="text-xs text-muted truncate" title={item.mainReason}>{item.mainReason}</td>
+                    <td className={`text-xs truncate ${item.opened ? "text-success font-medium" : item.aboveThreshold ? "text-success" : "text-muted"}`}>
+                      {item.decision}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
