@@ -874,6 +874,14 @@ function ScannerVisibilityCard({ diagnostics, open, onToggle }: { diagnostics: a
     ? `${Math.round((Date.now() - new Date(lastTickAt).getTime()) / 1000)}s önce`
     : "—";
 
+  const visibleCount = details.length;
+  const visibleDynamicCount = details.filter((r: any) => r?.coinClass === "DYNAMIC").length;
+  const visibleCoreCount = details.filter((r: any) => (r?.coinClass ?? "CORE") === "CORE").length;
+  const dynamicLabel =
+    visibleDynamicCount === 0
+      ? "dynamic fırsat yok"
+      : `${visibleCoreCount} core + ${visibleDynamicCount} dynamic`;
+
   return (
     <div className="card">
       <button
@@ -884,7 +892,7 @@ function ScannerVisibilityCard({ diagnostics, open, onToggle }: { diagnostics: a
           <span className="font-semibold">Tarama Görünümü</span>
           {stats && (
             <span className="text-xs text-muted">
-              {stats.scanned} tarandı · {stats.signals} sinyal · {stats.opened} açıldı · {stats.rejected} reddedildi · {stats.durationMs}ms
+              {stats.scanned} analiz edildi · {visibleCount} gösteriliyor · {dynamicLabel} · {stats.signals} sinyal · {stats.opened} açıldı · {stats.durationMs}ms
             </span>
           )}
         </div>

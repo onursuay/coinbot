@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { fmtNum, fmtPct } from "@/lib/format";
+import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
 
 interface TickStats {
@@ -92,14 +92,24 @@ export default function ScannerPage() {
   const rows = data?.scan_details ?? [];
   const exchange = data?.active_exchange ?? "binance";
 
+  // Görünürlük metrikleri — backend'den gelen mevcut veriden hesaplanır,
+  // trading logic'i etkilemez. Tablo `scan_details` zaten worker tarafında
+  // görünürlük filtresinden geçirilmiş hâlde gelir.
+  const analyzedCount = stats?.scanned ?? 0;
+  const visibleCount = rows.length;
+  const visibleCoreCount = rows.filter((r) => (r.coinClass ?? "CORE") === "CORE").length;
+  const visibleDynamicCount = rows.filter((r) => r.coinClass === "DYNAMIC").length;
+  const dynamicCandidates = stats?.dynamicCandidates ?? 0;
+  const filteredDynamicCount = Math.max(0, dynamicCandidates - visibleDynamicCount);
+
   return (
     <div className="space-y-4">
       {/* Stats bar */}
       {stats && (
-        <div className="card py-2 relative">
+        <div className="card py-2 relative space-y-2">
           <div className="grid grid-cols-4 gap-3 sm:grid-cols-9 text-center">
             <div>
-              <div className="text-xs text-muted">Universe</div>
+              <div className="text-xs text-muted">Evren</div>
               <div className="font-semibold tabular-nums">{stats.universe}</div>
             </div>
             <div>
@@ -111,8 +121,8 @@ export default function ScannerPage() {
               <div className="font-semibold tabular-nums text-muted">{stats.lowVolumeRejected ?? 0}</div>
             </div>
             <div>
-              <div className="text-xs text-muted">Analiz</div>
-              <div className="font-semibold tabular-nums">{stats.scanned}</div>
+              <div className="text-xs text-muted" title="Worker'ın değerlendirdiği toplam coin">Analiz Edilen</div>
+              <div className="font-semibold tabular-nums">{analyzedCount}</div>
             </div>
             <div>
               <div className="text-xs text-success">Sinyal</div>
@@ -137,6 +147,47 @@ export default function ScannerPage() {
               <div className="font-semibold tabular-nums">{stats.durationMs}ms</div>
             </div>
           </div>
+
+          {/* Görünürlük satırı — analiz edilen ile tabloda gösterilen ayrımı */}
+          <div className="border-t border-default/40 pt-2 grid grid-cols-2 gap-3 sm:grid-cols-4 text-center">
+            <div title="Scanner görünürlük filtresini geçen ve tabloda listelenen coin sayısı">
+              <div className="text-xs text-muted">Tabloda Gösterilen</div>
+              <div className="font-semibold tabular-nums">{visibleCount}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted">Core Gösterilen</div>
+              <div className="font-semibold tabular-nums">{visibleCoreCount}</div>
+            </div>
+            <div>
+              <div className="text-xs text-muted">Dynamic Gösterilen</div>
+              <div className="font-semibold tabular-nums">{visibleDynamicCount}</div>
+            </div>
+            <div title="Dynamic havuzdan filtrelenip tabloya alınmayan coin sayısı (kalite/setup/sinyal/likidite)">
+              <div className="text-xs text-muted">Dynamic Filtrelenen</div>
+              <div className="font-semibold tabular-nums text-muted">{filteredDynamicCount}</div>
+            </div>
+          </div>
+
+          {/* Açıklama satırı */}
+          {analyzedCount > 0 && (
+            <div className="text-xs text-muted text-center px-2">
+              {visibleDynamicCount === 0 ? (
+                <>
+                  Bu taramada dynamic fırsat adayı bulunmadı. Bu nedenle tabloda yalnızca {visibleCoreCount} core coin gösteriliyor.
+                  {analyzedCount !== visibleCount && (
+                    <> ({analyzedCount} analiz edildi · {visibleCount} gösteriliyor)</>
+                  )}
+                </>
+              ) : (
+                <>
+                  Bu taramada {visibleCoreCount} core + {visibleDynamicCount} dynamic fırsat adayı gösteriliyor.
+                  {analyzedCount !== visibleCount && (
+                    <> ({analyzedCount} analiz edildi · {visibleCount} gösteriliyor)</>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
