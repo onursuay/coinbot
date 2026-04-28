@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { fmtNum, fmtPct } from "@/lib/format";
+import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
 
 interface TickStats {
   universe: number;
@@ -85,7 +86,7 @@ export default function ScannerPage() {
     }
   };
 
-  useEffect(() => { refresh(); }, []);
+  useAutoRefresh(refresh);
 
   const stats = data?.tick_stats;
   const rows = data?.scan_details ?? [];
@@ -103,6 +104,13 @@ export default function ScannerPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 text-xs text-muted">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+            <span>Otomatik yenileme: Açık</span>
+            {lastRefresh && (
+              <span className="ml-1">· Son güncelleme: {lastRefresh.toLocaleTimeString("tr-TR")}</span>
+            )}
+          </div>
           <span className={`tag ${workerOnline ? "tag-success" : "tag-danger"}`}>
             {workerOnline ? "SUNUCU BOT ÇEVRİMİÇİ" : "SUNUCU BOT ÇEVRİMDIŞI"}
           </span>
@@ -251,11 +259,6 @@ export default function ScannerPage() {
         </details>
       )}
 
-      {lastRefresh && (
-        <p className="text-xs text-muted text-right">
-          Son güncelleme: {lastRefresh.toLocaleTimeString("tr-TR")}
-        </p>
-      )}
     </div>
   );
 }

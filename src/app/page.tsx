@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fmtNum, fmtPct, fmtUsd } from "@/lib/format";
 import { getTopOpportunities } from "@/lib/top-opportunities";
+import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
 
 interface TickResult {
   ok: boolean;
@@ -64,6 +65,7 @@ export default function HomePage() {
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [e2eStatus, setE2eStatus] = useState<any>(null);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   const addToast = (t: Omit<Toast, "id">) => {
     const id = ++toastId;
@@ -96,13 +98,10 @@ export default function HomePage() {
     if (g?.ok) setLiveReadiness(g.data);
     if (h?.ok) setDiagnostics(h.data);
     if (i?.ok) setE2eStatus(i.data);
+    setLastRefresh(new Date());
   };
 
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 10_000);
-    return () => clearInterval(t);
-  }, []);
+  useAutoRefresh(refresh);
 
   const actWithBody = async (path: string, label: string, body?: object) => {
     if (path.endsWith("/start") && envCheck && !envCheck.ok) {
@@ -205,9 +204,10 @@ export default function HomePage() {
 
       {/* ===== Control Panel ===== */}
       <div className="card space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <h2 className="font-semibold">Bot Kontrol Paneli</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <AutoRefreshBadge lastRefresh={lastRefresh} />
             <StatusBadge status={botStatus} />
             {isKillSwitch && <span className="tag-danger text-xs animate-pulse">KILL SWITCH</span>}
           </div>
@@ -270,6 +270,14 @@ export default function HomePage() {
             Acil Durdur
           </button>
 
+          <button
+            className="btn-ghost text-sm px-4 py-2"
+            onClick={refresh}
+            disabled={busy}
+            title="Sayfayı yeniden yüklemeden son verileri çeker"
+          >
+            Verileri Yenile
+          </button>
           <button className="btn-primary text-sm px-4 py-2 ml-auto" onClick={runTick} disabled={busy}>
             {busy ? "Çalışıyor…" : "Taramayı Çalıştır"}
           </button>
@@ -469,6 +477,20 @@ export default function HomePage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function AutoRefreshBadge({ lastRefresh }: { lastRefresh: Date | null }) {
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted">
+      <span className="flex items-center gap-1">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+        Otomatik yenileme: Açık
+      </span>
+      {lastRefresh && (
+        <span>Son güncelleme: {lastRefresh.toLocaleTimeString("tr-TR")}</span>
+      )}
     </div>
   );
 }
