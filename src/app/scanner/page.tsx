@@ -3,7 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
-import { buildReasonItems } from "@/lib/wait-reason-badges";
+import { buildReasonColumns, REASON_COLUMNS } from "@/lib/wait-reason-badges";
 
 interface TickStats {
   universe: number;
@@ -77,30 +77,23 @@ const DIRECTION_CANDIDATE_LABEL: Record<DirectionCandidate, string> = {
   NONE: "Yok",
 };
 
-function ReasonList({ row }: { row: ScanRow }) {
-  const items = buildReasonItems({
-    signalType: row.signalType,
-    waitReasonCodes: row.waitReasonCodes,
-    rejectReason: row.rejectReason,
-    riskRejectReason: row.riskRejectReason,
-  });
-  if (items.length === 0) return <span className="text-muted">—</span>;
-  return (
-    <ul className="space-y-1.5 leading-tight">
-      {items.map((it, i) => (
-        <li key={`${it.title}-${i}`}>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-muted text-[11px]">•</span>
-            <span className="text-[11px] font-semibold tracking-wide text-slate-100">{it.title}</span>
-          </div>
-          <div className="ml-3 flex items-baseline gap-1.5">
-            <span className="text-muted text-[11px]">•</span>
-            <span className="text-[11px] text-slate-300">{it.status}</span>
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
+function ReasonCell({ value }: { value?: string }) {
+  if (!value) return <span className="text-muted">—</span>;
+  return <span className="text-xs font-medium text-danger">{value}</span>;
+}
+
+function SignalTag({ signalType }: { signalType: string }) {
+  if (signalType === "LONG") {
+    return <span className="tag-success">{signalType}</span>;
+  }
+  if (signalType === "SHORT") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-blue-900/40 text-blue-300">
+        {signalType}
+      </span>
+    );
+  }
+  return <span className="tag-muted">{signalType || "—"}</span>;
 }
 
 interface TickIdentity {
@@ -252,19 +245,21 @@ export default function ScannerPage() {
           <table className="t">
             <thead>
               <tr>
-                <th>Sembol</th>
-                <th>Sınıf</th>
-                <th>Kademe</th>
-                <th>Spread</th>
+                <th>SEMBOL</th>
+                <th>SINIF</th>
+                <th>KADEME</th>
+                <th>SPREAD</th>
                 <th>ATR%</th>
-                <th>Fonlama</th>
-                <th>Sinyal</th>
-                <th>Yön Eğilimi</th>
-                <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">Kalite</th>
-                <th title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu; WAIT dahil hesaplanır">Fırsat</th>
-                <th title="İşlem güven skoru — 70+ = işlem açılır; sadece yön belirlenen coinlerde anlamlı">İşlem</th>
-                <th>Red Nedeni</th>
-                <th>Açıldı</th>
+                <th>FONLAMA</th>
+                <th>SİNYAL</th>
+                <th>YÖN EĞİLİMİ</th>
+                <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">KALİTE</th>
+                <th title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu; WAIT dahil hesaplanır">FIRSAT</th>
+                <th title="İşlem güven skoru — 70+ = işlem açılır; sadece yön belirlenen coinlerde anlamlı">İŞLEM</th>
+                {REASON_COLUMNS.map((c) => (
+                  <th key={c.key}>{c.header}</th>
+                ))}
+                <th>AÇILDI</th>
               </tr>
             </thead>
             <tbody>
@@ -289,16 +284,14 @@ export default function ScannerPage() {
                   <td>{fmtPct(r.atrPercent, 2)}</td>
                   <td>{fmtPct(r.fundingRate * 100, 4)}</td>
                   <td>
-                    <span className={`tag-${r.signalType === "LONG" ? "success" : r.signalType === "SHORT" ? "danger" : "muted"}`}>
-                      {r.signalType || "—"}
-                    </span>
+                    <SignalTag signalType={r.signalType} />
                   </td>
                   <td>
                     {r.directionCandidate ? (
                       <span
                         className={`text-xs font-medium ${
                           r.directionCandidate === "LONG_CANDIDATE" ? "text-success" :
-                          r.directionCandidate === "SHORT_CANDIDATE" ? "text-danger" :
+                          r.directionCandidate === "SHORT_CANDIDATE" ? "text-blue-300" :
                           r.directionCandidate === "MIXED" ? "text-warning" : "text-muted"
                         }`}
                         title={
@@ -340,15 +333,19 @@ export default function ScannerPage() {
                       <span className="text-muted text-xs">—</span>
                     )}
                   </td>
-                  <td className="align-top"
-                    title={
-                      r.signalType === "WAIT"
-                        ? (r.waitReasonCodes ?? []).join(", ")
-                        : (r.rejectReason ?? r.riskRejectReason ?? "")
-                    }
-                  >
-                    <ReasonList row={r} />
-                  </td>
+                  {(() => {
+                    const cols = buildReasonColumns({
+                      signalType: r.signalType,
+                      waitReasonCodes: r.waitReasonCodes,
+                      rejectReason: r.rejectReason,
+                      riskRejectReason: r.riskRejectReason,
+                    });
+                    return REASON_COLUMNS.map((c) => (
+                      <td key={c.key}>
+                        <ReasonCell value={cols[c.key]} />
+                      </td>
+                    ));
+                  })()}
                   <td>
                     {r.opened
                       ? <span className="tag-success text-xs">✓</span>
