@@ -1,5 +1,9 @@
 # CoinBot — Project Instructions
 
+> **🚨 KURAL — Her işlem sonrasında otomatik yapılacaklar:**
+> **GitHub Actions durumunu ve VPS deploy'unu tetikle. Commit + push + VPS'te worker yeniden deploy et.**
+> Bu kural istisnasız her tamamlanan iş için geçerlidir; kullanıcının ayrıca istemesine gerek yoktur.
+
 ## Her işlem sonrasında otomatik yapılacaklar
 
 **Her görev tamamlandığında** (kod değişikliği içersin ya da içermesin),
