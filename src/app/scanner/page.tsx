@@ -104,7 +104,9 @@ const ADVANCED_COLUMNS: { key: AdvancedColumnKey; header: string }[] = [
 
 const ADVANCED_COLUMN_KEYS: AdvancedColumnKey[] = ADVANCED_COLUMNS.map((c) => c.key);
 const STORAGE_KEY = "scanner:visibleAdvancedColumns";
-const DEFAULT_VISIBLE_ADVANCED: AdvancedColumnKey[] = []; // varsayılan: hepsi kapalı
+// "Varsayılana Dön" ile dönülecek küratör seçim — temel piyasa metrikleri.
+// "Tümünü Gizle" ile farklı sonuç vermesi için boş bırakılmıyor.
+const DEFAULT_VISIBLE_ADVANCED: AdvancedColumnKey[] = ["SPREAD", "ATR_PCT", "FUNDING"];
 
 function ReasonCell({ value }: { value?: string }) {
   if (!value) return <span className="text-muted">—</span>;
@@ -322,19 +324,28 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* Column picker — GELİŞMİŞ METRİKLER */}
+      {/* Column picker — kolonları göster/gizle (icon button) */}
       {rows.length > 0 && (
         <div className="relative flex justify-end">
           <button
             type="button"
             onClick={() => setPickerOpen((o) => !o)}
-            className="btn-ghost text-[11px] uppercase tracking-wider"
+            title="Kolonları yönet"
+            aria-label="Kolonları yönet"
             aria-expanded={pickerOpen}
+            className="relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-bg-soft text-slate-300 transition-colors hover:border-accent hover:text-accent"
           >
-            Gelişmiş Metrikler
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="18" x2="20" y2="18" />
+              <circle cx="9" cy="6" r="2" fill="currentColor" stroke="none" />
+              <circle cx="15" cy="12" r="2" fill="currentColor" stroke="none" />
+              <circle cx="9" cy="18" r="2" fill="currentColor" stroke="none" />
+            </svg>
             {visibleAdvanced.size > 0 && (
-              <span className="ml-2 inline-flex items-center rounded-md bg-accent/15 text-accent px-1.5 py-0.5 text-[10px] font-semibold">
-                {visibleAdvanced.size}/{ADVANCED_COLUMNS.length}
+              <span className="absolute -right-1 -top-1 inline-flex min-w-[16px] items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold text-black">
+                {visibleAdvanced.size}
               </span>
             )}
           </button>
@@ -346,10 +357,10 @@ export default function ScannerPage() {
                 aria-hidden
               />
               <div className="absolute right-0 top-full z-20 mt-2 w-80 rounded-xl border border-border bg-bg-card p-3 shadow-lg shadow-black/40">
-                <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-wider">
-                  <button onClick={showAllColumns} className="rounded-md border border-border bg-bg-soft px-2 py-1 hover:border-accent">Tümünü Göster</button>
-                  <button onClick={hideAllColumns} className="rounded-md border border-border bg-bg-soft px-2 py-1 hover:border-accent">Tümünü Gizle</button>
-                  <button onClick={resetColumns}   className="rounded-md border border-border bg-bg-soft px-2 py-1 hover:border-accent">Varsayılana Dön</button>
+                <div className="mb-3 grid grid-cols-3 gap-1.5 text-[10px] uppercase tracking-wider">
+                  <button onClick={showAllColumns} className="rounded-md border border-border bg-bg-soft px-2 py-1.5 hover:border-accent">Tümünü Göster</button>
+                  <button onClick={hideAllColumns} className="rounded-md border border-border bg-bg-soft px-2 py-1.5 hover:border-accent">Tümünü Gizle</button>
+                  <button onClick={resetColumns}   className="rounded-md border border-border bg-bg-soft px-2 py-1.5 hover:border-accent">Varsayılana Dön</button>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {ADVANCED_COLUMNS.map((c) => (
