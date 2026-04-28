@@ -70,38 +70,20 @@ interface DiagData {
   tick_identity: TickIdentity | null;
 }
 
-type StatTone = "success" | "danger" | "accent";
 function StatTile({
-  label, value, tone, dim, highlight, title,
+  label, value, title,
 }: {
   label: string;
   value: number | string;
-  tone?: StatTone;
-  dim?: boolean;
-  highlight?: boolean;
   title?: string;
 }) {
-  const labelClass =
-    tone === "success" ? "text-success"
-    : tone === "danger" ? "text-danger"
-    : tone === "accent" ? "text-accent"
-    : "text-muted";
-  const valueClass =
-    tone === "success" ? "text-success"
-    : tone === "danger" ? "text-danger"
-    : tone === "accent" ? "text-accent"
-    : dim ? "text-slate-400"
-    : "text-slate-100";
-  const tileClass = highlight
-    ? "bg-accent/10 border-accent/30"
-    : "bg-bg-soft/40 border-border/40";
   return (
     <div
-      className={`rounded-lg border ${tileClass} px-2 py-1.5 text-center transition-colors`}
+      className="rounded-lg border border-accent/30 bg-accent/10 px-2 py-1.5 text-center transition-colors"
       title={title}
     >
-      <div className={`text-[10px] uppercase tracking-wider ${labelClass} font-medium`}>{label}</div>
-      <div className={`mt-0.5 text-lg font-semibold tabular-nums ${valueClass}`}>{value}</div>
+      <div className="text-[10px] uppercase tracking-wider text-slate-200 font-medium">{label}</div>
+      <div className="mt-0.5 text-lg font-semibold tabular-nums text-white">{value}</div>
     </div>
   );
 }
@@ -152,12 +134,12 @@ export default function ScannerPage() {
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-9">
               <StatTile label="Evren" value={stats.universe} />
               <StatTile label="Ön Eleme" value={stats.prefiltered} />
-              <StatTile label="Hacim Filtresi" value={stats.lowVolumeRejected ?? 0} dim />
+              <StatTile label="Hacim Filtresi" value={stats.lowVolumeRejected ?? 0} />
               <StatTile label="Analiz Edilen" value={analyzedCount} title="Worker'ın değerlendirdiği toplam coin" />
-              <StatTile label="Sinyal" value={stats.signals} tone="success" />
+              <StatTile label="Sinyal" value={stats.signals} />
               <StatTile label="Reddedilen" value={stats.rejected} />
-              <StatTile label="Açılan" value={stats.opened} tone="accent" />
-              <StatTile label="Hata" value={stats.errors} tone={stats.errors > 0 ? "danger" : undefined} />
+              <StatTile label="Açılan" value={stats.opened} />
+              <StatTile label="Hata" value={stats.errors} />
               <StatTile label="Süre" value={`${stats.durationMs}ms`} />
             </div>
           </div>
@@ -169,10 +151,10 @@ export default function ScannerPage() {
               <span className="text-[10px] uppercase tracking-[0.18em] text-muted font-medium">Görünürlük</span>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <StatTile label="Tabloda Gösterilen" value={visibleCount} highlight title="Scanner görünürlük filtresini geçen ve tabloda listelenen coin sayısı" />
+              <StatTile label="Tabloda Gösterilen" value={visibleCount} title="Scanner görünürlük filtresini geçen ve tabloda listelenen coin sayısı" />
               <StatTile label="Core Gösterilen" value={visibleCoreCount} />
-              <StatTile label="Dynamic Gösterilen" value={visibleDynamicCount} tone={visibleDynamicCount > 0 ? "accent" : undefined} />
-              <StatTile label="Dynamic Filtrelenen" value={filteredDynamicCount} dim title="Dynamic havuzdan filtrelenip tabloya alınmayan coin sayısı (kalite/setup/sinyal/likidite)" />
+              <StatTile label="Dynamic Gösterilen" value={visibleDynamicCount} />
+              <StatTile label="Dynamic Filtrelenen" value={filteredDynamicCount} title="Dynamic havuzdan filtrelenip tabloya alınmayan coin sayısı (kalite/setup/sinyal/likidite)" />
             </div>
 
             {/* Açıklama banner */}
