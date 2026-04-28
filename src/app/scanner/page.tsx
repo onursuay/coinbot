@@ -88,6 +88,28 @@ function StatTile({
   );
 }
 
+function CircleTile({
+  label, value, title,
+}: {
+  label: string;
+  value: number | string;
+  title?: string;
+}) {
+  return (
+    <div
+      className="aspect-square rounded-full border border-accent/30 bg-accent/10 flex flex-col items-center justify-center px-1 overflow-hidden"
+      title={title}
+    >
+      <div className="text-[8px] sm:text-[9px] uppercase tracking-wider text-slate-200 font-medium leading-tight text-center max-w-full break-words">
+        {label}
+      </div>
+      <div className="mt-0.5 text-sm sm:text-base font-semibold tabular-nums text-white truncate max-w-full">
+        {value}
+      </div>
+    </div>
+  );
+}
+
 export default function ScannerPage() {
   const [data, setData] = useState<DiagData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -131,16 +153,16 @@ export default function ScannerPage() {
               <span className="h-1.5 w-1.5 rounded-full bg-accent" />
               <span className="text-[10px] uppercase tracking-[0.18em] text-muted font-medium">Tarama Akışı</span>
             </div>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-9">
-              <StatTile label="Evren" value={stats.universe} />
-              <StatTile label="Ön Eleme" value={stats.prefiltered} />
-              <StatTile label="Hacim Filtresi" value={stats.lowVolumeRejected ?? 0} />
-              <StatTile label="Analiz Edilen" value={analyzedCount} title="Worker'ın değerlendirdiği toplam coin" />
-              <StatTile label="Sinyal" value={stats.signals} />
-              <StatTile label="Reddedilen" value={stats.rejected} />
-              <StatTile label="Açılan" value={stats.opened} />
-              <StatTile label="Hata" value={stats.errors} />
-              <StatTile label="Süre" value={`${stats.durationMs}ms`} />
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-9 sm:gap-3 max-w-3xl mx-auto">
+              <CircleTile label="Evren" value={stats.universe} />
+              <CircleTile label="Ön Eleme" value={stats.prefiltered} />
+              <CircleTile label="Hacim Filtresi" value={stats.lowVolumeRejected ?? 0} />
+              <CircleTile label="Analiz Edilen" value={analyzedCount} title="Worker'ın değerlendirdiği toplam coin" />
+              <CircleTile label="Sinyal" value={stats.signals} />
+              <CircleTile label="Reddedilen" value={stats.rejected} />
+              <CircleTile label="Açılan" value={stats.opened} />
+              <CircleTile label="Hata" value={stats.errors} />
+              <CircleTile label="Süre" value={`${stats.durationMs}ms`} />
             </div>
           </div>
 
