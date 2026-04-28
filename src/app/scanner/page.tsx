@@ -71,10 +71,10 @@ interface ScanRow {
 }
 
 const DIRECTION_CANDIDATE_LABEL: Record<DirectionCandidate, string> = {
-  LONG_CANDIDATE: "Long",
-  SHORT_CANDIDATE: "Short",
-  MIXED: "Karışık",
-  NONE: "Yok",
+  LONG_CANDIDATE: "LONG",
+  SHORT_CANDIDATE: "SHORT",
+  MIXED: "KARIŞIK",
+  NONE: "YOK",
 };
 
 function ReasonCell({ value }: { value?: string }) {
