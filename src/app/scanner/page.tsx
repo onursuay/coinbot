@@ -252,7 +252,7 @@ export default function ScannerPage() {
                 <th>ATR%</th>
                 <th>FONLAMA</th>
                 <th>SİNYAL</th>
-                <th>YÖN EĞİLİMİ</th>
+                <th className="whitespace-nowrap">YÖN EĞİLİMİ</th>
                 <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">KALİTE</th>
                 <th title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu; WAIT dahil hesaplanır">FIRSAT</th>
                 <th title="İşlem güven skoru — 70+ = işlem açılır; sadece yön belirlenen coinlerde anlamlı">İŞLEM</th>
