@@ -3,6 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
+import { badgeLabelForWaitReason, WAIT_REASON_BADGE_LABEL } from "@/lib/wait-reason-badges";
 
 interface TickStats {
   universe: number;
@@ -76,27 +77,35 @@ const DIRECTION_CANDIDATE_LABEL: Record<DirectionCandidate, string> = {
   NONE: "Yok",
 };
 
-const WAIT_REASON_LABEL: Record<string, string> = {
-  EMA_ALIGNMENT_MISSING: "EMA dizilimi eksik",
-  MA_FAST_SLOW_CONFLICT: "MA8/MA55 uyumsuz",
-  MACD_CONFLICT: "MACD uyumsuz",
-  RSI_NEUTRAL: "RSI nötr",
-  ADX_FLAT: "ADX zayıf",
-  VWAP_NOT_CONFIRMED: "VWAP teyit yok",
-  VOLUME_WEAK: "Hacim zayıf",
-  BOLLINGER_NO_CONFIRMATION: "Bollinger teyit yok",
-  ATR_REGIME_UNCLEAR: "ATR rejimi belirsiz",
-  BTC_DIRECTION_CONFLICT: "BTC yönü ters",
-};
-
-function describeWaitReason(row: ScanRow): string {
-  const codes = (row.waitReasonCodes ?? []).map((c) => WAIT_REASON_LABEL[c] ?? c);
-  const cand = row.directionCandidate ?? "NONE";
-  const top = codes.slice(0, 2);
-  if (cand === "LONG_CANDIDATE") return top.length ? `LONG adayı — ${top.join(", ")}` : "LONG adayı, yön teyidi bekleniyor";
-  if (cand === "SHORT_CANDIDATE") return top.length ? `SHORT adayı — ${top.join(", ")}` : "SHORT adayı, yön teyidi bekleniyor";
-  if (cand === "MIXED") return top.length ? `Karışık: ${top.join(", ")}` : "Karışık — yön teyidi bekleniyor";
-  return top.length ? `Yön yok: ${top.join(", ")}` : "Yön teyidi bekleniyor";
+function ReasonBadges({ row }: { row: ScanRow }) {
+  if (row.signalType === "WAIT") {
+    const codes = row.waitReasonCodes ?? [];
+    if (codes.length === 0) {
+      return <span className="text-muted text-xs">—</span>;
+    }
+    return (
+      <div className="flex flex-wrap gap-1">
+        {codes.map((code) => (
+          <span
+            key={code}
+            className="inline-flex items-center rounded-md border border-border bg-slate-800/70 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-200 whitespace-nowrap"
+          >
+            {badgeLabelForWaitReason(code)}
+          </span>
+        ))}
+      </div>
+    );
+  }
+  const reason = row.rejectReason ?? row.riskRejectReason;
+  if (!reason) return <span className="text-muted">—</span>;
+  return (
+    <span
+      className="inline-flex items-center rounded-md border border-border bg-slate-800/70 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-200"
+      title={reason}
+    >
+      {reason.length > 28 ? `${reason.slice(0, 26)}…` : reason}
+    </span>
+  );
 }
 
 interface TickIdentity {
@@ -336,16 +345,14 @@ export default function ScannerPage() {
                       <span className="text-muted text-xs">—</span>
                     )}
                   </td>
-                  <td className="text-xs text-muted max-w-xs truncate"
+                  <td className="align-middle"
                     title={
                       r.signalType === "WAIT"
-                        ? describeWaitReason(r)
+                        ? (r.waitReasonCodes ?? []).map((c) => WAIT_REASON_BADGE_LABEL[c as keyof typeof WAIT_REASON_BADGE_LABEL] ?? c).join(" · ")
                         : (r.rejectReason ?? r.riskRejectReason ?? "")
                     }
                   >
-                    {r.signalType === "WAIT"
-                      ? describeWaitReason(r)
-                      : (r.rejectReason ?? r.riskRejectReason ?? "—")}
+                    <ReasonBadges row={r} />
                   </td>
                   <td>
                     {r.opened
