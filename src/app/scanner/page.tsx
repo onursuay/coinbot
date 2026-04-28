@@ -70,12 +70,6 @@ interface DiagData {
   tick_identity: TickIdentity | null;
 }
 
-function fmtTime(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
 export default function ScannerPage() {
   const [data, setData] = useState<DiagData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -103,20 +97,6 @@ export default function ScannerPage() {
       {/* Stats bar */}
       {stats && (
         <div className="card py-2 relative">
-          <div className="flex items-center justify-between mb-2 px-1">
-            <div className="flex items-center gap-2 text-xs text-muted">
-              {data?.last_tick_at && (
-                <span>Son tick: {fmtTime(data.last_tick_at)}</span>
-              )}
-            </div>
-            <button
-              className="btn-secondary text-xs px-3 py-1"
-              onClick={refresh}
-              disabled={loading}
-            >
-              {loading ? "Yükleniyor..." : "Yenile"}
-            </button>
-          </div>
           <div className="grid grid-cols-4 gap-3 sm:grid-cols-9 text-center">
             <div>
               <div className="text-xs text-muted">Universe</div>
