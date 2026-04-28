@@ -10,6 +10,9 @@ interface Status {
   config: any;
 }
 
+// Uniform pill style — all top-bar badges share the same height/padding/font.
+const PILL = "h-6 px-2 inline-flex items-center gap-1 text-[11px] font-medium leading-none rounded-md whitespace-nowrap";
+
 export default function TopBar() {
   const [s, setS] = useState<Status | null>(null);
   const [workerOnline, setWorkerOnline] = useState<boolean | null>(null);
@@ -43,40 +46,50 @@ export default function TopBar() {
   const exchange = s === null ? "..." : (s?.bot?.active_exchange ?? "binance");
 
   const statusLabel = status === "running" ? "ÇALIŞIYOR" : status === "stopped" ? "DURDU" : status.toUpperCase().replace(/_/g, " ");
-  const modeLabel = mode === "paper" ? "SANAL MOD" : mode === "live" ? "CANLI MOD" : mode.toUpperCase();
+  const modeLabel = mode === "paper" ? "SANAL" : mode === "live" ? "CANLI" : mode.toUpperCase();
+
+  const statusClass = status === "running"
+    ? "bg-success/15 text-success"
+    : status === "kill_switch"
+      ? "bg-danger/15 text-danger"
+      : "bg-slate-700/40 text-slate-300";
 
   return (
-    <header className="flex items-center justify-between px-6 py-3 border-b border-border bg-bg-soft/60 backdrop-blur">
-      <div className="flex items-center gap-2 text-sm flex-wrap">
-        <span className={`tag ${status === "running" ? "tag-success" : status === "kill_switch" ? "tag-danger" : "tag-muted"}`}>
-          {statusLabel}
-        </span>
-        <span className="tag-accent">{modeLabel}</span>
-        <span className="tag-muted">{String(exchange).toUpperCase()}</span>
+    <header className="flex items-center justify-between gap-3 px-6 py-2 border-b border-border bg-bg-soft/60 backdrop-blur">
+      {/* Left: status pills */}
+      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+        <span className={`${PILL} ${statusClass}`}>BOT: {statusLabel}</span>
+        <span className={`${PILL} bg-accent/15 text-accent`}>MOD: {modeLabel}</span>
+        <span className={`${PILL} bg-slate-700/40 text-slate-300`}>BORSA: {String(exchange).toUpperCase()}</span>
         {s?.liveTrading
-          ? <span className="tag-warning">CANLI İŞLEM AÇIK</span>
-          : <span className="tag-success">CANLI İŞLEM KAPALI</span>}
-        <span className="flex items-center gap-1 tag-muted">
+          ? <span className={`${PILL} bg-warning/15 text-warning`}>CANLI: AÇIK</span>
+          : <span className={`${PILL} bg-success/15 text-success`}>CANLI: KAPALI</span>}
+        <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-          OTOMATİK YENİLEME: AÇIK
+          YENİLEME: AÇIK
         </span>
         {lastFetch && (
-          <span className="tag-muted">
-            SON GÜNCELLEME: {lastFetch.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+          <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
+            SON: {lastFetch.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
           </span>
         )}
         {workerOnline !== null && (
-          <span className={`tag ${workerOnline ? "tag-success" : "tag-danger"}`}>
-            {workerOnline ? "SUNUCU BOT ÇEVRİMİÇİ" : "SUNUCU BOT ÇEVRİMDIŞI"}
+          <span className={`${PILL} ${workerOnline ? "bg-success/15 text-success" : "bg-danger/15 text-danger"}`}>
+            SUNUCU: {workerOnline ? "ÇEVRİMİÇİ" : "ÇEVRİMDIŞI"}
           </span>
         )}
       </div>
-      <div className="flex items-center gap-3 text-sm">
+
+      {/* Right: P&L + kill switch */}
+      <div className="flex items-center gap-2 shrink-0">
         {s && (
-          <div className="text-slate-300">
-            Günlük K/Z <span className={s.daily.realizedPnlUsd >= 0 ? "text-success" : "text-danger"}>${s.daily.realizedPnlUsd.toFixed(2)}</span>
-            <span className="text-muted"> / hedef ${s.daily.dailyTargetUsd}</span>
-          </div>
+          <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
+            K/Z:&nbsp;
+            <span className={s.daily.realizedPnlUsd >= 0 ? "text-success" : "text-danger"}>
+              ${s.daily.realizedPnlUsd.toFixed(2)}
+            </span>
+            <span className="text-muted">&nbsp;/&nbsp;${s.daily.dailyTargetUsd}</span>
+          </span>
         )}
         <KillSwitch />
       </div>
