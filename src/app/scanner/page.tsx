@@ -70,10 +70,10 @@ interface ScanRow {
 }
 
 const DIRECTION_CANDIDATE_LABEL: Record<DirectionCandidate, string> = {
-  LONG_CANDIDATE: "LONG adayı",
-  SHORT_CANDIDATE: "SHORT adayı",
+  LONG_CANDIDATE: "Long",
+  SHORT_CANDIDATE: "Short",
   MIXED: "Karışık",
-  NONE: "Yön yok",
+  NONE: "Yok",
 };
 
 const WAIT_REASON_LABEL: Record<string, string> = {
@@ -255,7 +255,7 @@ export default function ScannerPage() {
                 <th>ATR%</th>
                 <th>Fonlama</th>
                 <th>Sinyal</th>
-                <th title="Yön adayı — sadece gözlem/raporlama amaçlı, işlem açma kararını etkilemez">Yön Adayı</th>
+                <th>Yön Eğilimi</th>
                 <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">Kalite</th>
                 <th title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu; WAIT dahil hesaplanır">Fırsat</th>
                 <th title="İşlem güven skoru — 70+ = işlem açılır; sadece yön belirlenen coinlerde anlamlı">İşlem</th>
