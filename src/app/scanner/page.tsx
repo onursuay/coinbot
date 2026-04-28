@@ -111,18 +111,26 @@ function ReasonCell({ value }: { value?: string }) {
   return <span className="text-xs font-medium text-danger">{value}</span>;
 }
 
+const SIGNAL_TYPE_LABEL: Record<string, string> = {
+  LONG: "LONG",
+  SHORT: "SHORT",
+  WAIT: "BEKLE",
+  NO_TRADE: "İŞLEM YOK",
+};
+
 function SignalTag({ signalType }: { signalType: string }) {
+  const label = SIGNAL_TYPE_LABEL[signalType] ?? (signalType || "—");
   if (signalType === "LONG") {
-    return <span className="tag-success">{signalType}</span>;
+    return <span className="tag-success">{label}</span>;
   }
   if (signalType === "SHORT") {
     return (
       <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-blue-900/40 text-blue-300">
-        {signalType}
+        {label}
       </span>
     );
   }
-  return <span className="tag-muted">{signalType || "—"}</span>;
+  return <span className="tag-muted whitespace-nowrap">{label}</span>;
 }
 
 interface TickIdentity {
