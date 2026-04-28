@@ -6,8 +6,9 @@
 
 import type { Kline, Ticker, FundingRate, Timeframe } from "@/lib/exchanges/types";
 import {
-  atr, ema, macd, rsi, recentSwing, trendStrengthScore,
+  atr, ema, sma, macd, rsi, recentSwing, trendStrengthScore,
   volatilityScore, volumeConfirmationScore, wickAnomaly,
+  adx, atrPercentile, bollingerBands, vwap, volumeMA,
 } from "@/lib/analysis/indicators";
 
 export type SignalType = "LONG" | "SHORT" | "WAIT" | "EXIT_LONG" | "EXIT_SHORT" | "NO_TRADE";
@@ -25,8 +26,9 @@ export interface SignalResult {
   symbol: string;
   timeframe: Timeframe;
   signalType: SignalType;
-  score: number;         // trade confidence — 0 for WAIT / early-exit NO_TRADE
-  setupScore: number;    // market quality (trend+vol+volatility), >0 whenever indicators computed
+  score: number;              // trade confidence — 0 for WAIT / early-exit NO_TRADE (= tradeSignalScore)
+  setupScore: number;         // opportunity quality (10-component), >0 whenever indicators computed
+  marketQualityScore: number; // coin tradability quality (volume/spread/ATR/funding/data)
   entryPrice: number | null;
   stopLoss: number | null;
   takeProfit: number | null;
@@ -56,9 +58,10 @@ export function generateSignal(ctx: SignalContext): SignalResult {
 
   const earlyExit = (kind: SignalType, reason: string): SignalResult => ({
     symbol, timeframe, signalType: kind, score: 0,
-    // setupScore: populated after indicators are computed (line ~117 onward).
-    // For pre-indicator exits (insufficient candles, EMA fail) this is 0.
+    // setupScore/marketQualityScore: populated after indicators are computed.
+    // For pre-indicator exits (insufficient candles, EMA fail) these are 0.
     setupScore: typeof features.setupScore === "number" ? (features.setupScore as number) : 0,
+    marketQualityScore: typeof features.marketQualityScore === "number" ? (features.marketQualityScore as number) : 0,
     entryPrice: null, stopLoss: null, takeProfit: null, riskRewardRatio: null,
     reasons: [reason], rejectedReason: kind === "NO_TRADE" ? reason : undefined,
     features: { ...features },
@@ -100,6 +103,58 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   const volConf = volumeConfirmationScore(klines);
   const wickAnom = wickAnomaly(klines);
 
+  // ── New indicators ──
+  // MA8 / MA55 (simple moving average for short/mid trend alignment)
+  const ma8Arr = sma(closes, 8);
+  const ma55Arr = sma(closes, 55);
+  const ma8Val = ma8Arr.at(-1) ?? NaN;
+  const ma55Val = ma55Arr.at(-1) ?? NaN;
+  const ma8Prev = ma8Arr.at(-6) ?? NaN;
+  const ma55Prev = ma55Arr.at(-6) ?? NaN;
+  const ma8Slope = Number.isFinite(ma8Val) && Number.isFinite(ma8Prev) && Math.abs(ma8Prev) > 1e-9
+    ? (ma8Val - ma8Prev) / Math.abs(ma8Prev) : NaN;
+  const ma55Slope = Number.isFinite(ma55Val) && Number.isFinite(ma55Prev) && Math.abs(ma55Prev) > 1e-9
+    ? (ma55Val - ma55Prev) / Math.abs(ma55Prev) : NaN;
+  const ma8AboveMa55 = Number.isFinite(ma8Val) && Number.isFinite(ma55Val) ? ma8Val > ma55Val : null;
+  const priceAboveMa8 = Number.isFinite(ma8Val) ? last > ma8Val : null;
+  const priceAboveMa55 = Number.isFinite(ma55Val) ? last > ma55Val : null;
+
+  // Bollinger Bands (extended: width + position)
+  const bb = bollingerBands(closes, 20, 2);
+  const bbUpper = bb.upper.at(-1) ?? NaN;
+  const bbMiddle = bb.middle.at(-1) ?? NaN;
+  const bbLower = bb.lower.at(-1) ?? NaN;
+  const bbWidth = bb.width.at(-1) ?? NaN;
+  const bbPosition = bb.position.at(-1) ?? NaN; // %B: <0 below lower, >1 above upper
+  const recentWidths = bb.width.slice(-20).filter(Number.isFinite);
+  const avgBbWidth = recentWidths.length > 0 ? recentWidths.reduce((a, b) => a + b, 0) / recentWidths.length : NaN;
+  const bbSqueeze = Number.isFinite(bbWidth) && Number.isFinite(avgBbWidth) ? bbWidth < avgBbWidth * 0.8 : false;
+  const bbExpansion = Number.isFinite(bbWidth) && Number.isFinite(avgBbWidth) ? bbWidth > avgBbWidth * 1.2 : false;
+  const bbBreakoutUp = Number.isFinite(bbUpper) ? last > bbUpper : false;
+  const bbBreakoutDown = Number.isFinite(bbLower) ? last < bbLower : false;
+
+  // ADX — trend strength
+  const adxArr = adx(klines, 14);
+  const adxVal = adxArr.at(-1) ?? NaN;
+  const adxTrendStrength = Number.isFinite(adxVal)
+    ? adxVal >= 30 ? "strong" : adxVal >= 20 ? "emerging" : "flat"
+    : "unknown";
+
+  // VWAP — session fair value reference
+  const vwapArr = vwap(klines);
+  const vwapVal = vwapArr.at(-1) ?? NaN;
+  const priceAboveVwap = Number.isFinite(vwapVal) ? last > vwapVal : null;
+
+  // Volume MA20 and Volume Impulse (ratio of last volume to MA20)
+  const vma20Arr = volumeMA(klines, 20);
+  const vma20 = vma20Arr.at(-1) ?? NaN;
+  const lastVol = klines.at(-1)?.volume ?? NaN;
+  const volumeImpulse = Number.isFinite(vma20) && vma20 > 0 ? lastVol / vma20 : NaN;
+
+  // ATR Percentile — relative volatility (0 = lowest recent ATR, 100 = highest)
+  const atrPctArr = atrPercentile(klines, 14, 50);
+  const atrPctileVal = atrPctArr.at(-1) ?? NaN;
+
   // Populate features regardless of what happens next
   Object.assign(features, {
     indicatorStatus: "ok",
@@ -116,16 +171,196 @@ export function generateSignal(ctx: SignalContext): SignalResult {
     wickAnom,
     spread: +ticker.spread.toFixed(6),
     atrPctOfClose: Number.isFinite(a14) && last > 0 ? +((a14 / last) * 100).toFixed(4) : null,
+    // MA8 / MA55
+    ma8: Number.isFinite(ma8Val) ? +ma8Val.toFixed(6) : null,
+    ma55: Number.isFinite(ma55Val) ? +ma55Val.toFixed(6) : null,
+    ma8Slope: Number.isFinite(ma8Slope) ? +ma8Slope.toFixed(6) : null,
+    ma55Slope: Number.isFinite(ma55Slope) ? +ma55Slope.toFixed(6) : null,
+    ma8AboveMa55,
+    priceAboveMa8,
+    priceAboveMa55,
+    // Bollinger
+    bollingerUpper: Number.isFinite(bbUpper) ? +bbUpper.toFixed(6) : null,
+    bollingerMiddle: Number.isFinite(bbMiddle) ? +bbMiddle.toFixed(6) : null,
+    bollingerLower: Number.isFinite(bbLower) ? +bbLower.toFixed(6) : null,
+    bollingerWidth: Number.isFinite(bbWidth) ? +bbWidth.toFixed(6) : null,
+    bollingerPosition: Number.isFinite(bbPosition) ? +bbPosition.toFixed(4) : null,
+    bollingerSqueeze: bbSqueeze,
+    bollingerExpansion: bbExpansion,
+    bollingerBreakoutUp: bbBreakoutUp,
+    bollingerBreakoutDown: bbBreakoutDown,
+    // ADX
+    adx: Number.isFinite(adxVal) ? +adxVal.toFixed(2) : null,
+    adxTrendStrength,
+    // VWAP
+    vwap: Number.isFinite(vwapVal) ? +vwapVal.toFixed(6) : null,
+    priceAboveVwap,
+    // Volume
+    volumeMa20: Number.isFinite(vma20) ? +vma20.toFixed(2) : null,
+    volumeImpulse: Number.isFinite(volumeImpulse) ? +volumeImpulse.toFixed(4) : null,
+    // ATR Percentile
+    atrPercentile: Number.isFinite(atrPctileVal) ? atrPctileVal : null,
   });
 
-  // setupScore: market quality, independent of direction / trade decision.
-  // Computed once here so all downstream earlyExit calls carry it via { ...features }.
-  // Weights: trend 50%, volume confirmation 30%, volatility suitability 20%.
-  // This score is deliberately free of R:R and EMA alignment bonuses (those are trade-specific).
-  const setupScore = Math.max(0, Math.min(100, Math.round(
-    trendScore * 0.50 + volConf * 0.30 + volScore * 0.20,
-  )));
+  // ── setupScore: 10-component opportunity quality score (0-100) ──
+  // Computed here so all downstream earlyExit calls carry it via { ...features }.
+  // Direction-agnostic: measures setup quality regardless of LONG/SHORT/WAIT.
+  // Weights sum to 100; each component is independently scored.
+  let ss = 0;
+
+  // 1. EMA20/EMA50/EMA200 trend alignment (12pts)
+  {
+    const emaBullish = e20 > e50 && e50 > e200;
+    const emaBearish = e20 < e50 && e50 < e200;
+    const emaPartial = (e20 > e50) !== (e50 > e200); // one cross but not both
+    if (emaBullish || emaBearish) ss += 12;
+    else if (emaPartial) ss += 6;
+    else ss += 3;
+  }
+
+  // 2. MA8/MA55 short/mid trend alignment (12pts)
+  if (Number.isFinite(ma8Val) && Number.isFinite(ma55Val)) {
+    const maDiff = Math.abs(ma8Val - ma55Val) / (Math.abs(ma55Val) || 1);
+    const maAlignBull = ma8Val > ma55Val && last > ma8Val;
+    const maAlignBear = ma8Val < ma55Val && last < ma8Val;
+    if ((maAlignBull || maAlignBear) && maDiff > 0.003) ss += 12;
+    else if (maAlignBull || maAlignBear) ss += 8;
+    else ss += 4;
+  } else {
+    ss += 4; // no data, partial credit
+  }
+
+  // 3. MACD histogram strength (12pts)
+  if (Number.isFinite(macdHist) && last > 0) {
+    const histPct = Math.abs(macdHist) / last * 100;
+    if (histPct > 0.02) ss += 12;
+    else if (histPct > 0.005) ss += 8;
+    else if (histPct > 0) ss += 5;
+    // 0 = no contribution
+  }
+
+  // 4. RSI healthy zone (8pts) — rewards tradeable non-extreme RSI
+  if (Number.isFinite(r)) {
+    if (r >= 40 && r <= 60) ss += 8;        // neutral ready zone
+    else if (r >= 35 && r <= 70) ss += 6;   // tradeable range
+    else if (r >= 25 && r <= 80) ss += 3;
+    // extreme overbought/oversold = 0
+  }
+
+  // 5. Bollinger Band behaviour (12pts)
+  if (Number.isFinite(bbWidth) && Number.isFinite(bbPosition)) {
+    const volImpOk = Number.isFinite(volumeImpulse) && volumeImpulse >= 1.3;
+    if ((bbBreakoutUp || bbBreakoutDown) && volImpOk) ss += 12; // breakout + volume = real move
+    else if (bbBreakoutUp || bbBreakoutDown) ss += 6;           // breakout without volume confirmation
+    else if (bbSqueeze && volImpOk) ss += 10;                   // squeeze + rising volume = setup
+    else if (bbSqueeze) ss += 8;                                // squeeze = potential
+    else if (bbExpansion && volImpOk) ss += 6;                  // expansion + volume
+    else ss += 4;                                               // normal
+  } else {
+    ss += 4;
+  }
+
+  // 6. ADX trend strength (10pts)
+  if (Number.isFinite(adxVal)) {
+    if (adxVal >= 30) ss += 10;
+    else if (adxVal >= 20) ss += 7;
+    else if (adxVal >= 15) ss += 4;
+    else ss += 1; // very flat market
+  } else {
+    ss += 4; // no data
+  }
+
+  // 7. VWAP proximity — fair value setup zone (8pts)
+  if (Number.isFinite(vwapVal) && vwapVal > 0) {
+    const vwapDiff = Math.abs(last - vwapVal) / vwapVal;
+    if (vwapDiff < 0.003) ss += 8;       // very close to VWAP = fair value zone
+    else if (vwapDiff < 0.01) ss += 6;
+    else if (vwapDiff < 0.03) ss += 4;
+    else ss += 2;                         // far from VWAP
+  } else {
+    ss += 4; // no VWAP data
+  }
+
+  // 8. Volume impulse (12pts)
+  if (Number.isFinite(volumeImpulse)) {
+    if (volumeImpulse >= 2.0) ss += 12;
+    else if (volumeImpulse >= 1.5) ss += 9;
+    else if (volumeImpulse >= 1.1) ss += 6;
+    else if (volumeImpulse >= 0.8) ss += 3;
+    // < 0.8 = weak volume = 0
+  }
+
+  // 9. EMA20 slope / trend momentum (8pts)
+  {
+    const v1 = e20Arr.at(-1) ?? NaN;
+    const v6 = e20Arr.at(-6) ?? NaN;
+    if (Number.isFinite(v1) && Number.isFinite(v6) && Math.abs(v6) > 1e-9) {
+      const slopeAbs = Math.abs((v1 - v6) / Math.abs(v6));
+      if (slopeAbs > 0.002) ss += 8;
+      else if (slopeAbs > 0.0008) ss += 5;
+      else ss += 2;
+    } else {
+      ss += 3;
+    }
+  }
+
+  // 10. ATR percentile health (6pts) — rewards moderate volatility, penalises extremes
+  if (Number.isFinite(atrPctileVal)) {
+    if (atrPctileVal >= 20 && atrPctileVal <= 80) ss += 6;   // healthy range
+    else if (atrPctileVal >= 10 && atrPctileVal <= 90) ss += 3;
+    else ss += 1;                                             // extreme low/high volatility
+  } else {
+    ss += 3; // no ATR percentile data, neutral
+  }
+
+  const setupScore = Math.max(0, Math.min(100, ss));
   features.setupScore = setupScore;
+
+  // ── marketQualityScore: coin tradability quality (0-100) ──
+  // Based on available data at signal-engine level: volume, spread, funding, ATR health.
+  // Order book depth component is added by the orchestrator which has that data.
+  // Weights: volume 25, spread 20, ATR/volatility health 20, funding 15, data quality 10, pump proxy 10
+  {
+    let mqs = 0;
+    // Volume (25pts)
+    const vol24h = ticker.quoteVolume24h;
+    if (vol24h >= 500_000_000) mqs += 25;
+    else if (vol24h >= 100_000_000) mqs += 20;
+    else if (vol24h >= 50_000_000) mqs += 15;
+    else if (vol24h >= 10_000_000) mqs += 10;
+    else mqs += 4;
+    // Spread (20pts)
+    const spreadPct = ticker.spread * 100;
+    if (spreadPct < 0.01) mqs += 20;
+    else if (spreadPct < 0.05) mqs += 16;
+    else if (spreadPct < 0.1) mqs += 10;
+    else if (spreadPct < 0.15) mqs += 5;
+    // > 0.15% = 0
+    // ATR/volatility health (20pts) — same as volScore proxy
+    if (volScore >= 70) mqs += 20;
+    else if (volScore >= 50) mqs += 14;
+    else if (volScore >= 30) mqs += 7;
+    else mqs += 0;
+    // Funding normalcy (15pts)
+    if (funding) {
+      const fr = Math.abs(funding.rate * 100);
+      if (fr < 0.01) mqs += 15;
+      else if (fr < 0.05) mqs += 12;
+      else if (fr < 0.1) mqs += 7;
+      else if (fr < 0.3) mqs += 2;
+    } else {
+      mqs += 10; // unknown = neutral
+    }
+    // Data quality (10pts) — reached this point = indicators all computed
+    mqs += 10;
+    // Pump/dump proxy (10pts) — spread low + volatility healthy
+    if (spreadPct < 0.05 && volScore >= 30) mqs += 10;
+    else if (spreadPct < 0.1 && volScore >= 30) mqs += 6;
+    else mqs += 2;
+
+    features.marketQualityScore = Math.max(0, Math.min(85, Math.round(mqs)));
+    // Capped at 85: orchestrator can add up to 15pts for order book depth to reach 100
+  }
 
   // ── Spread filter ──
   if (ticker.spread > MAX_SPREAD_FRACTION) {
@@ -260,10 +495,13 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   reasons.push(`ATR=${a14.toFixed(4)} (${stopDistPct.toFixed(2)}% stop), R:R=1:${rr.toFixed(2)}`);
   reasons.push(`Scores: trend=${trendScore} vol=${volScore} volConf=${volConf}`);
 
+  const mqs = typeof features.marketQualityScore === "number" ? (features.marketQualityScore as number) : 0;
+
   if (score < 70) {
     return {
       symbol, timeframe, signalType: "NO_TRADE", score,
       setupScore,
+      marketQualityScore: mqs,
       entryPrice: last, stopLoss: stop, takeProfit: take, riskRewardRatio: rr,
       reasons,
       rejectedReason: `Sinyal skoru düşük (${score}/100 < 70)`,
@@ -276,6 +514,7 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   return {
     symbol, timeframe, signalType: direction, score,
     setupScore,
+    marketQualityScore: mqs,
     entryPrice: last, stopLoss: stop, takeProfit: take, riskRewardRatio: rr,
     reasons, features: { ...features },
   };

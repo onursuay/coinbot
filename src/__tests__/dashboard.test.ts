@@ -75,6 +75,6 @@ describe("getTopOpportunities", () => {
     const { items } = getTopOpportunities(details);
     expect(items.find((i) => i.symbol === "OPEN/USDT")!.decision).toBe("Sanal işlem açıldı");
     expect(items.find((i) => i.symbol === "PASS/USDT")!.decision).toBe("Eşik geçildi — sanal işlem bekleniyor");
-    expect(items.find((i) => i.symbol === "WAIT/USDT")!.decision).toBe("Beklemede");
+    expect(items.find((i) => i.symbol === "WAIT/USDT")!.decision).toContain("İşlem skoru yetersiz");
   });
 });

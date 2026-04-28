@@ -1,7 +1,9 @@
 export interface ScanDetail {
   symbol: string;
   signalType: string;
-  signalScore: number;
+  signalScore: number;          // tradeSignalScore: trade confidence (0 = no trade)
+  setupScore?: number;          // opportunity quality score (>0 even for WAIT)
+  marketQualityScore?: number;  // coin tradability quality
   tier?: string;
   rejectReason?: string | null;
   opened?: boolean;
@@ -10,8 +12,11 @@ export interface ScanDetail {
 export interface OpportunityEntry {
   symbol: string;
   signalType: string;
-  score: number;
-  missingPoints: number;
+  score: number;          // best available score (tradeSignalScore if > 0, else setupScore)
+  tradeSignalScore: number;
+  setupScore: number;
+  marketQualityScore: number;
+  missingPoints: number;  // points to reach tradeSignalScore threshold (70)
   mainReason: string;
   decision: string;
   opened: boolean;
@@ -29,20 +34,41 @@ export function getTopOpportunities(
   threshold = 70,
   maxCount = 5,
 ): TopOpportunitiesResult {
-  const withScore = scanDetails.filter((d) => d.signalScore > 0);
-  withScore.sort((a, b) => b.signalScore - a.signalScore);
+  // Include coins with any meaningful score (trade signal OR setup quality)
+  const withScore = scanDetails.filter(
+    (d) => d.signalScore > 0 || (d.setupScore ?? 0) > 0,
+  );
+
+  // Sort: highest tradeSignalScore first, then setupScore as tiebreaker
+  withScore.sort((a, b) => {
+    if (b.signalScore !== a.signalScore) return b.signalScore - a.signalScore;
+    return (b.setupScore ?? 0) - (a.setupScore ?? 0);
+  });
+
   const top = withScore.slice(0, maxCount);
 
   const items: OpportunityEntry[] = top.map((d) => {
     const opened = d.opened ?? false;
-    const aboveThreshold = d.signalScore >= threshold;
-    const missingPoints = Math.max(0, threshold - d.signalScore);
+    const tradeSignalScore = d.signalScore;
+    const setupScore = d.setupScore ?? 0;
+    const marketQualityScore = d.marketQualityScore ?? 0;
+
+    const aboveThreshold = tradeSignalScore >= threshold;
+    // Best visible score: trade signal if available, otherwise setup score
+    const score = tradeSignalScore > 0 ? tradeSignalScore : setupScore;
+    const missingPoints = tradeSignalScore > 0
+      ? Math.max(0, threshold - tradeSignalScore)
+      : threshold; // no trade signal at all → needs full 70 more
 
     let decision: string;
     if (opened) {
       decision = "Sanal işlem açıldı";
     } else if (aboveThreshold) {
       decision = "Eşik geçildi — sanal işlem bekleniyor";
+    } else if (tradeSignalScore > 0) {
+      decision = `İşlem skoru yetersiz (${tradeSignalScore}/70)`;
+    } else if (setupScore >= 50) {
+      decision = "Fırsat yapısı var, işlem şartı tamamlanmadı";
     } else {
       decision = "Beklemede";
     }
@@ -52,7 +78,10 @@ export function getTopOpportunities(
     return {
       symbol: d.symbol,
       signalType: d.signalType,
-      score: d.signalScore,
+      score,
+      tradeSignalScore,
+      setupScore,
+      marketQualityScore,
       missingPoints,
       mainReason,
       decision,

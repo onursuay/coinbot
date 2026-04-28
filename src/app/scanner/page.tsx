@@ -37,6 +37,7 @@ interface ScanRow {
   signalType: string;
   signalScore: number;
   setupScore?: number;
+  marketQualityScore?: number;
   scoreType?: "signal" | "setup" | "none";
   scoreReason?: string;
   rejectReason: string | null;
@@ -181,8 +182,9 @@ export default function ScannerPage() {
                 <th>ATR%</th>
                 <th>Fonlama</th>
                 <th>Sinyal</th>
-                <th title="Piyasa kalitesi (trend+hacim+volatilite) — WAIT dahil tüm coinlerde hesaplanır">Piyasa</th>
-                <th title="İşlem güven skoru — sadece yön belirlenen coinlerde anlamlı, 70+ = işlem açılır">İşlem</th>
+                <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">Kalite</th>
+                <th title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu; WAIT dahil hesaplanır">Fırsat</th>
+                <th title="İşlem güven skoru — 70+ = işlem açılır; sadece yön belirlenen coinlerde anlamlı">İşlem</th>
                 <th>Red Nedeni</th>
                 <th>Açıldı</th>
               </tr>
@@ -212,6 +214,15 @@ export default function ScannerPage() {
                     <span className={`tag-${r.signalType === "LONG" ? "success" : r.signalType === "SHORT" ? "danger" : "muted"}`}>
                       {r.signalType || "—"}
                     </span>
+                  </td>
+                  <td>
+                    {(r.marketQualityScore ?? 0) > 0 ? (
+                      <span className={`text-xs font-medium ${(r.marketQualityScore ?? 0) >= 70 ? "text-success" : (r.marketQualityScore ?? 0) >= 50 ? "text-warning" : "text-muted"}`}>
+                        {r.marketQualityScore}
+                      </span>
+                    ) : (
+                      <span className="text-muted text-xs">—</span>
+                    )}
                   </td>
                   <td title={r.scoreReason ?? ""}>
                     {(r.setupScore ?? 0) > 0 ? (

@@ -781,18 +781,22 @@ function TopOpportunityCard({ diagnostics }: { diagnostics: any }) {
           <div className="overflow-x-auto">
             <table className="t table-fixed w-full text-sm">
               <colgroup>
-                <col className="w-[18%]" />
-                <col className="w-[12%]" />
-                <col className="w-[12%]" />
-                <col className="w-[13%]" />
-                <col className="w-[25%]" />
+                <col className="w-[16%]" />
+                <col className="w-[10%]" />
+                <col className="w-[9%]" />
+                <col className="w-[9%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[16%]" />
                 <col className="w-[20%]" />
               </colgroup>
               <thead>
                 <tr>
                   <th>Coin</th>
                   <th>Yön</th>
-                  <th>Skor</th>
+                  <th title="marketQualityScore — hacim/spread/derinlik kalitesi">Kalite</th>
+                  <th title="setupScore — EMA/MA/Bollinger/ADX/VWAP fırsat yapısı">Fırsat</th>
+                  <th title="tradeSignalScore — 70+ = işlem açılır">İşlem</th>
                   <th>Eksik</th>
                   <th>Ana Sebep</th>
                   <th>Bot Kararı</th>
@@ -806,7 +810,7 @@ function TopOpportunityCard({ diagnostics }: { diagnostics: any }) {
                   >
                     <td className="font-medium truncate" title={item.symbol}>{item.symbol}</td>
                     <td>
-                      {item.signalType === "NO_TRADE" || !item.signalType ? (
+                      {item.signalType === "NO_TRADE" || item.signalType === "WAIT" || !item.signalType ? (
                         <span className="text-muted">—</span>
                       ) : (
                         <span className={`tag-${item.signalType === "LONG" ? "success" : "danger"}`}>
@@ -815,12 +819,26 @@ function TopOpportunityCard({ diagnostics }: { diagnostics: any }) {
                       )}
                     </td>
                     <td>
-                      <span className={`font-semibold ${item.aboveThreshold ? "text-success" : item.score >= 60 ? "text-warning" : ""}`}>
-                        {item.score}/100
+                      {(item as any).marketQualityScore > 0 ? (
+                        <span className={`text-xs ${(item as any).marketQualityScore >= 70 ? "text-success" : (item as any).marketQualityScore >= 50 ? "text-warning" : "text-muted"}`}>
+                          {(item as any).marketQualityScore}
+                        </span>
+                      ) : <span className="text-muted text-xs">—</span>}
+                    </td>
+                    <td>
+                      {(item as any).setupScore > 0 ? (
+                        <span className={`text-xs font-medium ${(item as any).setupScore >= 70 ? "text-success" : (item as any).setupScore >= 50 ? "text-warning" : ""}`}>
+                          {(item as any).setupScore}
+                        </span>
+                      ) : <span className="text-muted text-xs">—</span>}
+                    </td>
+                    <td>
+                      <span className={`font-semibold ${item.aboveThreshold ? "text-success" : item.tradeSignalScore >= 50 ? "text-warning" : "text-muted"}`}>
+                        {item.tradeSignalScore > 0 ? item.tradeSignalScore : "—"}
                       </span>
                     </td>
-                    <td className="text-muted">
-                      {item.missingPoints > 0 ? `${item.missingPoints} puan` : <span className="text-success">—</span>}
+                    <td className="text-muted text-xs">
+                      {item.missingPoints > 0 ? `${item.missingPoints}p` : <span className="text-success">—</span>}
                     </td>
                     <td className="text-xs text-muted truncate" title={item.mainReason}>{item.mainReason}</td>
                     <td className={`text-xs truncate ${item.opened ? "text-success font-medium" : item.aboveThreshold ? "text-success" : "text-muted"}`}>

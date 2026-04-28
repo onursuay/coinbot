@@ -200,3 +200,106 @@ export function volumeConfirmationScore(klines: Kline[]): number {
   if (ratio >= 0.5) return 35;
   return 15;
 }
+
+// ADX — Average Directional Index (Wilder's smoothing, period typically 14).
+// Returns array of ADX values indexed same as input klines.
+// First valid ADX at index ~(2*period - 1). Returns NaN before that.
+export function adx(klines: Kline[], period = 14): number[] {
+  const n = klines.length;
+  const out: number[] = new Array(n).fill(NaN);
+  if (n < period * 2) return out;
+
+  // True range and directional movements for each bar
+  const trs: number[] = new Array(n).fill(0);
+  const plusDMs: number[] = new Array(n).fill(0);
+  const minusDMs: number[] = new Array(n).fill(0);
+
+  for (let i = 1; i < n; i++) {
+    const k = klines[i];
+    const p = klines[i - 1];
+    if (!Number.isFinite(k.high) || !Number.isFinite(k.low) || !Number.isFinite(p.close)) continue;
+    trs[i] = Math.max(k.high - k.low, Math.abs(k.high - p.close), Math.abs(k.low - p.close));
+    const upMove = Number.isFinite(p.high) ? k.high - p.high : 0;
+    const downMove = Number.isFinite(p.low) ? p.low - k.low : 0;
+    if (upMove > downMove && upMove > 0) plusDMs[i] = upMove;
+    if (downMove > upMove && downMove > 0) minusDMs[i] = downMove;
+  }
+
+  // Wilder initial sums (bars 1..period)
+  let smTR = trs.slice(1, period + 1).reduce((a, b) => a + b, 0);
+  let smPlus = plusDMs.slice(1, period + 1).reduce((a, b) => a + b, 0);
+  let smMinus = minusDMs.slice(1, period + 1).reduce((a, b) => a + b, 0);
+
+  const dxArr: number[] = new Array(n).fill(NaN);
+  const dx = (smP: number, smM: number, smT: number): number => {
+    if (smT <= 0) return NaN;
+    const pDI = 100 * smP / smT;
+    const mDI = 100 * smM / smT;
+    const s = pDI + mDI;
+    return s <= 0 ? 0 : 100 * Math.abs(pDI - mDI) / s;
+  };
+  dxArr[period] = dx(smPlus, smMinus, smTR);
+
+  for (let i = period + 1; i < n; i++) {
+    smTR = smTR - smTR / period + trs[i];
+    smPlus = smPlus - smPlus / period + plusDMs[i];
+    smMinus = smMinus - smMinus / period + minusDMs[i];
+    dxArr[i] = dx(smPlus, smMinus, smTR);
+  }
+
+  // ADX = Wilder average of DX over `period`; first valid at index (2*period - 1)
+  const initDX = dxArr.slice(period, period * 2).filter(Number.isFinite);
+  if (initDX.length < period) return out;
+  let adxVal = initDX.reduce((a, b) => a + b, 0) / initDX.length;
+  out[period * 2 - 1] = adxVal;
+
+  for (let i = period * 2; i < n; i++) {
+    if (!Number.isFinite(dxArr[i])) continue;
+    adxVal = (adxVal * (period - 1) + dxArr[i]) / period;
+    out[i] = adxVal;
+  }
+  return out;
+}
+
+// ATR percentile — what percentile is the current ATR among the last `lookback` ATR values.
+// Returns 0-100; NaN when insufficient data. Requires period+5 candles minimum.
+export function atrPercentile(klines: Kline[], period = 14, lookback = 50): number[] {
+  const atrArr = atr(klines, period);
+  const out: number[] = new Array(klines.length).fill(NaN);
+  for (let i = period; i < klines.length; i++) {
+    const curr = atrArr[i];
+    if (!Number.isFinite(curr)) continue;
+    const start = Math.max(period - 1, i - lookback + 1);
+    const window = atrArr.slice(start, i + 1).filter(Number.isFinite);
+    if (window.length < 3) continue;
+    const rank = window.filter((v) => v <= curr).length;
+    out[i] = Math.round((rank / window.length) * 100);
+  }
+  return out;
+}
+
+// Extended Bollinger — adds normalised width and %B position to the standard bands.
+// width = (upper - lower) / middle (bandwidth normalised to price level)
+// position = (close - lower) / (upper - lower), i.e. %B (0-1 range, can exceed)
+export function bollingerBands(values: number[], period = 20, mult = 2): {
+  upper: number[];
+  middle: number[];
+  lower: number[];
+  width: number[];
+  position: number[];
+} {
+  const { middle, upper, lower } = bollinger(values, period, mult);
+  const n = values.length;
+  const width: number[] = new Array(n).fill(NaN);
+  const position: number[] = new Array(n).fill(NaN);
+  for (let i = 0; i < n; i++) {
+    const m = middle[i], u = upper[i], l = lower[i];
+    if (Number.isFinite(m) && m > 0 && Number.isFinite(u) && Number.isFinite(l)) {
+      width[i] = (u - l) / m;
+    }
+    if (Number.isFinite(u) && Number.isFinite(l) && u > l) {
+      position[i] = (values[i] - l) / (u - l);
+    }
+  }
+  return { upper, middle, lower, width, position };
+}

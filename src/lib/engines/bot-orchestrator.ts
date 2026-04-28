@@ -23,12 +23,13 @@ export interface ScanDetail {
   spreadPercent: number;
   atrPercent: number;
   fundingRate: number;
-  orderBookDepth: number;    // USDT — top-10 bid+ask average
+  orderBookDepth: number;       // USDT — top-10 bid+ask average
   signalType: string;
-  signalScore: number;       // trade confidence (0 for WAIT / early-exit NO_TRADE)
-  setupScore: number;        // market quality: trend+vol+volatility, >0 whenever indicators are computed
+  signalScore: number;          // tradeSignalScore: trade confidence (0 for WAIT / early-exit NO_TRADE)
+  setupScore: number;           // opportunity quality (10-component), >0 whenever indicators computed
+  marketQualityScore: number;   // coin tradability quality (volume/spread/depth/ATR/funding)
   scoreType: "signal" | "setup" | "none";  // which score is meaningful to display
-  scoreReason: string;       // brief label for the scanner UI
+  scoreReason: string;          // brief label for the scanner UI
   rejectReason: string | null;
   riskAllowed: boolean | null;
   riskRejectReason: string | null;
@@ -48,11 +49,22 @@ export function isOpportunityCandidate(detail: Pick<ScanDetail, "signalScore" | 
     detail.signalType === "SHORT";
 }
 
+// Minimum thresholds for dynamic coins to appear in the scanner table.
+// Low quality + no signal = noise. Core coins always bypass these gates.
+const DYNAMIC_MIN_QUALITY = 30;   // marketQualityScore must be >= 30 for a dynamic coin to appear
+const DYNAMIC_MIN_SETUP = 40;     // dynamic coin with good setup can appear even without a signal
+
 export function filterScanDetailsForDisplay(details: ScanDetail[]): { kept: ScanDetail[]; eliminated: number } {
   let eliminated = 0;
   const kept = details.filter((d) => {
     if (d.coinClass !== "DYNAMIC") return true;
+    // Market quality gate: very low quality coins don't appear even with a signal
+    const mqs = (d as any).marketQualityScore ?? 100; // default 100 for backwards compat (test data)
+    if (mqs < DYNAMIC_MIN_QUALITY) { eliminated++; return false; }
+    // Signal opportunity: score >= 50, explicit direction, or near-miss
     if (isOpportunityCandidate(d)) return true;
+    // High setup score qualifies even without a signal (good structure, not yet triggered)
+    if ((d.setupScore ?? 0) >= DYNAMIC_MIN_SETUP) return true;
     eliminated++;
     return false;
   });
@@ -425,6 +437,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       signalType: "UNKNOWN",
       signalScore: 0,
       setupScore: 0,
+      marketQualityScore: 0,
       scoreType: "none",
       scoreReason: "",
       rejectReason: null,
@@ -464,21 +477,32 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       detail.scoreReason = sig.score > 0
         ? `İşlem skoru (${sig.score}/100)`
         : sig.setupScore > 0
-          ? `Piyasa kalitesi (${sig.setupScore}/100)`
+          ? `Fırsat skoru (${sig.setupScore}/100)`
           : "Yetersiz veri";
       detail.atrPercent = typeof sig.features.atrPctOfClose === "number" ? sig.features.atrPctOfClose : 0;
 
+      // marketQualityScore: signal-engine provides 0-85 (no order book depth).
+      // Add order book depth bonus here (0-15) to complete the 0-100 score.
+      {
+        const baseScore = sig.marketQualityScore; // 0-85 from signal-engine
+        let depthBonus = 0;
+        if (orderbookDepthUsdt >= 1_000_000) depthBonus = 15;
+        else if (orderbookDepthUsdt >= 500_000) depthBonus = 12;
+        else if (orderbookDepthUsdt >= 200_000) depthBonus = 8;
+        else if (orderbookDepthUsdt >= 100_000) depthBonus = 5;
+        else if (orderbookDepthUsdt >= 50_000) depthBonus = 2;
+        detail.marketQualityScore = Math.max(0, Math.min(100, baseScore + depthBonus));
+      }
+
       // Mark opportunity candidates: score >= 50 (covers near-miss 50-69 and full LONG/SHORT >=70),
-      // explicit direction, near-miss flag, or strong trend+momentum combo.
+      // explicit direction, near-miss flag, or high setupScore (good structure, worth showing).
       // CORE coins ignore this — they're always displayed. DYNAMIC coins must qualify.
-      const trendScoreNum = typeof sig.features.trendScore === "number" ? sig.features.trendScore : 0;
-      const volConfNum = typeof sig.features.volConf === "number" ? sig.features.volConf : 0;
       detail.opportunityCandidate =
         sig.score >= 50 ||
         sig.signalType === "LONG" ||
         sig.signalType === "SHORT" ||
         !!sig.nearMissDirection ||
-        (trendScoreNum >= 60 && volConfNum >= 60);
+        sig.setupScore >= 45; // high setup score = potential opportunity even without signal
 
       // Persist signal for audit
       await sb.from("signals").insert({
