@@ -16,6 +16,51 @@ import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
 
+// Subset of signal-engine raw indicator features promoted to scan_details so the
+// dashboard can verify them without digging into per-tick logs. Mirrors signal-engine
+// feature keys 1:1 — see signal-engine.ts for definitions.
+export interface ScanIndicators {
+  ma8: number | null;
+  ma55: number | null;
+  ma8Slope: number | null;
+  ma55Slope: number | null;
+  ma8AboveMa55: boolean | null;
+  priceAboveMa8: boolean | null;
+  priceAboveMa55: boolean | null;
+  bollingerUpper: number | null;
+  bollingerMiddle: number | null;
+  bollingerLower: number | null;
+  bollingerWidth: number | null;
+  bollingerPosition: number | null;
+  bollingerSqueeze: boolean;
+  bollingerExpansion: boolean;
+  bollingerBreakoutUp: boolean;
+  bollingerBreakoutDown: boolean;
+  adx: number | null;
+  adxTrendStrength: string;
+  vwap: number | null;
+  priceAboveVwap: boolean | null;
+  volumeMa20: number | null;
+  volumeImpulse: number | null;
+  atrPercentile: number | null;
+}
+
+const INDICATOR_KEYS: readonly (keyof ScanIndicators)[] = [
+  "ma8", "ma55", "ma8Slope", "ma55Slope", "ma8AboveMa55", "priceAboveMa8", "priceAboveMa55",
+  "bollingerUpper", "bollingerMiddle", "bollingerLower", "bollingerWidth", "bollingerPosition",
+  "bollingerSqueeze", "bollingerExpansion", "bollingerBreakoutUp", "bollingerBreakoutDown",
+  "adx", "adxTrendStrength", "vwap", "priceAboveVwap",
+  "volumeMa20", "volumeImpulse", "atrPercentile",
+] as const;
+
+function pickIndicators(features: Record<string, unknown>): ScanIndicators {
+  const out: Record<string, unknown> = {};
+  for (const k of INDICATOR_KEYS) {
+    out[k] = features[k] ?? null;
+  }
+  return out as unknown as ScanIndicators;
+}
+
 export interface ScanDetail {
   symbol: string;
   coinClass?: "CORE" | "DYNAMIC";
@@ -25,7 +70,10 @@ export interface ScanDetail {
   fundingRate: number;
   orderBookDepth: number;       // USDT — top-10 bid+ask average
   signalType: string;
-  signalScore: number;          // tradeSignalScore: trade confidence (0 for WAIT / early-exit NO_TRADE)
+  // Trade confidence — 0 for WAIT / early-exit NO_TRADE. The ONLY score that gates trade opening.
+  // tradeSignalScore is the canonical name; signalScore is kept as alias for backwards compat.
+  tradeSignalScore: number;
+  signalScore: number;
   setupScore: number;           // opportunity quality (10-component), >0 whenever indicators computed
   marketQualityScore: number;   // coin tradability quality (volume/spread/depth/ATR/funding)
   scoreType: "signal" | "setup" | "none";  // which score is meaningful to display
@@ -34,6 +82,8 @@ export interface ScanDetail {
   riskAllowed: boolean | null;
   riskRejectReason: string | null;
   opened: boolean;
+  // Raw indicator snapshot — independent of score breakdown, useful for verification.
+  indicators?: ScanIndicators;
   // Legacy umbrella flag — kept for backwards compat with persisted data and tests.
   opportunityCandidate: boolean;
   // Set when signal-engine produced nearMissDirection (score 50-69, all gates passed except threshold).
@@ -506,6 +556,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       fundingRate: 0,
       orderBookDepth: 0,
       signalType: "UNKNOWN",
+      tradeSignalScore: 0,
       signalScore: 0,
       setupScore: 0,
       marketQualityScore: 0,
@@ -542,6 +593,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
       const sig = generateSignal({ symbol, timeframe: tf, klines, ticker, funding, btcKlines });
       detail.signalType = sig.signalType;
+      detail.tradeSignalScore = sig.score;
       detail.signalScore = sig.score;
       detail.setupScore = sig.setupScore;
       detail.scoreType = sig.score > 0 ? "signal" : sig.setupScore > 0 ? "setup" : "none";
@@ -551,18 +603,21 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
           ? `Fırsat skoru (${sig.setupScore}/100)`
           : "Yetersiz veri";
       detail.atrPercent = typeof sig.features.atrPctOfClose === "number" ? sig.features.atrPctOfClose : 0;
+      detail.indicators = pickIndicators(sig.features as Record<string, unknown>);
 
       // marketQualityScore: signal-engine provides 0-85 (no order book depth).
-      // Add order book depth bonus here (0-15) to complete the 0-100 score.
+      // Order book depth contribution (-15 to +15): low depth penalises mqs, high depth boosts it.
+      // Combined with the strict 75-quality scanner gate, illiquid dynamics drop out naturally.
       {
         const baseScore = sig.marketQualityScore; // 0-85 from signal-engine
-        let depthBonus = 0;
-        if (orderbookDepthUsdt >= 1_000_000) depthBonus = 15;
-        else if (orderbookDepthUsdt >= 500_000) depthBonus = 12;
-        else if (orderbookDepthUsdt >= 200_000) depthBonus = 8;
-        else if (orderbookDepthUsdt >= 100_000) depthBonus = 5;
-        else if (orderbookDepthUsdt >= 50_000) depthBonus = 2;
-        detail.marketQualityScore = Math.max(0, Math.min(100, baseScore + depthBonus));
+        let depthDelta = 0;
+        if (orderbookDepthUsdt >= 1_000_000) depthDelta = 15;
+        else if (orderbookDepthUsdt >= 500_000) depthDelta = 12;
+        else if (orderbookDepthUsdt >= 250_000) depthDelta = 6;
+        else if (orderbookDepthUsdt >= 150_000) depthDelta = -5;
+        else if (orderbookDepthUsdt >= 50_000)  depthDelta = -10;
+        else                                     depthDelta = -15;
+        detail.marketQualityScore = Math.max(0, Math.min(100, baseScore + depthDelta));
       }
 
       // Granular opportunity flags — read by the strict scanner filter and the broader

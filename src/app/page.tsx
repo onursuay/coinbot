@@ -906,7 +906,9 @@ function ScannerVisibilityCard({ diagnostics, open, onToggle }: { diagnostics: a
                     <th>Sembol</th>
                     <th>Tier</th>
                     <th>Sinyal</th>
-                    <th>Skor</th>
+                    <th title="marketQualityScore — hacim, spread, derinlik, ATR, fonlama sağlığı">Kalite</th>
+                    <th title="setupScore — fırsat yapısı (10 bileşen); WAIT dahil hesaplanır">Fırsat</th>
+                    <th title="tradeSignalScore — 70+ = işlem açılır; sadece yön belirlenen coinlerde anlamlı">İşlem</th>
                     <th>Spread%</th>
                     <th>ATR%</th>
                     <th>Funding</th>
@@ -929,7 +931,11 @@ function ScannerVisibilityCard({ diagnostics, open, onToggle }: { diagnostics: a
                           {d.signalType}
                         </span>
                       </td>
-                      <td>{d.signalScore > 0 ? d.signalScore : "—"}</td>
+                      <td className="tabular-nums">{(d.marketQualityScore ?? 0) > 0 ? d.marketQualityScore : "—"}</td>
+                      <td className="tabular-nums">{(d.setupScore ?? 0) > 0 ? d.setupScore : "—"}</td>
+                      <td className={`tabular-nums ${(d.tradeSignalScore ?? d.signalScore ?? 0) >= 70 ? "text-success font-semibold" : (d.tradeSignalScore ?? d.signalScore ?? 0) >= 50 ? "text-warning" : ""}`}>
+                        {(d.tradeSignalScore ?? d.signalScore ?? 0) > 0 ? (d.tradeSignalScore ?? d.signalScore) : "—"}
+                      </td>
                       <td className={d.spreadPercent > 0.1 ? "text-warning" : ""}>{d.spreadPercent > 0 ? d.spreadPercent.toFixed(3) : "—"}</td>
                       <td className={d.atrPercent > 5 ? "text-warning" : ""}>{d.atrPercent > 0 ? d.atrPercent.toFixed(2) : "—"}</td>
                       <td className={Math.abs(d.fundingRate) > 0.003 ? "text-warning" : ""}>{d.fundingRate !== 0 ? (d.fundingRate * 100).toFixed(4) + "%" : "—"}</td>
