@@ -34,13 +34,17 @@ export interface ScanDetail {
   riskAllowed: boolean | null;
   riskRejectReason: string | null;
   opened: boolean;
-  // True when the row carries real trade-opportunity potential.
-  // CORE rows are always displayed regardless. DYNAMIC rows are dropped from the
-  // scanner table when this is false — liquidity passing alone is not enough.
+  // Legacy umbrella flag — kept for backwards compat with persisted data and tests.
   opportunityCandidate: boolean;
+  // Set when signal-engine produced nearMissDirection (score 50-69, all gates passed except threshold).
+  nearMissSignal?: boolean;
+  // Set when setupScore >= STRONG_SETUP_THRESHOLD — strong structure even without a fired signal.
+  strongSetupCandidate?: boolean;
+  // Set when signal-engine returned NO_TRADE specifically because of the BTC trend veto.
+  btcTrendRejected?: boolean;
 }
 
-// A dynamic row is shown in the scanner table only if it carries opportunity signal.
+// A dynamic row is shown in the scanner table only if it carries real opportunity signal.
 // CORE rows are always retained — the user wants to see WAIT/NO_TRADE for the pinned set.
 export function isOpportunityCandidate(detail: Pick<ScanDetail, "signalScore" | "signalType" | "opportunityCandidate">): boolean {
   return detail.opportunityCandidate === true ||
@@ -49,26 +53,85 @@ export function isOpportunityCandidate(detail: Pick<ScanDetail, "signalScore" | 
     detail.signalType === "SHORT";
 }
 
-// Minimum thresholds for dynamic coins to appear in the scanner table.
-// Low quality + no signal = noise. Core coins always bypass these gates.
-const DYNAMIC_MIN_QUALITY = 30;   // marketQualityScore must be >= 30 for a dynamic coin to appear
-const DYNAMIC_MIN_SETUP = 40;     // dynamic coin with good setup can appear even without a signal
+// Strict thresholds — scanner main table is a decision screen, not a scan dump.
+// CORE coins bypass all gates. DYNAMIC coins must clear all three to appear.
+const DYNAMIC_MIN_QUALITY = 75;   // marketQualityScore: tradable coin
+const DYNAMIC_MIN_SETUP = 70;     // setupScore: meaningful structure
+const DYNAMIC_MIN_SIGNAL = 50;    // tradeSignalScore: at least near-miss
+const STRONG_SETUP_THRESHOLD = 80;
 
-export function filterScanDetailsForDisplay(details: ScanDetail[]): { kept: ScanDetail[]; eliminated: number } {
-  let eliminated = 0;
+export interface FilterScanResult {
+  kept: ScanDetail[];
+  eliminated: number;             // total dropped (sum of below)
+  eliminatedQuality: number;      // marketQualityScore < 75
+  eliminatedSetup: number;        // setupScore < 70 (after quality passed)
+  eliminatedSignal: number;       // quality+setup ok but no signal/near-miss/direction/strong-setup
+  btcTrendRejected: number;       // dropped rows whose rejectReason came from BTC trend veto
+}
+
+// Pool used by the "Fırsata En Yakın 5 Coin" card — broader than the strict scanner table.
+// Includes the strict survivors plus dynamic rows that have a meaningful score (signal or setup)
+// even if they didn't fully clear the strict gates. Capped to keep payload size bounded.
+export function buildOpportunityPool(details: ScanDetail[], cap = 30): ScanDetail[] {
+  const withScore = details.filter((d) => {
+    if (d.coinClass === "CORE") return true;
+    return (d.signalScore ?? 0) > 0 || (d.setupScore ?? 0) >= 50;
+  });
+  withScore.sort((a, b) => {
+    const sa = (a.signalScore ?? 0), sb = (b.signalScore ?? 0);
+    if (sb !== sa) return sb - sa;
+    return (b.setupScore ?? 0) - (a.setupScore ?? 0);
+  });
+  return withScore.slice(0, cap);
+}
+
+export function filterScanDetailsForDisplay(details: ScanDetail[]): FilterScanResult {
+  let eliminatedQuality = 0;
+  let eliminatedSetup = 0;
+  let eliminatedSignal = 0;
+  let btcTrendRejected = 0;
+
   const kept = details.filter((d) => {
     if (d.coinClass !== "DYNAMIC") return true;
-    // Market quality gate: very low quality coins don't appear even with a signal
-    const mqs = (d as any).marketQualityScore ?? 100; // default 100 for backwards compat (test data)
-    if (mqs < DYNAMIC_MIN_QUALITY) { eliminated++; return false; }
-    // Signal opportunity: score >= 50, explicit direction, or near-miss
-    if (isOpportunityCandidate(d)) return true;
-    // High setup score qualifies even without a signal (good structure, not yet triggered)
-    if ((d.setupScore ?? 0) >= DYNAMIC_MIN_SETUP) return true;
-    eliminated++;
-    return false;
+
+    // Quality gate
+    const mqs = (d as any).marketQualityScore ?? 100; // default for legacy/test data
+    if (mqs < DYNAMIC_MIN_QUALITY) {
+      eliminatedQuality++;
+      if (d.btcTrendRejected) btcTrendRejected++;
+      return false;
+    }
+
+    // Setup gate
+    const setup = d.setupScore ?? 0;
+    if (setup < DYNAMIC_MIN_SETUP) {
+      eliminatedSetup++;
+      if (d.btcTrendRejected) btcTrendRejected++;
+      return false;
+    }
+
+    // Signal/opportunity gate — at least one must hold
+    const hasSignal = (d.signalScore ?? 0) >= DYNAMIC_MIN_SIGNAL;
+    const hasDirection = d.signalType === "LONG" || d.signalType === "SHORT";
+    const hasNearMiss = d.nearMissSignal === true;
+    const hasStrongSetup = d.strongSetupCandidate === true || setup >= STRONG_SETUP_THRESHOLD;
+    if (!hasSignal && !hasDirection && !hasNearMiss && !hasStrongSetup) {
+      eliminatedSignal++;
+      if (d.btcTrendRejected) btcTrendRejected++;
+      return false;
+    }
+
+    return true;
   });
-  return { kept, eliminated };
+
+  return {
+    kept,
+    eliminated: eliminatedQuality + eliminatedSetup + eliminatedSignal,
+    eliminatedQuality,
+    eliminatedSetup,
+    eliminatedSignal,
+    btcTrendRejected,
+  };
 }
 
 export interface TickResult {
@@ -98,14 +161,22 @@ export interface TickResult {
   dynamicRejectedWeakMomentum?: number;
   dynamicRejectedNoData?: number;
   dynamicRejectedInsufficientDepth?: number;  // order book depth check in per-symbol loop
-  // Dynamic candidates that ran full analysis but produced no opportunity (score < 50, no
-  // direction, no near-miss). These are dropped from scanDetails before display — keeping
-  // them would clutter the table with score=0 / WAIT noise.
+  // Dynamic candidates that ran full analysis but produced no opportunity. Total of the
+  // three granular fields below.
   dynamicEliminatedLowSignal?: number;
+  // Granular elimination breakdown — strict scanner gate.
+  dynamicEliminatedQuality?: number;     // marketQualityScore < 75
+  dynamicEliminatedSetup?: number;       // setupScore < 70
+  dynamicEliminatedSignal?: number;      // no signal/near-miss/direction/strong-setup
+  // BTC trend veto — counted among the eliminated above. Diagnostic visibility only.
+  dynamicBtcTrendRejected?: number;
   // Dynamic rows that survived the post-analysis opportunity filter and made it to the
-  // scanner table. This — not the pre-filter pool size — is what "Dinamik Fırsat Adayı"
-  // should display. May be much lower than maxCandidates ceiling.
+  // scanner table. This — not the pre-filter pool size — is what "Dinamik Gösterilen"
+  // displays. Strictly bounded by the new gates; in flat markets typically 0-5.
   dynamicOpportunityCandidates?: number;
+  // Broader pool used by the "Fırsata En Yakın 5 Coin" card — includes high-setup dynamics
+  // that didn't clear the strict scanner gate.
+  opportunityPool?: ScanDetail[];
 }
 
 const PAPER_BALANCE = 1000;
@@ -494,15 +565,22 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         detail.marketQualityScore = Math.max(0, Math.min(100, baseScore + depthBonus));
       }
 
-      // Mark opportunity candidates: score >= 50 (covers near-miss 50-69 and full LONG/SHORT >=70),
-      // explicit direction, near-miss flag, or high setupScore (good structure, worth showing).
-      // CORE coins ignore this — they're always displayed. DYNAMIC coins must qualify.
+      // Granular opportunity flags — read by the strict scanner filter and the broader
+      // opportunity pool. Strict gate combines these with quality + setup thresholds.
+      detail.nearMissSignal = !!sig.nearMissDirection;
+      detail.strongSetupCandidate = sig.setupScore >= 80;
+      detail.btcTrendRejected =
+        sig.signalType === "NO_TRADE" &&
+        typeof sig.rejectedReason === "string" &&
+        sig.rejectedReason.includes("BTC trend");
+
+      // Legacy umbrella flag — kept for backwards compat with persisted data and tests.
       detail.opportunityCandidate =
         sig.score >= 50 ||
         sig.signalType === "LONG" ||
         sig.signalType === "SHORT" ||
         !!sig.nearMissDirection ||
-        sig.setupScore >= 45; // high setup score = potential opportunity even without signal
+        sig.setupScore >= 45;
 
       // Persist signal for audit
       await sb.from("signals").insert({
@@ -729,16 +807,22 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   result.deeplyAnalyzedSymbols = symbolsToAnalyze.length;
 
   // ── Final opportunity filter for the scanner table ──
-  // Pre-filter (selectDynamicCandidates) admits coins by liquidity quality alone — that
-  // routinely passes 30+ coins on Binance Futures, which would force the table to ~30
-  // dynamic rows of WAIT/score=0 noise. The dynamic ceiling is a CEILING, not a target.
-  // Drop dynamic rows that did not yield real opportunity (score < 50, no direction).
-  // CORE rows are always retained.
-  const dynamicAnalyzed = result.scanDetails.filter((d) => d.coinClass === "DYNAMIC").length;
-  const { kept: filteredScanDetails, eliminated: dynamicEliminatedLowSignal } = filterScanDetailsForDisplay(result.scanDetails);
-  result.scanDetails = filteredScanDetails;
-  result.dynamicEliminatedLowSignal = dynamicEliminatedLowSignal;
-  result.dynamicOpportunityCandidates = dynamicAnalyzed - dynamicEliminatedLowSignal;
+  // Strict three-gate filter: marketQualityScore >= 75, setupScore >= 70, AND at least one
+  // of (signalScore >= 50 / near-miss / explicit direction / strong-setup). Dynamic-only;
+  // CORE rows always pass. The broader "opportunityPool" is built before this prune so
+  // high-setup dynamics that didn't clear the strict gate still feed the top-5 card.
+  const rawScanDetails = result.scanDetails;
+  const dynamicAnalyzed = rawScanDetails.filter((d) => d.coinClass === "DYNAMIC").length;
+  const opportunityPool = buildOpportunityPool(rawScanDetails);
+  const filterRes = filterScanDetailsForDisplay(rawScanDetails);
+  result.scanDetails = filterRes.kept;
+  result.opportunityPool = opportunityPool;
+  result.dynamicEliminatedLowSignal = filterRes.eliminated;
+  result.dynamicEliminatedQuality = filterRes.eliminatedQuality;
+  result.dynamicEliminatedSetup = filterRes.eliminatedSetup;
+  result.dynamicEliminatedSignal = filterRes.eliminatedSignal;
+  result.dynamicBtcTrendRejected = filterRes.btcTrendRejected;
+  result.dynamicOpportunityCandidates = dynamicAnalyzed - filterRes.eliminated;
 
   result.durationMs = Date.now() - start;
 
@@ -759,8 +843,12 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     scanned: symbolsToAnalyze.length,
     lowVolumePrefilterRejected: lowVolumeSkipped,
     dynamicCandidates: dynamicResult?.candidates.length ?? 0,    // pre-filter pool size (legacy field)
-    dynamicOpportunityCandidates: result.dynamicOpportunityCandidates ?? 0,  // in-table count — what user calls "Dinamik Fırsat Adayı"
+    dynamicOpportunityCandidates: result.dynamicOpportunityCandidates ?? 0,  // in-table count — strict scanner gate survivors
     dynamicEliminatedLowSignal: result.dynamicEliminatedLowSignal ?? 0,
+    dynamicEliminatedQuality: result.dynamicEliminatedQuality ?? 0,
+    dynamicEliminatedSetup: result.dynamicEliminatedSetup ?? 0,
+    dynamicEliminatedSignal: result.dynamicEliminatedSignal ?? 0,
+    dynamicBtcTrendRejected: result.dynamicBtcTrendRejected ?? 0,
     dynamicRejectedLowVolume: dynamicResult?.rejectedLowVolume ?? 0,
     dynamicRejectedStablecoin: dynamicResult?.rejectedStablecoin ?? 0,
     dynamicRejectedHighSpread: dynamicResult?.rejectedHighSpread ?? 0,
@@ -775,6 +863,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     errors: result.errors.length,
     durationMs: result.durationMs,
     scanDetails: result.scanDetails.slice(0, 50), // cap at 50 to limit JSONB size
+    opportunityPool: (result.opportunityPool ?? []).slice(0, 30),
     lastOpenedTrade: result.openedPaperTrades[0] ?? null,
     topRejectReasons: result.rejectedSignals.slice(0, 10).map((r) => `${r.symbol}: ${r.reason}`),
     topNearMiss: result.nearMissSignals.slice(0, 5).map((n) => `${n.direction} ${n.symbol} skor=${n.score}`),

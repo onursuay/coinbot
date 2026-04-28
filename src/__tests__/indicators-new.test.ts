@@ -214,15 +214,15 @@ describe("dynamic universe quality and setup filtering", () => {
     expect(eliminated).toBe(1);
   });
 
-  it("DYNAMIC coin with adequate quality but high setupScore is kept", async () => {
+  it("DYNAMIC coin with strong setupScore (>=80) is kept even without a fired signal", async () => {
     const { filterScanDetailsForDisplay } = await import("@/lib/engines/bot-orchestrator");
     const details = [
       {
         symbol: "GOODSETUP/USDT", coinClass: "DYNAMIC", tier: "TIER_3",
         spreadPercent: 0.03, atrPercent: 1.5, fundingRate: 0, orderBookDepth: 300_000,
-        signalType: "WAIT", signalScore: 0, setupScore: 55, marketQualityScore: 50,
+        signalType: "WAIT", signalScore: 0, setupScore: 82, marketQualityScore: 80,
         rejectReason: "trend belirsiz", riskAllowed: null, riskRejectReason: null,
-        opened: false, opportunityCandidate: false,
+        opened: false, opportunityCandidate: false, strongSetupCandidate: true,
       },
     ];
     const { kept, eliminated } = filterScanDetailsForDisplay(details as any);

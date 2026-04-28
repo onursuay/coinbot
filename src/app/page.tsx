@@ -696,9 +696,12 @@ function DynamicUniverseCard({ diagnostics }: { diagnostics: any }) {
   const stats = diagnostics?.tick_stats;
   if (!stats) return null;
 
-  const opportunity = stats.dynamicOpportunityCandidates ?? 0;
+  const shown = stats.dynamicOpportunityCandidates ?? 0;
   const pool = stats.dynamicCandidates ?? 0;
-  const eliminated = stats.dynamicEliminatedLowSignal ?? 0;
+  const eliminatedQuality = stats.dynamicEliminatedQuality ?? 0;
+  const eliminatedSetup = stats.dynamicEliminatedSetup ?? 0;
+  const eliminatedSignal = stats.dynamicEliminatedSignal ?? 0;
+  const btcRejected = stats.dynamicBtcTrendRejected ?? 0;
   const lowVol = stats.dynamicRejectedLowVolume ?? 0;
   const insufficientDepth = stats.dynamicRejectedInsufficientDepth ?? 0;
   const noData = stats.dynamicRejectedNoData ?? 0;
@@ -715,9 +718,14 @@ function DynamicUniverseCard({ diagnostics }: { diagnostics: any }) {
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
         <Stat label="Core (sabit)" value="10" />
-        <Stat label="Dinamik Fırsat Adayı" value={String(opportunity)} accent={opportunity > 0 ? "accent" : undefined} />
-        <Stat label="Aday Havuzu" value={String(pool)} />
-        <Stat label="Elenen Sinyal Yok" value={String(eliminated)} />
+        <Stat label="Dinamik Gösterilen" value={String(shown)} accent={shown > 0 ? "accent" : undefined} />
+        <Stat label="Dinamik Aday Havuzu" value={String(pool)} />
+        <Stat label="BTC Filtresinden Elenen" value={String(btcRejected)} />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm mt-2">
+        <Stat label="Elenen Kalite Yetersiz" value={String(eliminatedQuality)} />
+        <Stat label="Elenen Setup Yetersiz" value={String(eliminatedSetup)} />
+        <Stat label="Elenen Sinyal Yetersiz" value={String(eliminatedSignal)} />
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm mt-2">
         <Stat label="Düşük Hacim" value={String(lowVol)} />
@@ -730,21 +738,24 @@ function DynamicUniverseCard({ diagnostics }: { diagnostics: any }) {
         <Stat label="Pump/Dump" value={String(pumpDump)} />
         <Stat label="Stablecoin/Sentetik" value={String(stable)} />
       </div>
-      {opportunity === 0 && pool === 0 && (
+      {shown === 0 && pool === 0 && (
         <p className="text-xs text-muted mt-2">Worker henüz tarama yapmadı. Bot başlatıldığında veriler gelir.</p>
       )}
-      {opportunity === 0 && pool > 0 && (
-        <p className="text-xs text-muted mt-2">Aday havuzu dolu ama sinyal potansiyeli olan dynamic coin yok — tarayıcı sadece 10 core gösteriyor.</p>
+      {shown === 0 && pool > 0 && (
+        <p className="text-xs text-muted mt-2">Aday havuzu dolu ama strict gate&apos;ten geçen dynamic yok — tarayıcı sadece 10 core gösteriyor.</p>
       )}
     </div>
   );
 }
 
 function TopOpportunityCard({ diagnostics }: { diagnostics: any }) {
-  const scanDetails: any[] = diagnostics?.scan_details ?? [];
-  const { items, hasStrongOpportunity, insufficientData } = getTopOpportunities(scanDetails);
+  // Read from the broader opportunity_pool when available — includes high-setup dynamics
+  // that didn't clear the strict scanner-table gate. Falls back to scan_details for
+  // older payloads with no pool field.
+  const pool: any[] = diagnostics?.opportunity_pool ?? diagnostics?.scan_details ?? [];
+  const { items, hasStrongOpportunity, insufficientData } = getTopOpportunities(pool);
 
-  if (scanDetails.length === 0) {
+  if (pool.length === 0) {
     return (
       <div className="card">
         <div className="flex items-center justify-between mb-3">

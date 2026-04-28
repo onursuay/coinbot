@@ -16,7 +16,11 @@ interface TickStats {
   durationMs: number;
   dynamicCandidates?: number;                // pre-filter pool size (volume/spread/momentum gates passed)
   dynamicOpportunityCandidates?: number;     // in-table count — only coins with real signal potential
-  dynamicEliminatedLowSignal?: number;       // analyzed but no opportunity (score<50, no direction)
+  dynamicEliminatedLowSignal?: number;       // analyzed but no opportunity (total of three below)
+  dynamicEliminatedQuality?: number;
+  dynamicEliminatedSetup?: number;
+  dynamicEliminatedSignal?: number;
+  dynamicBtcTrendRejected?: number;
   dynamicRejectedLowVolume?: number;
   dynamicRejectedStablecoin?: number;
   dynamicRejectedHighSpread?: number;
