@@ -1346,7 +1346,7 @@ export function AIDecisionAssistantCard({
                 PROMPT&apos;U KOPYALA
               </button>
               <p className="mt-1 text-[10px] text-muted">
-                Bu prompt otomatik çalıştırılmaz; manuel olarak Claude Code/Codex'e yapıştırabilirsiniz.
+                Bu prompt otomatik çalıştırılmaz; manuel olarak Claude Code/Codex&apos;e yapıştırabilirsiniz.
               </p>
             </div>
           )}
