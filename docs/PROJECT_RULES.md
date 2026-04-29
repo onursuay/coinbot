@@ -26,9 +26,32 @@ limit, weight izleme, TTL cache, single-flight dedupe, exponential backoff
 + jitter, circuit breaker ve duplicate-request guard zorunludur. Detaylar
 ve gelecek fazlar için kontrol listesi bağlı dokümandadır.
 
-### 3. Auto-deploy (CLAUDE.md)
-Her tamamlanan iş sonrası: commit + push + GitHub Actions deploy doğrulama.
-Detay: ana dizindeki `CLAUDE.md`.
+### 3. Auto-deploy — DEĞİŞMEZ KURAL
+
+> **🚨 KURAL — Her işlem sonrasında otomatik yapılacaklar:**
+> **GitHub Actions durumunu ve VPS deploy'unu tetikle. Commit + push + VPS'te
+> worker yeniden deploy et.**
+> Bu kural istisnasız her tamamlanan iş için geçerlidir; kullanıcının ayrıca
+> istemesine gerek yoktur.
+
+**Her görev tamamlandığında** (kod değişikliği içersin ya da içermesin),
+kullanıcı ayrıca istemese bile şu adımları sırayla uygula:
+
+1. **Commit** — değişen dosyaları stage et, anlamlı bir commit mesajı yaz.
+2. **Push + GitHub Actions tetikle** — `git push origin main`. Push,
+   `Deploy Worker` workflow'unu otomatik tetikler; VPS'te worker yeniden
+   deploy edilir.
+3. **VPS deploy doğrulaması** — `gh run watch <run-id> --exit-status` ile
+   workflow'u sonuna kadar izle. `https://coin.onursuay.com/api/bot/heartbeat`
+   üzerinden `online:true, status:running_paper` döndüğünü doğrula.
+
+**Atlanacak durumlar:**
+- Sadece dokümantasyon/yorum değişikliği → push yapılır, deploy izlemeye
+  gerek yok.
+- Değişiklikler test/build'i kıracaksa → commit/push yapma, önce sorunu çöz.
+- Kullanıcı açıkça "henüz commit etme" / "lokal kalsın" dediyse → atla.
+
+Detay/referans: ana dizindeki `CLAUDE.md`.
 
 ---
 
