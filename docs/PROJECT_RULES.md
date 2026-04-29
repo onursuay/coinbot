@@ -63,12 +63,14 @@ Bu faz [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) kurallarına
 **aykırı hiçbir API kullanımı eklemedi**: yeni endpoint çağrısı yok, yeni
 periyodik tarama yok, mevcut merkezi adapter dışı fetch yok.
 
+**Ürün kuralı:** Tarama Modları kontrolleri ve aktif mod özetleri **yalnızca**
+`/scan-modes` sayfasında yer alır. Panel/Dashboard ve Piyasa Tarayıcı
+sayfalarında aktif mod rozet/banner/özet satırı gösterilmez.
+
 İlgili dosyalar:
 - `src/lib/scan-modes/` — types, sources, in-memory store.
 - `src/app/api/scan-modes/` — GET/PUT, manual-list POST/DELETE.
 - `src/app/scan-modes/page.tsx` — 3-kartlı modlar sayfası.
-- `src/components/ScanModesSummary.tsx` — Piyasa Tarayıcı'daki aktif mod
-  özeti.
 
 ## Dokümantasyon İndeksi
 
