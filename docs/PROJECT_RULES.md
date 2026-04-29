@@ -373,6 +373,60 @@ sık-polling ekleyen yeni UI **eklenmedi**.
 - `worker/.env.example` — `USE_UNIFIED_CANDIDATE_POOL=true` dökümante
   edildi.
 
+## Piyasa Tarayıcı Sadeleştirme (Faz 8)
+
+Piyasa Tarayıcı sayfası bir **dashboard/panel** değil, **coin operasyon
+tablosudur**. Bu fazda banner/status kutuları, "Tarama Akışı" ve
+"Görünürlük" özet blokları, EVREN/ÖN ELEME/ANALİZ EDİLEN gibi büyük
+metrik kutuları ve aktif Tarama Modları özeti **kaldırıldı**. Sayfa
+yalnızca canlı coin tablosunu render eder.
+
+**Ürün kuralları (değişmez):**
+- Piyasa Tarayıcı **dashboard özeti göstermez**.
+- Piyasa Tarayıcı yalnızca coin operasyon tablosudur.
+- Aktif Tarama Modları (GMT/MT/MİL aktif/pasif) özeti **sadece**
+  `/scan-modes` sayfasında bulunur.
+- Kaynaklar ana tabloda kısa etiketle gösterilir:
+  `WIDE_MARKET → GMT`, `MOMENTUM → MT`, `MANUAL_LIST → MİL`,
+  birden fazla kaynak için `KRM`. Tam kaynak listesi yalnızca
+  hover/detay/debug görünümünde tutulur.
+- Gelişmiş metrikler **küçük vektörel ikonla** açılır. Yazılı
+  "Gelişmiş Seçenekler" butonu yoktur. "Tümünü seç" / "Tümünü kaldır"
+  toplu seçim eylemleri yoktur — sadece tek tek metrik kutuları.
+
+**Tablo varsayılan kolonları:**
+COIN · KAYNAK · YÖN · KALİTE · FIRSAT · İŞLEM SKORU · EŞİĞE KALAN ·
+KARAR · SEBEP. Başlıklar büyük harf, hücreler simetrik hizalı.
+
+**Yön/karar etiketleri:** ana UI'da yalnızca Türkçe etiketler kullanılır
+— `LONG ADAY`, `LONG AÇILDI`, `SHORT ADAY`, `SHORT AÇILDI`,
+`YÖN BEKLİYOR`, `İŞLEM YOK`, `RİSK REDDİ`, `BTC FİLTRESİ`.
+Backend'in döndürdüğü `WAIT` / `NO_TRADE` ham ifadeleri ekrana
+yazılmaz; UI mapping yapar.
+
+**Açılan paper pozisyon satırları** aday satırlarından görsel olarak
+ayrılır (bold + hafif background tint).
+
+**Trading invariant'leri (bu fazda dokunulmadı):**
+- `HARD_LIVE_TRADING_ALLOWED=false`
+- `DEFAULT_TRADING_MODE=paper`
+- `enable_live_trading=false`
+- `MIN_SIGNAL_CONFIDENCE=70` (signal-engine `if (score < 70)` kapısı)
+- BTC trend filtresi
+- SL/TP/R:R kontrolleri
+- Risk engine, kaldıraç sistemi, worker lock
+- Unified candidate provider mantığı
+- Binance API çağrı modeli (yeni fetch eklenmedi —
+  [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu)
+
+İlgili dosyalar:
+- `src/app/scanner/page.tsx` — yeniden yazıldı; sade tablo + ikon
+  picker.
+- `src/lib/engines/bot-orchestrator.ts` — `ScanIndicators`'a sadece
+  RSI ve MACD histogramı **observation alanı** eklendi (zaten
+  features içinde hesaplanıyordu; trade kararını etkilemez).
+- `src/__tests__/scanner-ui-phase8.test.ts` — yeni test paketi.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

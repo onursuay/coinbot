@@ -83,6 +83,10 @@ export interface ScanIndicators {
   volumeMa20: number | null;
   volumeImpulse: number | null;
   atrPercentile: number | null;
+  // Observation-only — surfaced for the Phase 8 scanner picker.
+  // Already computed by signal-engine; never gates trades.
+  rsi: number | null;
+  macdHist: number | null;
 }
 
 const INDICATOR_KEYS: readonly (keyof ScanIndicators)[] = [
@@ -91,6 +95,7 @@ const INDICATOR_KEYS: readonly (keyof ScanIndicators)[] = [
   "bollingerSqueeze", "bollingerExpansion", "bollingerBreakoutUp", "bollingerBreakoutDown",
   "adx", "adxTrendStrength", "vwap", "priceAboveVwap",
   "volumeMa20", "volumeImpulse", "atrPercentile",
+  "rsi", "macdHist",
 ] as const;
 
 function pickIndicators(features: Record<string, unknown>): ScanIndicators {
