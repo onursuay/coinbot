@@ -26,8 +26,10 @@ import {
   BlockingReasonsCard,
   TodaysSummaryCard,
   PaperValidationCard,
+  PerformanceDecisionCard,
   type DecisionRow,
   type OpenPositionRow,
+  type PerformanceDecisionInput,
 } from "@/components/dashboard/Cards";
 
 interface Toast {
@@ -62,6 +64,7 @@ export default function HomePage() {
   const [hardLiveAllowed, setHardLiveAllowed] = useState<boolean>(false);
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [e2eStatus, setE2eStatus] = useState<any>(null);
+  const [perfDecision, setPerfDecision] = useState<PerformanceDecisionInput | null>(null);
 
   const addToast = (t: Omit<Toast, "id">) => {
     const id = ++toastId;
@@ -71,7 +74,7 @@ export default function HomePage() {
 
   const refresh = async () => {
     const noCache: RequestInit = { cache: "no-store" };
-    const [a, b, c, d, e, h, i] = await Promise.all([
+    const [a, b, c, d, e, h, i, j] = await Promise.all([
       fetch("/api/bot/status", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/performance", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades?limit=20", noCache).then((r) => r.json()).catch(() => null),
@@ -79,6 +82,7 @@ export default function HomePage() {
       fetch("/api/bot/heartbeat", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/diagnostics", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/e2e-status", noCache).then((r) => r.json()).catch(() => null),
+      fetch("/api/trade-performance/decision-summary", noCache).then((r) => r.json()).catch(() => null),
     ]);
     if (a?.ok) {
       setStatus(a.data);
@@ -90,6 +94,7 @@ export default function HomePage() {
     if (e?.ok) setWorkerHealth(e.data);
     if (h?.ok) setDiagnostics(h.data);
     if (i?.ok) setE2eStatus(i.data);
+    if (j?.ok && j.data?.decision) setPerfDecision(j.data.decision as PerformanceDecisionInput);
   };
 
   useAutoRefresh(refresh);
@@ -276,6 +281,19 @@ export default function HomePage() {
         />
         <PaperValidationCard data={e2eStatus} hardLiveAllowed={hardLiveAllowed} />
       </div>
+
+      {/* Phase 13 — Performans Karar Özeti (paper/live ortak motor) */}
+      <PerformanceDecisionCard
+        data={perfDecision}
+        onAction={(kind, actionId) => {
+          // Bu callback yalnızca öneri kaydı içindir — hiçbir trade engine
+          // ayarına, eşiğe, stop-loss kuralına veya canlı trading gate'ine
+          // bağlanmaz. Şu an toast üretmeyi tercih etmiyoruz; gelecekte
+          // PROMPT/OBSERVE durumları ayrı kayıt yoluna alınabilir.
+          void actionId;
+          void kind;
+        }}
+      />
 
       {/* Hızlı performans satırı — küçük KPI'lar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

@@ -794,6 +794,132 @@ yakın olduğunu ve hangi şartların eksik olduğunu doğrudan görür.
 - `src/__tests__/direction-explainability-module.test.ts` —
   modül seviyesi birim testler.
 
+## Trade Performans Karar Motoru (Faz 13)
+
+CoinBot'un işlemlerini, kaçan fırsatlarını ve skor bandlarını analiz edip
+yorumlayan **karar destek motoru** Faz 13'te kuruldu. Sistem sadece
+"işlem açıldı/açılmadı" demez; neden açıldığını, neden kaybettiğini,
+hangi ayarın zarar ettirebileceğini ve hangi alanın gözlem gerektirdiğini
+yorumlar.
+
+### Paper-only DEĞİL — paper/live ortak motor
+
+Faz 13 mimari kuralı: **Paper ve live için ayrı performans/karar motoru
+kurulmaz.** Tek `trade-performance` modülü, paper ve live işlemleri
+**ortak `NormalizedTrade` modeli** üzerinden işler.
+
+| Alan | Anlam |
+|---|---|
+| `tradeMode` | `"paper"` veya `"live"` — bot moduna karşılık gelir. |
+| `executionType` | `"simulated"` veya `"real"` — emir tipini ayırır. |
+
+Şu an veri kaynağı sadece `paper_trades` tablosudur (`paperTradeRowToNormalizedTrade`
+adaptörü ile NormalizedTrade'e çevrilir). Canlıya geçince ileride
+`live_trades` tablosu için ayrı bir adaptör eklenecek; **motor yeniden
+yazılmayacak**, UI sözleşmesi değişmeyecek.
+
+### Modül kapsamı
+
+`src/lib/trade-performance/` — saf fonksiyonlar; external I/O yok.
+
+- `types.ts` — `NormalizedTrade`, `TradeMode`, `ExecutionType`,
+  `ScanRowInput`, tüm rapor tipleri + `paperTradeRowToNormalizedTrade`
+  adaptörü.
+- `score-bands.ts` — skor bandı analizi (50–59, 60–64, 65–69, 70–74,
+  75–84, 85+). Her band için sinyal sayısı, açılan/açılmayan, TP/SL,
+  ortalama PnL%, ortalama R:R, en sık bloklayan sebep ve kısa Türkçe
+  yorum. `modeFilter` ile paper/live ayrımı yapılabilir.
+- `shadow-threshold.ts` — 60/65/70/75 eşikleri için hipotetik trade
+  sayımı + tahmini kalite/risk skoru + öneri. `liveThreshold` daima
+  70'tir; `liveThresholdUnchanged` daima `true` döner.
+- `missed-opportunities.ts` — `BAND_60_69_NEAR_TP`,
+  `BTC_FILTER_REJECTED`, `RISK_GATE_REJECTED`, `DIRECTION_UNCONFIRMED`
+  sebepleri. Veri yokken `insufficientData=true` ile güvenli fallback.
+  Future-price backtest YAPILMAZ; mevcut scan_details verisi üzerinden
+  çalışır.
+- `trade-review.ts` — kapanan her işlem için `NORMAL_TRADE | GOOD_WIN |
+  ACCEPTABLE_LOSS | POSSIBLE_EARLY_STOP | POSSIBLE_BAD_ENTRY |
+  POSSIBLE_BAD_RR | POSSIBLE_RISK_TOO_HIGH | POSSIBLE_EXIT_TOO_EARLY |
+  DATA_INSUFFICIENT` etiketi. Stop-loss kalitesi için ayrı
+  `reviewStopLossQuality()` fonksiyonu (`NORMAL_STOP |
+  EARLY_STOP_SUSPECT | SL_TOO_TIGHT | RR_WEAK | DATA_INSUFFICIENT`).
+- `risk-advisory.ts` — risk yüzdesi, günlük max zarar, açık pozisyon
+  ve günlük işlem sınırları için **yorum** üretir. Hiçbir Risk Yönetimi
+  ayarı **DEĞİŞTİRİLMEZ** — `RiskAdvisoryItem` sadece `code + comment`
+  döner.
+- `decision-summary.ts` — üst seviye karar:
+  - `status`: `HEALTHY | WATCH | ATTENTION_NEEDED | DATA_INSUFFICIENT`
+  - `actionType`: `NO_ACTION | OBSERVE | REVIEW_THRESHOLD |
+    REVIEW_STOP_LOSS | REVIEW_RISK_SETTINGS | REVIEW_POSITION_LIMITS |
+    REVIEW_SIGNAL_QUALITY | DATA_INSUFFICIENT`
+  - `confidence`: 0–100
+  - `requiresUserApproval`: ATTENTION_NEEDED / REVIEW_* için `true`
+  - `observeDays`: OBSERVE için varsayılan `7`
+  - `appliedToTradeEngine`: **daima `false`**
+  - `tradeMode`: paper veya live (UI rozeti)
+
+### Read-only API endpoint
+
+`GET /api/trade-performance/decision-summary` — opsiyonel `?mode=paper|live`.
+
+- Yalnızca `paper_trades` ve `bot_settings.last_tick_summary` okur.
+- **Yeni Binance API çağrısı YAPMAZ.**
+- Trade engine, signal engine, risk engine veya canlı trading gate'i
+  tetiklemez; salt-okunur.
+- Veri yetersizse `decision.actionType=DATA_INSUFFICIENT` ile güvenli
+  fallback döner ("Yeterli paper veri oluşmadı. Gözlem devam ediyor.").
+- Live veri kaynağı henüz yok — `meta.liveTradeSourceAvailable=false`.
+
+### Dashboard kartı — Performans Karar Özeti
+
+`PerformanceDecisionCard` kartı:
+- Mini bölümler: **MEVCUT DURUM**, **ANA BULGU**, **SİSTEM YORUMU**,
+  **ÖNERİ**, **AKSİYON DURUMU**, **UYGULAMA**.
+- Başlığı sabit: "PERFORMANS KARAR ÖZETİ" — paper'a dar bir isim
+  kullanılmaz; canlıya geçişte aynı kart live verisini de gösterir.
+- `MOD: PAPER / CANLI` rozeti.
+- `actionType ≠ NO_ACTION/DATA_INSUFFICIENT` ise altında ONAYLA /
+  REDDET / GÖZLEM / PROMPT butonları görünür. **Bu butonlar gerçek
+  ayar değişikliğine bağlı DEĞİLDİR**; yalnızca callback üretir.
+
+### Mutlak invariantlar (bu fazda dokunulmadı)
+
+- `HARD_LIVE_TRADING_ALLOWED=false`
+- `DEFAULT_TRADING_MODE=paper`
+- `enable_live_trading=false`
+- `MIN_SIGNAL_CONFIDENCE=70` — `liveThreshold=70` sabiti shadow analize
+  hardcoded olarak yansır.
+- BTC trend filtresi, SL/TP/R:R, risk engine execution, kaldıraç
+  execution, worker lock, unified candidate provider mantığı,
+  Risk Yönetimi ayarlarının execution'a bağlanmaması, Opportunity
+  Priority'nin trade engine'e bağlanmaması.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu —
+  yeni Binance fetch/axios eklenmedi.
+
+### Yasaklar (Faz 13 ürün kuralı)
+
+- Trade logic değiştirme.
+- `tradeSignalScore` eşiğini değiştirme.
+- `MIN_SIGNAL_CONFIDENCE` değiştirme.
+- Stop-loss kuralını otomatik değiştirme — yalnızca yorumla.
+- Risk Settings'i execution'a bağlama.
+- Opportunity Priority'yi trade engine'e bağlama.
+- Kaldıraç execution ekleme.
+- Canlı trading gate açma.
+- Binance API çağrısı ekleme.
+- Worker lock değiştirme.
+- ActionFooter butonlarını gerçek ayar değişikliğine bağlama.
+- Dashboard'u düz yazı rapor ekranına çevirme.
+
+İlgili dosyalar:
+- `src/lib/trade-performance/` — modül (7 dosya).
+- `src/app/api/trade-performance/decision-summary/route.ts` — read-only
+  endpoint.
+- `src/components/dashboard/Cards.tsx` — `PerformanceDecisionCard` +
+  `MiniSection` helper.
+- `src/app/page.tsx` — kart KPI satırının üstüne yerleştirildi.
+- `src/__tests__/trade-performance-phase13.test.ts` — 34 test.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

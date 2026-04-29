@@ -638,6 +638,155 @@ function CompactBox({ label, value, tone }: { label: string; value: string; tone
   );
 }
 
+// ── Phase 13 — Performans Karar Özeti Kartı ───────────────────────────
+//
+// Trade Performance Decision Engine'in ürettiği `decision` payload'ını
+// 5 mini bölüm halinde gösterir. Düz yazı/rapor formatı kullanılmaz;
+// kompakt kutular + status pill kullanılır. Paper/live ayrımı için
+// `tradeMode` rozeti gösterilir; canlıya geçişte aynı kart live verisini
+// de bu sözleşmeyle besler.
+//
+// SAFETY: Bu kart hiçbir trade engine ayarını, eşik değerini veya canlı
+// trading gate'ini değiştirmez. ActionFooter butonları yalnızca callback
+// üretir; gerçek ayar değişikliğine bağlı DEĞİLDİR.
+type DecisionStatusPretty = "HEALTHY" | "WATCH" | "ATTENTION_NEEDED" | "DATA_INSUFFICIENT";
+type DecisionActionPretty =
+  | "NO_ACTION" | "OBSERVE" | "REVIEW_THRESHOLD" | "REVIEW_STOP_LOSS"
+  | "REVIEW_RISK_SETTINGS" | "REVIEW_POSITION_LIMITS" | "REVIEW_SIGNAL_QUALITY"
+  | "DATA_INSUFFICIENT";
+
+export interface PerformanceDecisionInput {
+  status: DecisionStatusPretty;
+  /** "paper" veya "live" — kart başında rozet olarak gösterilir. */
+  tradeMode: "paper" | "live";
+  mainFinding: string;
+  systemInterpretation: string;
+  recommendation: string;
+  actionType: DecisionActionPretty;
+  confidence: number;
+  requiresUserApproval: boolean;
+  observeDays: number;
+  /** Decision summary execution path'ine bağlı DEĞİLDİR — true beklenmez. */
+  appliedToTradeEngine: false;
+}
+
+const STATUS_LABEL: Record<DecisionStatusPretty, string> = {
+  HEALTHY: "SAĞLIKLI",
+  WATCH: "GÖZLEM",
+  ATTENTION_NEEDED: "DİKKAT",
+  DATA_INSUFFICIENT: "VERİ YETERSİZ",
+};
+
+const STATUS_TONE: Record<DecisionStatusPretty, Tone> = {
+  HEALTHY: "success",
+  WATCH: "warning",
+  ATTENTION_NEEDED: "danger",
+  DATA_INSUFFICIENT: "muted",
+};
+
+const ACTION_LABEL: Record<DecisionActionPretty, string> = {
+  NO_ACTION: "AKSİYON YOK",
+  OBSERVE: "GÖZLEM",
+  REVIEW_THRESHOLD: "EŞİK İNCELEMESİ",
+  REVIEW_STOP_LOSS: "STOP-LOSS İNCELEMESİ",
+  REVIEW_RISK_SETTINGS: "RİSK AYAR İNCELEMESİ",
+  REVIEW_POSITION_LIMITS: "POZİSYON LİMİT İNCELEMESİ",
+  REVIEW_SIGNAL_QUALITY: "SİNYAL KALİTE İNCELEMESİ",
+  DATA_INSUFFICIENT: "VERİ YETERSİZ",
+};
+
+export function PerformanceDecisionCard({
+  data,
+  onAction,
+}: {
+  data: PerformanceDecisionInput | null;
+  onAction?: (action: "APPROVE" | "REJECT" | "OBSERVE" | "PROMPT", actionId: string) => void;
+}) {
+  const empty = !data;
+  const status = data?.status ?? "DATA_INSUFFICIENT";
+  const action = data?.actionType ?? "DATA_INSUFFICIENT";
+  const tradeModeLabel = data?.tradeMode === "live" ? "CANLI" : "PAPER";
+  const isActionable = !empty && data!.actionType !== "NO_ACTION" && data!.actionType !== "DATA_INSUFFICIENT";
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <h2 className="font-semibold tracking-wide">PERFORMANS KARAR ÖZETİ</h2>
+        <div className="flex items-center gap-2">
+          <Pill tone="muted">MOD: {tradeModeLabel}</Pill>
+          <Pill tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Pill>
+          {!empty && (
+            <Pill tone="accent">GÜVEN: %{Math.round(data!.confidence)}</Pill>
+          )}
+        </div>
+      </div>
+
+      {empty ? (
+        <p className="text-sm text-muted">
+          Yeterli paper veri oluşmadı. Gözlem devam ediyor.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <MiniSection label="MEVCUT DURUM" tone={STATUS_TONE[status]}>
+            {STATUS_LABEL[status]}
+          </MiniSection>
+          <MiniSection label="ANA BULGU" tone="muted">
+            {data!.mainFinding}
+          </MiniSection>
+          <MiniSection label="SİSTEM YORUMU" tone="muted">
+            {data!.systemInterpretation}
+          </MiniSection>
+          <MiniSection label="ÖNERİ" tone={STATUS_TONE[status]}>
+            {data!.recommendation}
+          </MiniSection>
+          <MiniSection label="AKSİYON DURUMU" tone={isActionable ? "warning" : "muted"}>
+            {ACTION_LABEL[action]}
+            {data!.observeDays > 0 ? ` · ${data!.observeDays} gün gözlem` : ""}
+            {data!.requiresUserApproval ? " · KULLANICI ONAYI BEKLENİYOR" : ""}
+          </MiniSection>
+          <MiniSection label="UYGULAMA" tone="muted">
+            Bu öneri trade engine&apos;e otomatik uygulanmaz
+            ({data!.appliedToTradeEngine ? "uygulandı?!" : "uygulanmadı"}).
+          </MiniSection>
+        </div>
+      )}
+
+      {isActionable && (
+        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
+          {(["APPROVE", "REJECT", "OBSERVE", "PROMPT"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => onAction?.(k, `performance-decision-${data!.actionType}`)}
+              className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
+              data-action-kind={k}
+            >
+              {k === "APPROVE" ? "ONAYLA" : k === "REJECT" ? "REDDET" : k === "OBSERVE" ? `GÖZLEM (${data!.observeDays || 7}g)` : "PROMPT"}
+            </button>
+          ))}
+          <span className="ml-auto text-[10px] uppercase tracking-wider text-muted">
+            Butonlar yalnızca öneri kaydeder; ayar değiştirmez.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniSection({ label, tone, children }: { label: string; tone: Tone; children: React.ReactNode }) {
+  const titleCls =
+    tone === "success" ? "text-success" :
+    tone === "warning" ? "text-warning" :
+    tone === "danger"  ? "text-danger"  :
+    tone === "accent"  ? "text-accent"  : "text-slate-300";
+  return (
+    <div className="rounded-lg border border-border bg-bg-soft px-3 py-2">
+      <div className={`text-[10px] uppercase tracking-wider ${titleCls}`}>{label}</div>
+      <div className="mt-1 text-sm text-slate-200">{children}</div>
+    </div>
+  );
+}
+
 function Gauge({ label, value, hint, tone }: {
   label: string;
   value: number | null;
