@@ -256,17 +256,28 @@ export default function RiskPage() {
             min={1}
             max={50}
             step={1}
-            onChange={(v) => update({ positions: { defaultMaxOpenPositions: Math.round(v) } })}
+            onChange={(v) => {
+              const def = Math.round(v);
+              const cap = settings.positions.dynamicMaxOpenPositionsCap;
+              update({
+                positions: cap < def
+                  ? { defaultMaxOpenPositions: def, dynamicMaxOpenPositionsCap: def }
+                  : { defaultMaxOpenPositions: def },
+              });
+            }}
             hint="Aynı anda hedeflenen pozisyon sayısı"
           />
           <NumberField
             label="DİNAMİK ÜST SINIR"
             value={settings.positions.dynamicMaxOpenPositionsCap}
-            min={1}
+            min={settings.positions.defaultMaxOpenPositions}
             max={50}
             step={1}
-            onChange={(v) => update({ positions: { dynamicMaxOpenPositionsCap: Math.round(v) } })}
-            hint="Tetiklenebilecek mutlak üst sınır"
+            onChange={(v) => {
+              const cap = Math.max(Math.round(v), settings.positions.defaultMaxOpenPositions);
+              update({ positions: { dynamicMaxOpenPositionsCap: cap } });
+            }}
+            hint={`Tetiklenebilecek mutlak üst sınır (≥ ${settings.positions.defaultMaxOpenPositions})`}
             danger={settings.positions.dynamicMaxOpenPositionsCap > POLICY.warnings.dynamicMaxOpenPositionsCap}
           />
           <NumberField
