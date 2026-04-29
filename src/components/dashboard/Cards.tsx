@@ -1203,3 +1203,189 @@ export function LiveReadinessCard({
     </div>
   );
 }
+
+// ── AI KARAR ASİSTANI ─────────────────────────────────────────────────────────
+//
+// AI Decision Assistant kartı. ChatGPT API'nın ürettiği yorum/öneri içeriğini
+// gösterir. Bu kart canlıyı AÇMAZ, ayar DEĞİŞTİRMEZ; ONAYLA butonu yoktur.
+// Aksiyonlar: GÖZLEM, PROMPT, RAPORU YENİLE.
+
+export interface AIDecisionCardInput {
+  status:
+    | "NO_ACTION"
+    | "OBSERVE"
+    | "REVIEW_REQUIRED"
+    | "CRITICAL_BLOCKER"
+    | "DATA_INSUFFICIENT";
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  mainFinding: string;
+  systemInterpretation: string;
+  recommendation: string;
+  actionType: string;
+  confidence: number;
+  requiresUserApproval: boolean;
+  observeDays: number;
+  blockedBy: string[];
+  suggestedPrompt: string | null;
+  safetyNotes: string[];
+  /** Daima false — AI çıktıları otomatik uygulanmaz. */
+  appliedToTradeEngine: false;
+  fallbackReason?: string | null;
+}
+
+const AI_STATUS_LABEL: Record<string, string> = {
+  NO_ACTION: "AKSİYON YOK",
+  OBSERVE: "GÖZLEM",
+  REVIEW_REQUIRED: "İNCELEME GEREKLİ",
+  CRITICAL_BLOCKER: "KRİTİK BLOKER",
+  DATA_INSUFFICIENT: "VERİ YETERSİZ",
+};
+
+const AI_STATUS_TONE: Record<string, Tone> = {
+  NO_ACTION: "success",
+  OBSERVE: "warning",
+  REVIEW_REQUIRED: "warning",
+  CRITICAL_BLOCKER: "danger",
+  DATA_INSUFFICIENT: "muted",
+};
+
+const AI_RISK_TONE: Record<string, Tone> = {
+  LOW: "success",
+  MEDIUM: "warning",
+  HIGH: "danger",
+  CRITICAL: "danger",
+};
+
+export function AIDecisionAssistantCard({
+  data,
+  onAction,
+}: {
+  data: AIDecisionCardInput | null;
+  onAction?: (
+    action: "OBSERVE" | "PROMPT" | "REFRESH" | "COPY_PROMPT",
+    actionId: string,
+  ) => void;
+}) {
+  const empty = !data;
+  const status = data?.status ?? "DATA_INSUFFICIENT";
+  const statusTone = AI_STATUS_TONE[status] ?? "muted";
+  const riskLevel = data?.riskLevel ?? "LOW";
+  const riskTone = AI_RISK_TONE[riskLevel] ?? "muted";
+  const isPrompt = data?.actionType === "PROMPT" && data?.suggestedPrompt;
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <h2 className="font-semibold tracking-wide">AI KARAR ASİSTANI</h2>
+        <div className="flex items-center gap-2">
+          <Pill tone={statusTone}>{AI_STATUS_LABEL[status]}</Pill>
+          <Pill tone={riskTone}>RİSK: {riskLevel}</Pill>
+          {!empty && data!.confidence > 0 && (
+            <Pill tone="accent">GÜVEN: %{Math.round(data!.confidence)}</Pill>
+          )}
+        </div>
+      </div>
+
+      {empty ? (
+        <p className="text-sm text-muted">AI yorumu yükleniyor…</p>
+      ) : (
+        <>
+          {data!.fallbackReason && (
+            <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+              AI değerlendirmesi şu an alınamadı: {data!.fallbackReason}.
+              CoinBot mevcut karar destek kartlarıyla çalışmaya devam ediyor.
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <MiniSection label="ANA BULGU" tone={statusTone}>
+              {data!.mainFinding || "—"}
+            </MiniSection>
+            <MiniSection label="SİSTEM YORUMU" tone="muted">
+              {data!.systemInterpretation || "—"}
+            </MiniSection>
+            <MiniSection label="ÖNERİ" tone={statusTone}>
+              {data!.recommendation || "—"}
+            </MiniSection>
+            <MiniSection label="RİSK SEVİYESİ" tone={riskTone}>
+              {riskLevel}
+              {data!.requiresUserApproval ? " · Kullanıcı onayı gerekli" : ""}
+            </MiniSection>
+            <MiniSection label="AKSİYON" tone="muted">
+              {data!.actionType}
+              {data!.observeDays > 0 ? ` · ${data!.observeDays} gün gözlem` : ""}
+            </MiniSection>
+            <MiniSection label="UYGULAMA" tone="muted">
+              AI çıktıları trade engine&apos;e otomatik uygulanmaz
+              ({data!.appliedToTradeEngine ? "uygulandı?!" : "uygulanmadı"}).
+            </MiniSection>
+          </div>
+
+          {data!.blockedBy.length > 0 && (
+            <div className="mt-3 rounded-lg border border-border bg-bg-soft px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wider text-muted">BLOKER ETİKETLERİ</div>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {data!.blockedBy.map((b) => (
+                  <span key={b} className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-bg-soft border border-border text-slate-300">
+                    {b}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {isPrompt && data!.suggestedPrompt && (
+            <div className="mt-3 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wider text-accent">ÖNERİLEN PROMPT</div>
+              <pre className="mt-1 text-[11px] text-slate-200 whitespace-pre-wrap break-words">{data!.suggestedPrompt}</pre>
+              <button
+                type="button"
+                onClick={() => onAction?.("COPY_PROMPT", "ai-decision-prompt")}
+                className="mt-2 text-[11px] font-medium px-3 py-1 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
+              >
+                PROMPT&apos;U KOPYALA
+              </button>
+              <p className="mt-1 text-[10px] text-muted">
+                Bu prompt otomatik çalıştırılmaz; manuel olarak Claude Code/Codex'e yapıştırabilirsiniz.
+              </p>
+            </div>
+          )}
+
+          {data!.safetyNotes.length > 0 && (
+            <div className="mt-3 rounded-lg border border-border bg-bg-soft px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wider text-muted">GÜVENLİK NOTLARI</div>
+              <ul className="mt-1 space-y-0.5 text-[11px] text-slate-300 list-disc list-inside">
+                {data!.safetyNotes.map((n, i) => <li key={i}>{n}</li>)}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Aksiyon butonları — ONAYLA YOK; AI canlıyı açan UI içermez */}
+      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
+        {(["OBSERVE", "PROMPT", "REFRESH"] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => onAction?.(k, `ai-decision-${data?.actionType ?? "unknown"}`)}
+            className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent disabled:opacity-50"
+            data-action-kind={k}
+            disabled={empty && k !== "REFRESH"}
+          >
+            {k === "OBSERVE" ? `GÖZLEM (${data?.observeDays ?? 7}g)`
+              : k === "PROMPT" ? "PROMPT"
+              : "RAPORU YENİLE"}
+          </button>
+        ))}
+        <span className="ml-auto text-[10px] uppercase tracking-wider text-muted self-center">
+          AI yorumlayıcıdır; ayar değiştirmez, emir açmaz.
+        </span>
+      </div>
+
+      <p className="mt-2 text-[10px] text-muted">
+        ChatGPT API çıktısı yorum amaçlıdır. Kritik aksiyonlar için kullanıcı onayı zorunludur.
+      </p>
+    </div>
+  );
+}

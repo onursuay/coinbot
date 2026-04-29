@@ -1765,6 +1765,148 @@ Bu fazda canlı execution **kapalı kalmalı**. Check'ler şunu doğrular:
 
 ---
 
+## AI Karar Asistanı Patch — ChatGPT API Yorum Katmanı
+
+**Amaç:** Dashboard'daki mevcut karar kartlarını ChatGPT API ile yorumlayan,
+aksiyon sınıflandıran ve kullanıcıya net öneri sunan AI Karar Asistanı
+katmanı. Bu patch ana trade/risk/SL/TP/kaldıraç kararlarını **DEĞİŞTİRMEZ**.
+ChatGPT API sadece yorum/özet/aksiyon önerisi üretir.
+
+### Değişmez Kural
+
+ChatGPT API **HİÇBİR koşulda**:
+- Emir açmaz / kapatmaz.
+- Risk %, SL, TP, threshold, kaldıraç ayarı değiştirmez.
+- Binance API çağrısı yapmaz.
+
+Sadece:
+- Dashboard verisini sade Türkçe karar diline yorumlar.
+- Aksiyon türü önerir (NO_ACTION / OBSERVE / REVIEW_* / PROMPT).
+- Kullanıcı için karar kartı metni üretir.
+- Gerekirse Claude Code/Codex için PROMPT metni hazırlar (manuel kopyala).
+
+### Modül Yapısı
+
+`src/lib/ai-decision/` — saf fonksiyonlar + OpenAI Responses API client.
+
+| Dosya | Açıklama |
+|---|---|
+| `types.ts` | `AIDecisionOutput`, `AIDecisionContext`, `AIDecisionResponse` + status/risk/action enum'ları |
+| `schema.ts` | OpenAI structured outputs JSON schema + `normalizeAIDecisionOutput()` (clamp + sanitize) |
+| `prompt.ts` | `AI_DECISION_SYSTEM_PROMPT` — yorumlayıcı rolü, yasaklar, invariantlar |
+| `build-context.ts` | `buildAIDecisionContext()` + `stripSecrets()` (recursive secret scrub) |
+| `client.ts` | `callAIDecision()` — OpenAI Responses API çağrısı, fallback'lı |
+| `fallback.ts` | API key yok / hata durumlarında güvenli `AIDecisionOutput` |
+| `index.ts` | Barrel export |
+
+### OpenAI Env
+
+Env variables:
+- `OPENAI_API_KEY` — secret; response/log'a SIZINTI YAPMAZ.
+- `OPENAI_MODEL` — default `gpt-4o-mini` (sabit `DEFAULT_OPENAI_MODEL`).
+
+### AI Context Kaynakları
+
+Context'e şunlar konur (özet, ham veri DEĞİL):
+- `performanceDecision` (Faz 13 decision summary'nin pick'leri)
+- `tradeAuditSummary` (Faz 22 audit summary'nin pick'leri)
+- `liveReadiness` (Faz 23 readiness summary'nin pick'leri)
+- `positionManagement` (count + top actions, Faz 21)
+- `riskConfig` (Faz 19 RiskExecutionConfig özeti, sadece sayısal alanlar)
+- `marketPulse`, `radar` (Faz 9 dashboard özetleri)
+- `diagnostics` (worker online, ws, binance api status, trading mode)
+- `closedTradesRecent` — max 20 işlem, sadece özet alanlar
+- `openPositions` — max 10 pozisyon, sadece sembol/giriş/SL/TP
+- `scanRowsCount` (sayı, ham scan_details GÖNDERİLMEZ)
+- `mode` (paper/live/all)
+
+**Asla context'e gitmez:**
+- Binance API key/secret
+- OpenAI API key
+- Supabase service role key
+- Raw private payload
+- Full env dump
+- User secrets
+
+`stripSecrets()` recursive: alan adı (`apiKey`, `apiSecret`, `passphrase`,
+`password`, `token`, `service_role`, `signature`, vb.) `[REDACTED]` ile
+değişir; içerik pattern'leri (sk-, JWT, base64, hex) de redacts edilir.
+
+### Structured Output Schema
+
+JSON schema: `name="ai_decision"`, `strict=true`. Zorunlu alanlar:
+`status`, `riskLevel`, `mainFinding`, `systemInterpretation`,
+`recommendation`, `actionType`, `confidence`, `requiresUserApproval`,
+`observeDays`, `blockedBy`, `suggestedPrompt`, `safetyNotes`.
+
+| Alan | Davranış |
+|---|---|
+| `confidence` | 0–100 clamp; finansal kesinlik için 100 verilmesi prompt'la engellenir |
+| `observeDays` | Default 7; 0–365 clamp |
+| `suggestedPrompt` | Sadece `actionType="PROMPT"` için dolu olabilir; aksi halde null |
+| `requiresUserApproval` | Kritik aksiyonlarda zorunlu true |
+| `appliedToTradeEngine` | Daima `false` literal — output'a otomatik enjekte edilir |
+| `blockedBy` | String dizisi; max 20 etiket |
+| `safetyNotes` | String dizisi; max 10 not |
+
+### POST `/api/ai-decision/interpret`
+
+- Internal summary'leri (`buildDecisionSummary`, `buildTradeAuditReport`,
+  `buildLiveReadinessSummary`, `buildRiskExecutionConfig`, `getWorkerHealth`,
+  `getMarketFeedStatus`) okur.
+- `buildAIDecisionContext()` ile kompakt context üretir; secret'lar redacts edilir.
+- `callAIDecision()` ile OpenAI Responses API'yi çağırır; structured JSON döner.
+- **Yasaklı Binance private path'leri (order, leverage) referans alınmaz.**
+- Trade açmaz / kapatmaz; ayar değiştirmez; live gate değerlerini değiştirmez.
+- Test ile garantili: `update(trading_mode|enable_live_trading|hardLiveTradingAllowed|risk_settings)` yok.
+
+### Fallback Davranışı
+
+| Senaryo | Davranış |
+|---|---|
+| `OPENAI_API_KEY` yok | `AI_UNCONFIGURED` fallback; status=`DATA_INSUFFICIENT`, recommendation=`OpenAI API anahtarı tanımlı değil.` |
+| AbortController timeout | `AI_TIMEOUT` fallback |
+| HTTP 4xx/5xx | `AI_HTTP_ERROR` fallback (status code log'a bile yazılmaz, sadece sınıflandırılır) |
+| JSON parse hatası | `AI_PARSE_ERROR` fallback |
+| Hiçbir durumda dashboard kırılmaz; HTTP 200 döner. |
+
+### Dashboard Kartı — AI KARAR ASİSTANI
+
+`AIDecisionAssistantCard`:
+- Üst pill: status (AKSİYON YOK / GÖZLEM / İNCELEME GEREKLİ / KRİTİK BLOKER /
+  VERİ YETERSİZ) + risk seviyesi + güven puanı
+- Mini bölümler: ANA BULGU, SİSTEM YORUMU, ÖNERİ, RİSK SEVİYESİ, AKSİYON, UYGULAMA
+- BLOKER ETİKETLERİ kutusu (`blockedBy[]`)
+- ÖNERİLEN PROMPT kutusu (yalnızca `actionType=PROMPT`) + manuel kopyalama
+- GÜVENLİK NOTLARI listesi
+- Aksiyon butonları: GÖZLEM, PROMPT, RAPORU YENİLE
+- **ONAYLA butonu YOK** — canlıyı açan UI bu kartta yer almaz.
+- Prompt otomatik çalıştırılmaz — sadece kullanıcı manuel kopyalayabilir.
+
+### Bu fazda kesinlikle dokunulmadı
+
+- Canlı trading açılmadı.
+- `HARD_LIVE_TRADING_ALLOWED=false` korundu.
+- `DEFAULT_TRADING_MODE=paper` korundu.
+- `enable_live_trading=false` korundu.
+- `MIN_SIGNAL_CONFIDENCE=70` korundu.
+- `openLiveOrder` hâlâ `LIVE_EXECUTION_NOT_IMPLEMENTED`.
+- Yasaklı Binance private endpoint'leri eklenmedi.
+- Risk ayarları, SL kuralı, threshold otomatik değiştirilmedi.
+- `averageDownEnabled=false`, `liveExecutionBound=false`,
+  `leverageExecutionBound=false` korundu.
+- AI çıktısı asla otomatik uygulanmaz (`appliedToTradeEngine=false` literal).
+- Worker lock korundu.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+İlgili dosyalar:
+- `src/lib/ai-decision/{types,schema,prompt,build-context,client,fallback,index}.ts`
+- `src/app/api/ai-decision/interpret/route.ts` — POST endpoint
+- `src/components/dashboard/Cards.tsx` — `AIDecisionAssistantCard` eklendi
+- `src/__tests__/ai-decision-patch.test.ts` — 47 test
+
+---
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
