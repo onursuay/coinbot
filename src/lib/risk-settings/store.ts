@@ -239,15 +239,27 @@ async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number
       p_settings: s as unknown as Record<string, unknown>,
     });
     if (!rpcRes.error && rpcRes.data != null) {
-      // Sanity check — the RPC should echo back what we sent. If the echoed
-      // capital differs from what we sent, persistence is corrupted somehow
-      // (silent JSONB transcoding, pre-trigger overwrite, etc.) and we must
-      // surface it instead of reporting phantom success.
-      const echoed = rpcRes.data as { capital?: { totalCapitalUsdt?: number } };
+      // POST-COMMIT VERIFY — RPC RETURNING runs inside the function's
+      // transaction and could in theory return values that aren't actually
+      // committed (replication lag, connection-pool quirk, transaction
+      // rollback by an outer scope, etc.). To protect against that we do an
+      // independent get_risk_settings RPC call after a tiny delay and
+      // compare profile + capital. If they don't match what we just sent,
+      // persistence is broken and we must report failure.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const verifyRpc = await sb.rpc("get_risk_settings", { p_user_id: userId });
+      const verifiedRaw = verifyRpc.error ? null : (verifyRpc.data ?? null);
+      const verified = verifiedRaw as
+        | { profile?: string; capital?: { totalCapitalUsdt?: number } }
+        | null;
+      const expectedProfile = s.profile;
       const expectedCap = s.capital.totalCapitalUsdt;
-      const echoedCap = echoed?.capital?.totalCapitalUsdt;
-      if (typeof echoedCap === "number" && echoedCap !== expectedCap) {
-        const errorSafe = `RPC echo mismatch: sent capital=${expectedCap} but DB returned capital=${echoedCap}`;
+      const verifiedProfile = verified?.profile;
+      const verifiedCap = verified?.capital?.totalCapitalUsdt;
+      const profileOk = verifiedProfile === expectedProfile;
+      const capOk = typeof verifiedCap === "number" && verifiedCap === expectedCap;
+      if (verified == null || !profileOk || !capOk) {
+        const errorSafe = `Post-commit verify mismatch: sent profile=${expectedProfile} cap=${expectedCap} but DB has profile=${verifiedProfile ?? "null"} cap=${verifiedCap ?? "null"} — RPC RETURNING aldatıcı, gerçekte commit olmuyor`;
         setStatus({
           state: "fallback",
           errorSafe,
