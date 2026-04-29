@@ -73,6 +73,8 @@ interface ScanRow {
 interface DiagData {
   active_exchange: string;
   scan_details: ScanRow[];
+  diagnosticsStale?: boolean;
+  diagnosticsAgeSec?: number | null;
 }
 
 // ── Sabitler: signal threshold ─────────────────────────────────────────
@@ -277,9 +279,23 @@ export default function ScannerPage() {
   const rows = data?.scan_details ?? [];
   const exchange = data?.active_exchange ?? "binance";
   const advColumns = ADV_COLUMNS.filter((c) => isAdvVisible(c.key));
+  const isStale = data?.diagnosticsStale === true;
 
   return (
     <div className="space-y-4">
+      {/* Stale data uyarısı */}
+      {isStale && (
+        <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden>
+            <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3.5a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 4.5zm0 7a.875.875 0 1 1 0-1.75.875.875 0 0 1 0 1.75z"/>
+          </svg>
+          Tarama verisi güncel değil. Son tick bekleniyor.
+          {typeof data?.diagnosticsAgeSec === "number" && (
+            <span className="ml-auto text-muted">{data.diagnosticsAgeSec}s önce</span>
+          )}
+        </div>
+      )}
+
       {/* Empty / no-data */}
       {!data && !loading && (
         <div className="card text-muted text-sm text-center py-6">
@@ -379,6 +395,9 @@ export default function ScannerPage() {
                       <Link className="text-accent" href={`/coins/${encodeURIComponent(r.symbol)}?exchange=${exchange}`}>
                         {r.symbol}
                       </Link>
+                      {isStale && (
+                        <span className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium bg-warning/15 text-warning align-middle">GÜNCEL DEĞİL</span>
+                      )}
                     </td>
                     <td title={(r.candidateSources ?? []).join(", ") || undefined}>
                       <span className="text-xs font-medium text-slate-200">{mapSourceLabel(r)}</span>

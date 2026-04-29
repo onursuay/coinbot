@@ -103,6 +103,21 @@ export async function GET() {
     const tickSummary = (settings?.last_tick_summary as any) ?? null;
     const ageMs = workerHealth.ageMs;
 
+    // ── Diagnostics freshness ──────────────────────────────────────────────
+    const lastTickAt: string | null = settings?.last_tick_at ?? null;
+    const diagnosticsGeneratedAt: string | null =
+      tickSummary?.generatedAt ?? tickSummary?.at ?? tickSummary?.timestamp ?? null;
+    const freshnessRef = lastTickAt ?? diagnosticsGeneratedAt;
+    let diagnosticsAgeSec: number | null = null;
+    let diagnosticsStale = true;
+    if (freshnessRef) {
+      const ageS = (Date.now() - new Date(freshnessRef).getTime()) / 1000;
+      if (Number.isFinite(ageS)) {
+        diagnosticsAgeSec = Math.round(ageS);
+        diagnosticsStale = diagnosticsAgeSec > 90;
+      }
+    }
+
     // ── Diagnostic threshold simulation (read-only, no settings changed) ──
     // Based on the last 200 signals stored in DB. Answers counterfactual questions.
     const totalRecentSignals = recentSignals.length;
@@ -209,6 +224,25 @@ export async function GET() {
         checks: readiness.checks,
       },
       supabase_configured: true,
+      diagnosticsStale,
+      diagnosticsAgeSec,
+      lastTickAt,
+      diagnosticsGeneratedAt,
+      unified_diagnostics: {
+        unifiedCandidatePoolActive: tickSummary?.unifiedCandidatePoolActive ?? false,
+        unifiedPoolSize: tickSummary?.unifiedPoolSize ?? null,
+        unifiedDeepCandidatesCount: tickSummary?.unifiedDeepCandidatesCount ?? null,
+        unifiedPoolGeneratedAt: tickSummary?.unifiedPoolGeneratedAt ?? null,
+        unifiedPoolFromCache: tickSummary?.unifiedPoolFromCache ?? null,
+        unifiedProviderError: tickSummary?.unifiedProviderError ?? null,
+        analyzedSymbolsCount: tickSummary?.analyzedSymbolsCount ?? null,
+        coreSymbolsCount: tickSummary?.coreSymbolsCount ?? null,
+        unifiedSymbolsCount: tickSummary?.unifiedSymbolsCount ?? null,
+        unifiedCandidatePoolModeAllowed: tickSummary?.unifiedCandidatePoolModeAllowed ?? null,
+        unifiedCandidatePoolBlockedReason: tickSummary?.unifiedCandidatePoolBlockedReason ?? null,
+        tradeMode: tickSummary?.tradeMode ?? null,
+        executionMode: tickSummary?.executionMode ?? null,
+      },
     });
   } catch (e: any) {
     return fail(e?.message ?? "diagnostics failed", 500);

@@ -12,6 +12,8 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const read = (rel: string) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
 
 const SCANNER_PAGE = read("src/app/scanner/page.tsx");
+const TOPBAR = read("src/components/TopBar.tsx");
+const DIAGNOSTICS_ROUTE = read("src/app/api/bot/diagnostics/route.ts");
 
 // ── 1. Banner / status / dashboard blokları kaldırıldı ─────────────────
 describe("Phase 8 — Piyasa Tarayıcı banner/dashboard blokları kaldırıldı", () => {
@@ -199,5 +201,99 @@ describe("Phase 8 — trading invariantleri korunur", () => {
 describe("Phase 8 — empty state sade mesaj kullanır", () => {
   it("'Bu periyotta güçlü aday bulunamadı.' mesajı tabloda boşken gösterilir", () => {
     expect(SCANNER_PAGE).toMatch(/Bu periyotta güçlü aday bulunamadı\./);
+  });
+});
+
+// ── 10. TopBar heartbeat parse bug düzeltmesi ─────────────────────────
+describe("Bugfix 1 — TopBar heartbeat parse", () => {
+  it("data.online öncelikli okunur", () => {
+    expect(TOPBAR).toMatch(/heartbeatJson\?\.data\?\.online\s*===\s*true/);
+  });
+
+  it("heartbeatJson.online backward-compat fallback var", () => {
+    expect(TOPBAR).toMatch(/heartbeatJson\?\.online\s*===\s*true/);
+  });
+
+  it("SUNUCU rozetinde ÇEVRİMİÇİ / ÇEVRİMDIŞI gösterilir", () => {
+    expect(TOPBAR).toMatch(/ÇEVRİMİÇİ/);
+    expect(TOPBAR).toMatch(/ÇEVRİMDIŞI/);
+  });
+});
+
+// ── 11. Diagnostics stale flag ────────────────────────────────────────
+describe("Bugfix 1 — diagnostics stale flag", () => {
+  it("diagnosticsStale alanı response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/diagnosticsStale/);
+  });
+
+  it("diagnosticsAgeSec alanı response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/diagnosticsAgeSec/);
+  });
+
+  it("lastTickAt alanı response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/lastTickAt/);
+  });
+
+  it("diagnosticsGeneratedAt alanı response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/diagnosticsGeneratedAt/);
+  });
+
+  it("90 saniyelik stale eşiği uygulanır", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/>\s*90/);
+  });
+
+  it("unified_diagnostics alanları response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/unified_diagnostics/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/unifiedCandidatePoolActive/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/unifiedPoolSize/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/analyzedSymbolsCount/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/tradeMode/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/executionMode/);
+  });
+});
+
+// ── 12. Scanner stale uyarısı ─────────────────────────────────────────
+describe("Bugfix 1 — Scanner stale uyarısı", () => {
+  it("diagnosticsStale=true iken uyarı gösterilir", () => {
+    expect(SCANNER_PAGE).toMatch(/isStale/);
+    expect(SCANNER_PAGE).toMatch(/Tarama verisi güncel değil/);
+  });
+
+  it("GÜNCEL DEĞİL rozeti stale satırlarda gösterilir", () => {
+    expect(SCANNER_PAGE).toMatch(/GÜNCEL DEĞİL/);
+  });
+
+  it("Aktif mod özeti (ScanModesSummary) geri gelmedi", () => {
+    expect(SCANNER_PAGE).not.toMatch(/ScanModesSummary/);
+    expect(SCANNER_PAGE).not.toMatch(/Tarama Modları/);
+  });
+
+  it("Tarama Akışı ve Görünürlük blokları geri gelmedi", () => {
+    expect(SCANNER_PAGE).not.toMatch(/Tarama Akışı/);
+    expect(SCANNER_PAGE).not.toMatch(/Görünürlük/);
+  });
+});
+
+// ── 13. Trade / live gate invariantleri değişmedi ─────────────────────
+describe("Bugfix 1 — trade & live gate invariantleri", () => {
+  it("HARD_LIVE_TRADING_ALLOWED varsayılanı false korunur", () => {
+    const env = read("src/lib/env.ts");
+    // Default value must be false — e.g. bool(process.env.HARD_LIVE_TRADING_ALLOWED, false)
+    expect(env).toMatch(/HARD_LIVE_TRADING_ALLOWED.*false/);
+  });
+
+  it("MIN_SIGNAL_CONFIDENCE=70 korunur (signal-engine)", () => {
+    const eng = read("src/lib/engines/signal-engine.ts");
+    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+  });
+
+  it("Scanner içinde Binance API çağrısı yok", () => {
+    expect(SCANNER_PAGE).not.toMatch(/fapi\.binance\.com/);
+    expect(SCANNER_PAGE).not.toMatch(/api\.binance\.com/);
+  });
+
+  it("diagnostics route içinde Binance fetch eklenmedi", () => {
+    expect(DIAGNOSTICS_ROUTE).not.toMatch(/fapi\.binance\.com/);
+    expect(DIAGNOSTICS_ROUTE).not.toMatch(/api\.binance\.com/);
   });
 });

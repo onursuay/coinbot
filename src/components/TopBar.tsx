@@ -48,7 +48,7 @@ export default function TopBar() {
         ]);
         if (!active) return;
         if (statusJson.ok) setS(statusJson.data);
-        setWorkerOnline(heartbeatJson?.online === true);
+        setWorkerOnline(heartbeatJson?.data?.online === true || heartbeatJson?.online === true);
         setLastFetch(new Date());
       } catch { /* ignore */ }
     };
