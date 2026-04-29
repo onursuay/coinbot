@@ -24,7 +24,7 @@ import type { ExchangeName, Ticker } from "@/lib/exchanges/types";
 import { getMarketUniverse, getCachedAllTickers } from "@/lib/market-universe";
 import type { MarketSymbolInfo } from "@/lib/market-universe/types";
 import { DEFAULT_MARKET_UNIVERSE_CONFIG } from "@/lib/market-universe/types";
-import { getScanModesConfig } from "@/lib/scan-modes";
+import { getScanModesConfig, ensureScanModesHydrated } from "@/lib/scan-modes";
 import {
   buildUnifiedCandidatePool,
   type DeepAnalysisCandidate,
@@ -129,6 +129,7 @@ export async function getUnifiedCandidates(
         ? Promise.resolve({ ...opts.override.tickers })
         : getCachedAllTickers({ exchange }),
     ]);
+    if (!opts.override?.scanModes) await ensureScanModesHydrated();
     const scanModes: ScanModesConfig = opts.override?.scanModes ?? getScanModesConfig();
 
     const result: UnifiedCandidatePool = buildUnifiedCandidatePool({

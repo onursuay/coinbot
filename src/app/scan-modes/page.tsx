@@ -15,10 +15,20 @@ interface SearchResult {
   alreadyAdded: boolean;
 }
 
+type SaveState = "idle" | "saving" | "saved" | "error";
+
 export default function ScanModesPage() {
   const [config, setConfig] = useState<ScanModesConfig | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashSaved = () => {
+    setSaveState("saved");
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = setTimeout(() => setSaveState("idle"), 1500);
+  };
 
   const load = async () => {
     try {
@@ -32,19 +42,31 @@ export default function ScanModesPage() {
 
   useEffect(() => {
     load();
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    };
   }, []);
 
   const toggle = async (mode: "wideMarket" | "momentum" | "manualList", next: boolean) => {
     setBusy(mode);
     setError(null);
+    setSaveState("saving");
     try {
       const res = await fetch("/api/scan-modes", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ [mode]: { active: next } }),
       }).then((r) => r.json());
-      if (res.ok) setConfig(res.data);
-      else setError(res.error ?? "Güncelleme başarısız");
+      if (res.ok) {
+        setConfig(res.data);
+        flashSaved();
+      } else {
+        setError(res.error ?? "Güncelleme başarısız");
+        setSaveState("error");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bilinmeyen hata");
+      setSaveState("error");
     } finally {
       setBusy(null);
     }
@@ -55,14 +77,23 @@ export default function ScanModesPage() {
     if (!sym) return;
     setBusy(`add:${sym}`);
     setError(null);
+    setSaveState("saving");
     try {
       const res = await fetch("/api/scan-modes/manual-list", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ symbol: sym }),
       }).then((r) => r.json());
-      if (res.ok) setConfig(res.data);
-      else setError(res.error ?? "Ekleme başarısız");
+      if (res.ok) {
+        setConfig(res.data);
+        flashSaved();
+      } else {
+        setError(res.error ?? "Ekleme başarısız");
+        setSaveState("error");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bilinmeyen hata");
+      setSaveState("error");
     } finally {
       setBusy(null);
     }
@@ -71,12 +102,21 @@ export default function ScanModesPage() {
   const removeSymbol = async (sym: string) => {
     setBusy(`rm:${sym}`);
     setError(null);
+    setSaveState("saving");
     try {
       const res = await fetch(`/api/scan-modes/manual-list?symbol=${encodeURIComponent(sym)}`, {
         method: "DELETE",
       }).then((r) => r.json());
-      if (res.ok) setConfig(res.data);
-      else setError(res.error ?? "Kaldırma başarısız");
+      if (res.ok) {
+        setConfig(res.data);
+        flashSaved();
+      } else {
+        setError(res.error ?? "Kaldırma başarısız");
+        setSaveState("error");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bilinmeyen hata");
+      setSaveState("error");
     } finally {
       setBusy(null);
     }
@@ -95,7 +135,10 @@ export default function ScanModesPage() {
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="text-xl font-semibold">Tarama Modları</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-xl font-semibold">Tarama Modları</h1>
+          <SaveBadge state={saveState} />
+        </div>
         <p className="text-sm text-muted">
           Coin seçim mimarisi — 3 bağımsız mod. Bu sayfadaki ayarlar yalnızca
           tarama evrenini etkiler; sinyal eşikleri, risk yönetimi ve canlı
@@ -140,6 +183,17 @@ export default function ScanModesPage() {
       </div>
     </div>
   );
+}
+
+function SaveBadge({ state }: { state: SaveState }) {
+  if (state === "idle") return null;
+  if (state === "saving") {
+    return <span className="text-[10px] uppercase tracking-wider text-muted">Kaydediliyor…</span>;
+  }
+  if (state === "saved") {
+    return <span className="text-[10px] uppercase tracking-wider text-success">Kaydedildi</span>;
+  }
+  return <span className="text-[10px] uppercase tracking-wider text-danger">Kaydetme hatası</span>;
 }
 
 function ModeCard({

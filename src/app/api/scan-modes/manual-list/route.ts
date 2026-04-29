@@ -4,16 +4,16 @@ import {
   addManualSymbol,
   removeManualSymbol,
   getScanModesConfig,
+  ensureScanModesHydrated,
 } from "@/lib/scan-modes";
 import { getMarketUniverse } from "@/lib/market-universe";
 import { resolveManualListSymbol } from "@/lib/scan-modes/manual-list-search";
 
 // Manuel İzleme Listesi mutation endpoints.
-// Phase 1 introduced add/remove/get on an in-memory store.
-// Phase 4 hardens POST: the input symbol must resolve to a tradable USDT
-// perpetual in the cached market universe. The universe lookup uses the
-// Phase-2 cache (6h TTL) — no per-request Binance API spam.
-// See docs/BINANCE_API_GUARDRAILS.md.
+// Her çağrıdan önce ensureScanModesHydrated() ile DB durumu yüklenir;
+// add/remove sonrası store kendisi best-effort persist eder. Hiçbir trade
+// engine/canlı gate etkilenmez. Universe lookup hâlâ Phase-2 cache (6h TTL)
+// üzerinden gider — yeni Binance trafiği eklenmez.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,34 +24,52 @@ export async function POST(req: Request) {
   const parsed = await parseBody(req, AddBody);
   if (isResponse(parsed)) return parsed;
 
-  // Validate against the cached market universe before mutating store.
-  const universe = await getMarketUniverse({ exchange: "binance" });
-  const resolved = resolveManualListSymbol(parsed.symbol, universe);
-  if (!resolved) {
-    return fail(
-      "Sembol Binance Futures uygun evrende bulunamadı (USDT perpetual TRADING)",
-      400,
-      { input: parsed.symbol },
-    );
-  }
+  try {
+    await ensureScanModesHydrated();
+    // Validate against the cached market universe before mutating store.
+    const universe = await getMarketUniverse({ exchange: "binance" });
+    const resolved = resolveManualListSymbol(parsed.symbol, universe);
+    if (!resolved) {
+      return fail(
+        "Sembol Binance Futures uygun evrende bulunamadı (USDT perpetual TRADING)",
+        400,
+        { input: parsed.symbol },
+      );
+    }
 
-  const config = getScanModesConfig();
-  if (config.manualList.symbols.includes(resolved)) {
-    return fail("Bu coin zaten manuel listede", 409, { symbol: resolved });
-  }
+    const config = getScanModesConfig();
+    if (config.manualList.symbols.includes(resolved)) {
+      return fail("Bu coin zaten manuel listede", 409, { symbol: resolved });
+    }
 
-  const next = addManualSymbol(resolved);
-  return ok(next);
+    const next = addManualSymbol(resolved);
+    return ok(next);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "manual list update failed";
+    return fail(`Manuel liste güncellenemedi: ${msg}`, 500);
+  }
 }
 
 export async function DELETE(req: Request) {
   const url = new URL(req.url);
   const symbol = url.searchParams.get("symbol");
   if (!symbol) return fail("symbol gerekli", 400);
-  const next = removeManualSymbol(symbol);
-  return ok(next);
+  try {
+    await ensureScanModesHydrated();
+    const next = removeManualSymbol(symbol);
+    return ok(next);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "manual list delete failed";
+    return fail(`Manuel liste silinemedi: ${msg}`, 500);
+  }
 }
 
 export async function GET() {
-  return ok(getScanModesConfig().manualList);
+  try {
+    await ensureScanModesHydrated();
+    return ok(getScanModesConfig().manualList);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "manual list read failed";
+    return fail(`Manuel liste okunamadı: ${msg}`, 500);
+  }
 }

@@ -3,7 +3,7 @@ import {
   getCachedAllTickers,
   getMarketUniverse,
 } from "@/lib/market-universe";
-import { getScanModesConfig } from "@/lib/scan-modes";
+import { getScanModesConfig, ensureScanModesHydrated } from "@/lib/scan-modes";
 import { buildUnifiedCandidatePool } from "@/lib/candidate-orchestrator";
 
 // Phase 5 — read-only snapshot of the unified candidate pool.
@@ -29,6 +29,7 @@ export async function GET() {
       getMarketUniverse({ exchange: "binance" }),
       getCachedAllTickers({ exchange: "binance" }),
     ]);
+    await ensureScanModesHydrated();
     const scanModes = getScanModesConfig();
     const result = buildUnifiedCandidatePool({
       scanModes,

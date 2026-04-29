@@ -19,6 +19,7 @@ import {
 import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist, getTierPolicy } from "@/lib/risk-tiers";
 import { calculateStrategyHealth } from "./strategy-health";
 import { buildRiskExecutionConfig, ensureHydrated } from "@/lib/risk-settings";
+import { ensureScanModesHydrated } from "@/lib/scan-modes";
 import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
@@ -635,6 +636,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
   // Faz 20 — load risk execution config (hydrates from DB on first call).
   await ensureHydrated();
+  // Scan Modes Persistence — UI'dan yapılan toggle/manuel-liste değişiklikleri
+  // worker tick'inde de geçerli olsun diye DB'den hydrate ediyoruz.
+  await ensureScanModesHydrated();
   const riskCfg = buildRiskExecutionConfig();
 
   // Effective capital: risk settings value if > 0, else PAPER_BALANCE fallback.

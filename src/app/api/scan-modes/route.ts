@@ -1,20 +1,28 @@
 import { z } from "zod";
-import { ok, parseBody, isResponse } from "@/lib/api-helpers";
+import { ok, fail, parseBody, isResponse } from "@/lib/api-helpers";
 import {
+  ensureScanModesHydrated,
   getScanModesConfig,
   updateScanModesConfig,
 } from "@/lib/scan-modes";
 
-// Phase 1 — scan modes config endpoint.
-// Returns and updates the in-memory ScanModesConfig (skeleton). No Binance
-// API calls are issued from this route. Trading logic and live trading
-// gates are not affected.
+// Scan Modes config endpoint.
+// GET ilk çağrıda Supabase `bot_settings.scan_modes_config` kolonundan
+// hydrate eder; PUT değişiklikleri DB'ye yazar (best-effort). Hiçbir
+// trade engine, signal/risk engine veya canlı trading gate'i bu route
+// üzerinden değiştirilemez. Hiçbir Binance API çağrısı yapılmaz.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return ok(getScanModesConfig());
+  try {
+    await ensureScanModesHydrated();
+    return ok(getScanModesConfig());
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "scan modes hydrate failed";
+    return fail(`Tarama modları okunamadı: ${msg}`, 500);
+  }
 }
 
 const Body = z.object({
@@ -26,6 +34,12 @@ const Body = z.object({
 export async function PUT(req: Request) {
   const parsed = await parseBody(req, Body);
   if (isResponse(parsed)) return parsed;
-  const next = updateScanModesConfig(parsed);
-  return ok(next);
+  try {
+    await ensureScanModesHydrated();
+    const next = updateScanModesConfig(parsed);
+    return ok(next);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "scan modes update failed";
+    return fail(`Tarama modları güncellenemedi: ${msg}`, 500);
+  }
 }
