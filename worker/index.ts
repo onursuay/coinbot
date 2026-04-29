@@ -38,6 +38,8 @@ import { recordHeartbeat } from "../src/lib/engines/heartbeat";
 import { getCurrentUserId } from "../src/lib/auth";
 import { supabaseAdmin, supabaseConfigured } from "../src/lib/supabase/server";
 import { reconcileOrders } from "../src/lib/engines/order-lifecycle-manager";
+import { getMarketFeedStatus, toHeartbeatWebsocketStatus } from "../src/lib/market-feed";
+import { isHardLiveAllowed } from "../src/lib/env";
 import { resolveActiveExchange } from "../src/lib/exchanges/resolve-active-exchange";
 import { startReportScheduler } from "../src/lib/reports/report-scheduler";
 import { emptyTickStats, type TickPeriodStats } from "../src/lib/reports/monitoring-report";
@@ -110,13 +112,16 @@ async function heartbeatLoop() {
         readBotMode(),
         resolveActiveExchange(userId),
       ]);
+      const feedStatus = getMarketFeedStatus();
       await recordHeartbeat({
         workerId: WORKER_ID,
         status: mode?.killSwitch ? "kill_switch_triggered" : (mode?.status === "stopped" ? "stopped" : (mode?.mode === "live" ? "running_live" : "running_paper")),
         activeMode: mode?.mode,
         activeExchange,
-        websocketStatus: "disconnected", // wired up later when WS is connected
-        binanceApiStatus: "ok",
+        websocketStatus: toHeartbeatWebsocketStatus(feedStatus.websocketStatus),
+        // Don't fake "ok": no signed health probe is run from the heartbeat hot path.
+        // Faz 17'deki credential validator ayrı endpoint üzerinden çalışır.
+        binanceApiStatus: "unknown",
       });
     } catch (e: any) {
       console.error("[heartbeat] failed:", e?.message ?? e);
@@ -226,8 +231,11 @@ async function reconciliationLoop() {
 
       const mode = await readBotMode();
       if (!mode || mode.status === "stopped" || mode.killSwitch) continue;
-      // Paper mode: no real orders on exchange, skip reconciliation
+
+      // Faz 18 — fail-closed: reconciliation runs ONLY when all live gates are
+      // open. Any one missing → silent no-op, no exchange private call.
       if (mode.mode !== "live") continue;
+      if (!isHardLiveAllowed()) continue;
 
       const userId = getCurrentUserId();
       if (!supabaseConfigured()) continue;

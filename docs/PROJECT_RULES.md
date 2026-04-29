@@ -1213,6 +1213,96 @@ restriction alanına bu IP girilmelidir.
 
 ---
 
+## Faz 18 — WebSocket + Reconciliation Güvenli Altyapı
+
+**Hedef:** Canlıya hazır mimari için WebSocket bağlantı durumu, fiyat feed
+skeleton'u ve reconciliation altyapısını güvenli şekilde kurmak. Bu faz canlı
+trading açmaz, gerçek emir göndermez ve `/fapi/v1/order` çağırmaz.
+
+### WebSocket / market feed status
+
+`src/lib/market-feed/`:
+- `types.ts` — `MarketFeedStatus`, `WebsocketStatus`, `FeedMode`, `MARKET_FEED_STALE_SEC=60`
+- `status.ts` — singleton `getMarketFeedStatus()` / `setMarketFeedStatus()` + skeleton
+  `createPublicMarketFeed()` (default `skeletonOnly: true` — fiziksel socket açmaz)
+- `index.ts` — barrel
+
+Status alanları: `websocketStatus`, `feedMode`, `lastConnectedAt`, `lastMessageAt`,
+`disconnectReason`, `symbolsSubscribed`, `stale`, `staleAgeSec`.
+
+Default değerler **disconnected / none / market_feed_not_started** — sahte
+"connected" üretilmez.
+
+### Public market feed skeleton durumu
+
+`createPublicMarketFeed()` skeleton mod default'tur:
+- Fiziksel WS socket açılmaz.
+- `subscribeSymbols()` / `unsubscribeSymbols()` sadece status'taki listeyi günceller.
+- `close()` durumu `disconnected` + `feed_closed_by_caller` olarak set eder.
+- Gerçek production WS adapter'ı bu arayüz arkasına ileride eklenebilir.
+
+### User data stream
+
+Bu fazda **bağlanmaz**. `listenKey`, `/api/v3/userDataStream`, account/order update
+stream, private signed call — **YOK**. Sadece mimari placeholder olarak feedMode
+enum'unda yer alır (`"user_data"`).
+
+### Reconciliation (saf fonksiyon)
+
+`src/lib/reconciliation/`:
+- `types.ts` — `ReconciliationIssueCode`, `ReconciliationSeverity`, `ReconciliationResult`, snapshot tipleri
+- `reconcile.ts` — saf `reconcile({ dbTrades, exchangePositions })`; exchange'e bağlanmaz
+- `duplicate-guard.ts` — `detectDuplicateOpenPosition`, `buildClientOrderId`,
+  `validateClientOrderIdUniqueness`
+- `index.ts` — barrel
+
+Issue kodları: `DB_OPEN_EXCHANGE_MISSING`, `EXCHANGE_OPEN_DB_MISSING`,
+`SIZE_MISMATCH`, `SIDE_MISMATCH`, `PRICE_MISMATCH`, `STATUS_MISMATCH`,
+`DUPLICATE_OPEN_POSITION`, `UNKNOWN`.
+
+Severity: `info` / `warning` / `critical`. Tolerans: size %0.5, price %0.5.
+
+### Worker reconciliation loop
+
+Fail-closed:
+- `mode.mode !== "live"` → no-op.
+- `!isHardLiveAllowed()` → no-op.
+- `!isLockOwner` → skip.
+- `!supabaseConfigured()` → skip.
+- Hata → log, worker crash etmez.
+
+Bu fazda `exchangeOpenOrders: []` boş geçilir; gerçek exchange snapshot ileride
+adapter'dan gelecek.
+
+### Heartbeat entegrasyonu
+
+`worker/index.ts` artık:
+- `websocketStatus`'u `getMarketFeedStatus()` + `toHeartbeatWebsocketStatus()` üzerinden
+  yazar; sahte sabit "disconnected" string'i kaldırıldı.
+- `binanceApiStatus`'u `"unknown"` olarak yazar (heartbeat hot path'inde signed
+  health probe çalıştırılmaz; Faz 17 credential validator ayrı endpoint).
+
+### Bu fazda kesinlikle dokunulmadı
+
+- Canlı trading açılmadı (`HARD_LIVE_TRADING_ALLOWED=false` korundu).
+- `DEFAULT_TRADING_MODE=paper` korundu.
+- `enable_live_trading=false` korundu.
+- `MIN_SIGNAL_CONFIDENCE=70` korundu.
+- `/fapi/v1/order` çağrısı eklenmedi.
+- Private listenKey / user data stream çağrısı eklenmedi.
+- `openLiveOrder` hâlâ `LIVE_EXECUTION_NOT_IMPLEMENTED` döner.
+- Risk/signal/trade engine değiştirilmedi.
+- Worker lock korundu.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+İlgili dosyalar:
+- `src/lib/market-feed/{types,status,index}.ts`
+- `src/lib/reconciliation/{types,reconcile,duplicate-guard,index}.ts`
+- `worker/index.ts` (heartbeat + reconciliation loop sertleştirildi)
+- `src/__tests__/websocket-reconciliation-phase18.test.ts`
+
+---
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
