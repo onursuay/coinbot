@@ -65,6 +65,8 @@ export default function HomePage() {
   const [diagnostics, setDiagnostics] = useState<any>(null);
   const [e2eStatus, setE2eStatus] = useState<any>(null);
   const [perfDecision, setPerfDecision] = useState<PerformanceDecisionInput | null>(null);
+  // Faz 21 — position management recommendations (advisory, display-only)
+  const [pmRecs, setPmRecs] = useState<any[]>([]);
 
   const addToast = (t: Omit<Toast, "id">) => {
     const id = ++toastId;
@@ -74,7 +76,7 @@ export default function HomePage() {
 
   const refresh = async () => {
     const noCache: RequestInit = { cache: "no-store" };
-    const [a, b, c, d, e, h, i, j] = await Promise.all([
+    const [a, b, c, d, e, h, i, j, k] = await Promise.all([
       fetch("/api/bot/status", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/performance", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades?limit=20", noCache).then((r) => r.json()).catch(() => null),
@@ -83,6 +85,8 @@ export default function HomePage() {
       fetch("/api/bot/diagnostics", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/e2e-status", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/trade-performance/decision-summary", noCache).then((r) => r.json()).catch(() => null),
+      // Faz 21 — position management advisory (read-only, no orders)
+      fetch("/api/position-management/recommendations?mode=paper", noCache).then((r) => r.json()).catch(() => null),
     ]);
     if (a?.ok) {
       setStatus(a.data);
@@ -95,6 +99,7 @@ export default function HomePage() {
     if (h?.ok) setDiagnostics(h.data);
     if (i?.ok) setE2eStatus(i.data);
     if (j?.ok && j.data?.decision) setPerfDecision(j.data.decision as PerformanceDecisionInput);
+    if (k?.ok && Array.isArray(k.data?.recommendations)) setPmRecs(k.data.recommendations);
   };
 
   useAutoRefresh(refresh);
@@ -182,16 +187,24 @@ export default function HomePage() {
   const isKillSwitch = botStatus === "kill_switch" || status?.bot?.kill_switch_active;
 
   const scanRows: DecisionRow[] = (diagnostics?.scan_details ?? []) as DecisionRow[];
-  const openPositions: OpenPositionRow[] = (paper.open ?? []).map((t: any) => ({
-    id: t.id,
-    symbol: t.symbol,
-    direction: t.direction,
-    entry_price: t.entry_price,
-    stop_loss: t.stop_loss,
-    take_profit: t.take_profit,
-    leverage: t.leverage,
-    unrealized_pnl: t.unrealized_pnl ?? null,
-  }));
+  // Faz 21: merge position management advisory into open positions (display-only)
+  const pmRecsBySymbol: Record<string, any> = {};
+  for (const r of pmRecs) { if (r?.symbol) pmRecsBySymbol[r.symbol] = r; }
+  const openPositions: OpenPositionRow[] = (paper.open ?? []).map((t: any) => {
+    const pm = pmRecsBySymbol[t.symbol];
+    return {
+      id: t.id,
+      symbol: t.symbol,
+      direction: t.direction,
+      entry_price: t.entry_price,
+      stop_loss: t.stop_loss,
+      take_profit: t.take_profit,
+      leverage: t.leverage,
+      unrealized_pnl: t.unrealized_pnl ?? null,
+      pm_action: pm?.action ?? null,
+      pm_explanation: pm?.explanation ?? null,
+    };
+  });
 
   const tickStats = diagnostics?.tick_stats ?? {};
   const daily = status?.daily ?? {};

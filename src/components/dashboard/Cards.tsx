@@ -406,7 +406,31 @@ export interface OpenPositionRow {
   take_profit: number;
   leverage?: number;
   unrealized_pnl?: number | null;
+  // Faz 21 — position management advisory badge (display-only, no real orders)
+  pm_action?: string | null;
+  pm_explanation?: string | null;
 }
+
+/** Faz 21: small badge for position management advisory hints. */
+function PmBadge({ action, explanation }: { action?: string | null; explanation?: string | null }) {
+  if (!action || action === "HOLD" || action === "NO_ACTION" || action === "BLOCK_SCALE_IN_LOSING_POSITION") return null;
+  const label: Record<string, string> = {
+    MOVE_SL_TO_BREAKEVEN: "SL Breakeven",
+    PARTIAL_TAKE_PROFIT: "Kısmi Kâr",
+    ENABLE_TRAILING_STOP: "Trailing",
+    TIGHTEN_TRAILING_STOP: "Trailing Sıkılaştır",
+    CONSIDER_PROFIT_SCALE_IN: "Kârda Büyüt?",
+    EXIT_FULL: "Çıkış",
+    EXIT_PARTIAL: "Kısmi Çıkış",
+  };
+  const text = label[action] ?? action;
+  return (
+    <span className="text-xs text-accent opacity-80 font-normal" title={explanation ?? text}>
+      {" "}▸ {text}
+    </span>
+  );
+}
+
 export function OpenPositionsCard({ rows }: { rows: OpenPositionRow[] }) {
   return (
     <div className="card overflow-x-auto">
@@ -444,7 +468,10 @@ export function OpenPositionsCard({ rows }: { rows: OpenPositionRow[] }) {
               <td className={`tabular-nums ${t.unrealized_pnl != null && t.unrealized_pnl < 0 ? "text-danger" : "text-success"}`}>
                 {t.unrealized_pnl != null ? fmtUsd(t.unrealized_pnl) : "—"}
               </td>
-              <td><span className="text-success text-xs font-bold">AÇIK</span></td>
+              <td>
+                <span className="text-success text-xs font-bold">AÇIK</span>
+                <PmBadge action={t.pm_action} explanation={t.pm_explanation} />
+              </td>
             </tr>
           ))}
         </tbody>

@@ -1462,6 +1462,71 @@ Açılan paper trade kayıtlarına `risk_metadata` JSONB alanı eklendi:
 
 ---
 
+## Faz 21 — Kademeli Pozisyon / Kaldıraç Yönetimi Hazırlığı
+
+**Amaç:** Paper/live ortak pozisyon yönetimi için kademeli yönetim altyapısı.
+Tüm çıktılar **öneri/metadata** niteliğindedir; gerçek emir gönderilmez.
+
+### Kademeli Yönetim Kuralları
+
+- **Zararda büyütme yasaktır.** `averageDownEnabled=false` invariantı korunur.
+  `currentRMultiple < 0` → `BLOCK_SCALE_IN_LOSING_POSITION` döner.
+- **Kaldıraç execution yoktur.** `leverageExecutionBound=false` sabit kalır.
+- **Gerçek order update yoktur.** `recommendedStopLoss` yalnızca öneridir.
+
+### R-Multiple Aşamaları ve Aksiyonlar
+
+| Aşama | R-Multiple | Aksiyon Önerisi |
+|---|---|---|
+| `losing` | < 0R | HOLD + scale-in engeli |
+| `breakeven` | 0–0.5R | HOLD |
+| `early_profit` | 0.5–1R | HOLD (izle) |
+| `at_1r` | 1–1.5R | MOVE_SL_TO_BREAKEVEN |
+| `at_1_5r` | 1.5–2R | PARTIAL_TAKE_PROFIT / ENABLE_TRAILING_STOP |
+| `at_2r_plus` | 2R+ | ENABLE/TIGHTEN_TRAILING_STOP |
+
+### Trailing Stop Kuralları (Advisory Only)
+
+- Long: SL sadece yukarı hareket eder.
+- Short: SL sadece aşağı hareket eder.
+- SL asla riski artıracak yönde geri alınmaz.
+- Breakeven sonrası stop yalnızca kârı koruyacak yönde güncellenir.
+- Gerçek order update yoktur.
+
+### Kârda Scale-In Koşulları (Advisory Only)
+
+`CONSIDER_PROFIT_SCALE_IN` yalnızca şu koşullar sağlanırsa önerilir:
+- `currentRMultiple >= 1.5`
+- `tradeSignalScore >= 70`, `setupScore >= 70`, `marketQualityScore >= 70`
+- `btcAligned = true`, `volumeImpulse = true`
+- SL breakeven seviyesine taşınmış
+
+Bu fazda bu aksiyon yalnızca öneri/metadata; gerçek emir yoktur.
+
+### Korunan Güvenlik Sabitleri
+
+- `HARD_LIVE_TRADING_ALLOWED=false` korundu
+- `DEFAULT_TRADING_MODE=paper` korundu
+- `enable_live_trading=false` korundu
+- `MIN_SIGNAL_CONFIDENCE=70` değişmedi
+- `averageDownEnabled=false` invariantı korundu
+- `leverageExecutionBound=false` sabit
+- `openLiveOrder` hâlâ `LIVE_EXECUTION_NOT_IMPLEMENTED`
+- Binance API Guardrails değişmez kural
+
+İlgili dosyalar:
+- `src/lib/position-management/types.ts` (yeni)
+- `src/lib/position-management/progressive-plan.ts` (yeni — ana karar motoru)
+- `src/lib/position-management/trailing-stop.ts` (yeni — trailing stop modeli)
+- `src/lib/position-management/scale-rules.ts` (yeni — scale-in kuralları)
+- `src/lib/position-management/index.ts` (yeni — barrel export)
+- `src/app/api/position-management/recommendations/route.ts` (yeni — read-only endpoint)
+- `src/components/dashboard/Cards.tsx` (PmBadge eklendi — display-only)
+- `src/app/page.tsx` (PM recommendations fetch + mapping)
+- `src/__tests__/position-management-phase21.test.ts`
+
+---
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
