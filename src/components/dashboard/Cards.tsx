@@ -1017,3 +1017,189 @@ export function TradeAuditCard({
     </div>
   );
 }
+
+// ── Faz 23 — CANLIYA GEÇİŞ KONTROLÜ ──────────────────────────────────────────
+//
+// Live Readiness checklist kartı. Bu kart canlıyı AÇMAZ; ONAYLA butonu bu fazda
+// gösterilmez (canlı gate manuel final aktivasyon gerektirir). Aksiyon
+// butonları yalnızca callback üretir; ayar değiştirmez.
+
+export interface LiveReadinessCardSection {
+  category:
+    | "PAPER_PERFORMANCE"
+    | "RISK_CALIBRATION"
+    | "TRADE_AUDIT"
+    | "BINANCE_CREDENTIALS"
+    | "API_SECURITY"
+    | "EXECUTION_SAFETY"
+    | "WEBSOCKET_RECONCILIATION"
+    | "SYSTEM_HEALTH"
+    | "USER_APPROVAL";
+  title: string;
+  passCount: number;
+  totalCount: number;
+  blockingCount: number;
+  topMessage: string;
+}
+
+export interface LiveReadinessCardInput {
+  readinessStatus: "READY" | "NOT_READY" | "OBSERVE";
+  readinessScore: number;
+  blockingIssuesCount: number;
+  warningIssuesCount: number;
+  mainBlockingReason: string;
+  nextRequiredAction: string;
+  paperPerformance: LiveReadinessCardSection;
+  riskCalibration: LiveReadinessCardSection;
+  apiSecurity: LiveReadinessCardSection;
+  executionSafety: LiveReadinessCardSection;
+  systemHealth: LiveReadinessCardSection;
+  websocketReconciliation: LiveReadinessCardSection;
+}
+
+const READINESS_STATUS_LABEL: Record<string, string> = {
+  READY: "HAZIR",
+  NOT_READY: "HAZIR DEĞİL",
+  OBSERVE: "GÖZLEM GEREKLİ",
+};
+
+const READINESS_STATUS_TONE: Record<string, Tone> = {
+  READY: "success",
+  NOT_READY: "danger",
+  OBSERVE: "warning",
+};
+
+const NEXT_ACTION_LABEL: Record<string, string> = {
+  COMPLETE_PAPER_TRADES: "100 paper trade tamamla",
+  FIX_API_SECURITY: "API güvenlik checklist'ini tamamla",
+  FIX_RISK_CALIBRATION: "Risk kalibrasyonunu düzelt",
+  FIX_SYSTEM_HEALTH: "Sistem sağlığını düzelt",
+  FIX_WEBSOCKET: "WebSocket bağlantısını sağla",
+  AWAIT_USER_APPROVAL: "Kullanıcı onayı bekleniyor",
+  OBSERVE_MORE_DAYS: "Gözlem gün sayısını uzat",
+  MANUAL_FINAL_ACTIVATION: "Manuel final aktivasyon (kullanıcı sorumluluğunda)",
+  DATA_INSUFFICIENT: "Veri bekleniyor",
+};
+
+function ReadinessSection({ section }: { section: LiveReadinessCardSection }) {
+  const tone: Tone =
+    section.blockingCount > 0 ? "danger"
+    : section.passCount === section.totalCount && section.totalCount > 0 ? "success"
+    : "warning";
+  return (
+    <div className="rounded-lg border border-border bg-bg-soft px-3 py-2">
+      <div className={`text-[10px] uppercase tracking-wider ${
+        tone === "success" ? "text-success" : tone === "danger" ? "text-danger" : "text-warning"
+      }`}>{section.title}</div>
+      <div className="mt-0.5 flex items-baseline justify-between">
+        <span className="text-xs text-slate-200 truncate" title={section.topMessage}>
+          {section.topMessage}
+        </span>
+        <span className={`text-xs font-semibold tabular-nums ml-2 ${
+          tone === "success" ? "text-success" : tone === "danger" ? "text-danger" : "text-warning"
+        }`}>
+          {section.passCount}/{section.totalCount}
+        </span>
+      </div>
+      {section.blockingCount > 0 && (
+        <div className="mt-0.5 text-[10px] text-danger">
+          {section.blockingCount} bloklayıcı
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function LiveReadinessCard({
+  data,
+  onAction,
+}: {
+  data: LiveReadinessCardInput | null;
+  onAction?: (action: "OBSERVE" | "PROMPT" | "REFRESH", actionId: string) => void;
+}) {
+  const empty = !data;
+  const status = data?.readinessStatus ?? "NOT_READY";
+  const statusTone = READINESS_STATUS_TONE[status] ?? "muted";
+  const score = data?.readinessScore ?? 0;
+  const isNotReady = status === "NOT_READY";
+
+  return (
+    <div className={`card border ${
+      status === "READY" ? "border-success/40" :
+      status === "OBSERVE" ? "border-warning/30" : "border-danger/40"
+    }`}>
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <h2 className="font-semibold tracking-wide">CANLIYA GEÇİŞ KONTROLÜ</h2>
+        <div className="flex items-center gap-2">
+          <Pill tone={statusTone}>{READINESS_STATUS_LABEL[status]}</Pill>
+          {!empty && (
+            <Pill tone="accent">SKOR: {score}/100</Pill>
+          )}
+        </div>
+      </div>
+
+      {empty ? (
+        <p className="text-sm text-muted">Canlıya geçiş kontrolü yükleniyor…</p>
+      ) : (
+        <>
+          {isNotReady && (
+            <div className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+              <div className="font-semibold mb-0.5">Canlıya geçiş için hazır değil.</div>
+              <div className="text-[11px]">{data!.mainBlockingReason}</div>
+            </div>
+          )}
+
+          {data!.paperPerformance.totalCount > 0 && data!.paperPerformance.passCount === 0 && (
+            <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+              100 kapanmış paper trade tamamlanmadan canlıya geçilmez.
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <ReadinessSection section={data!.paperPerformance} />
+            <ReadinessSection section={data!.riskCalibration} />
+            <ReadinessSection section={data!.apiSecurity} />
+            <ReadinessSection section={data!.executionSafety} />
+            <ReadinessSection section={data!.systemHealth} />
+            <ReadinessSection section={data!.websocketReconciliation} />
+          </div>
+
+          <div className="mt-3 rounded-lg border border-border bg-bg-soft px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wider text-muted">SONRAKİ AKSİYON</div>
+            <div className="mt-0.5 text-sm font-medium text-slate-200">
+              {NEXT_ACTION_LABEL[data!.nextRequiredAction] ?? data!.nextRequiredAction}
+            </div>
+            <div className="mt-1 text-[10px] text-muted">
+              {data!.blockingIssuesCount} bloklayıcı · {data!.warningIssuesCount} uyarı
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Aksiyon butonları — ONAYLA butonu YOK; canlıyı açan buton bu kartta gösterilmez */}
+      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
+        {(["OBSERVE", "PROMPT", "REFRESH"] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => onAction?.(k, `live-readiness-${data?.readinessStatus ?? "unknown"}`)}
+            className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
+            data-action-kind={k}
+            disabled={empty && k !== "REFRESH"}
+          >
+            {k === "OBSERVE" ? "GÖZLEM"
+              : k === "PROMPT" ? "PROMPT"
+              : "RAPORU YENİLE"}
+          </button>
+        ))}
+        <span className="ml-auto text-[10px] uppercase tracking-wider text-muted self-center">
+          Bu kart canlı trading açmaz; live gate değerlerini değiştirmez.
+        </span>
+      </div>
+
+      <p className="mt-2 text-[10px] text-muted">
+        Final canlı aktivasyon manuel ve ayrı bir adımdır. Bu kart yalnızca durum raporu üretir.
+      </p>
+    </div>
+  );
+}

@@ -1613,6 +1613,135 @@ ayar değiştirmez; yalnızca `onAction(kind, actionId)` callback üretir.
 
 ---
 
+## Faz 23 — Live Readiness / Canlıya Geçiş Kontrolü
+
+**Amaç:** CoinBot'un canlıya geçmeye hazır olup olmadığını ölçen final
+readiness gate sistemi. Bu faz canlı trading **AÇMAZ**; yalnızca
+"HAZIR / HAZIR DEĞİL / GÖZLEM GEREKLİ" kararı üretir.
+
+### Değişmez Kural
+
+- Live Readiness canlıyı AÇMAZ.
+- Live gate değerleri (`HARD_LIVE_TRADING_ALLOWED`, `enable_live_trading`,
+  `DEFAULT_TRADING_MODE`) manuel final aktivasyon olmadan değişmez.
+- En az **100 kapanmış paper trade** zorunludur — bypass edilemez.
+- API security checklist tamamlanmadan canlıya geçilmez.
+- Kullanıcı onayı (`userLiveApproval`) ayrı ve zorunludur, default `pending`.
+- Binance API Guardrails değişmez kuraldır.
+
+### Modül Yapısı
+
+`src/lib/live-readiness/` — saf fonksiyonlar; external I/O endpoint'te.
+
+| Dosya | Açıklama |
+|---|---|
+| `types.ts` | `LiveReadinessInput`, `LiveReadinessSummary`, `ReadinessCheck` + 9 kategori input tipi |
+| `checks.ts` | 9 kategori için saf check fonksiyonları |
+| `summary.ts` | `buildLiveReadinessSummary()` — tüm check'leri toplar, status üretir |
+| `index.ts` | Barrel export |
+
+### 9 Readiness Kategorisi
+
+| Kategori | İçerik |
+|---|---|
+| `PAPER_PERFORMANCE` | Min 100 kapanmış trade, win rate ≥ %45, profit factor ≥ 1.3, drawdown ≤ %10, ardışık kayıp ≤ 5 |
+| `RISK_CALIBRATION` | `averageDownEnabled=false`, `leverageExecutionBound=false`, risk %, daily max loss, sermaye, 30x uyarısı |
+| `TRADE_AUDIT` | Faz 22 audit raporundaki kritik bulgu sayısı, position sizing inflation tespiti |
+| `BINANCE_CREDENTIALS` | API key/secret, futures read access, account read |
+| `API_SECURITY` | Withdraw kapalı, IP restriction, futures permission, ek izinler — hepsi `confirmed` olmalı |
+| `EXECUTION_SAFETY` | `openLiveOrder=NOT_IMPLEMENTED`, triple-gate, binding invariant'ları |
+| `WEBSOCKET_RECONCILIATION` | WS connected, reconciliation safe, duplicate guard, clientOrderId guard |
+| `SYSTEM_HEALTH` | Worker online, heartbeat fresh, diagnostics not stale, worker lock healthy |
+| `USER_APPROVAL` | `userLiveApproval` default `pending` — onay olmadan blocking |
+
+### 100 Paper Trade Şartı
+
+Her senaryoda zorunludur ve bypass edilemez:
+- 0 kapanmış işlem → `pending`, blocking
+- 1–99 kapanmış işlem → `fail`, blocking
+- ≥100 kapanmış işlem → `pass`
+
+Test ile garantilenir: 0/25/50/75/99 değerleri için `blocking=true`.
+
+### API Security Checklist Davranışı
+
+`bot_settings.binance_security_checklist` (Faz 17) JSONB alanı:
+- `withdrawPermissionDisabled`, `ipRestrictionConfigured`,
+  `futuresPermissionConfirmed`, `extraPermissionsReviewed`
+- Her alan `unknown | confirmed | failed` olabilir.
+- Default tüm alanlar `unknown` → tüm checkler blocking.
+- `failed` durumda blocking + critical severity.
+- `confirmed` durumunda pass; tüm 4 alan confirmed olmadıkça canlıya geçilmez.
+
+### WebSocket / Reconciliation Değerlendirmesi
+
+Faz 18 altyapısı üzerinden:
+- `MarketFeedStatus.websocketStatus === "connected"` zorunlu.
+- `disconnected` durumunda `warning + blocking` (canlı fiyat takibi yok).
+- Reconciliation loop fail-closed/no-op invariant korunuyor mu?
+- Duplicate position guard ve clientOrderId guard mevcut mu?
+
+### Execution Safety Kararı
+
+Bu fazda canlı execution **kapalı kalmalı**. Check'ler şunu doğrular:
+- `openLiveOrder` hâlâ `LIVE_EXECUTION_NOT_IMPLEMENTED` → pass.
+- Triple-gate (`hardLiveTradingAllowed`, `enableLiveTrading`,
+  `defaultTradingMode`) okunup raporlanır; kapalıysa pass.
+- `liveExecutionBound=false`, `leverageExecutionBound=false` invariant'ları.
+- Bilgilendirme: "Final aktivasyon ayrı manuel adımdır." (status `pending`,
+  blocking değil — READY'yi engellemez.)
+
+### Read-only API Endpoint
+
+`GET /api/live-readiness/status`
+
+- Supabase'den paper_trades, live_trades, bot_settings okur.
+- `getEffectiveRiskSettings()`, `buildTradeAuditReport()`, `getWorkerHealth()`,
+  `getMarketFeedStatus()` üzerinden dahili modülleri okur.
+- `validateFuturesAccess()` Faz 17 read-only signed çağrısını kullanır
+  (sadece `/fapi/v1/time` ve `/fapi/v2/account`, **order endpoint YOK**).
+- **Yasaklı Binance private path'leri (order, leverage) referans alınmaz.**
+- Live gate değerlerini DEĞİŞTİRMEZ; sadece okur.
+- Endpoint dosyası test ile doğrulanır: `update(trading_mode|enable_live_trading)` yok.
+
+### Dashboard Kartı — CANLIYA GEÇİŞ KONTROLÜ
+
+`LiveReadinessCard`:
+- Üst pill: HAZIR / HAZIR DEĞİL / GÖZLEM GEREKLİ + skor /100
+- 6 mini bölüm: Paper Performans, Risk Kalibrasyonu, API Güvenliği,
+  Execution Safety, Sistem Sağlığı, WebSocket
+- NOT_READY ise net mesaj: "Canlıya geçiş için hazır değil."
+- Paper trade eksikse net mesaj: "100 kapanmış paper trade tamamlanmadan
+  canlıya geçilmez."
+- Sonraki aksiyon kutusu (`COMPLETE_PAPER_TRADES`, `FIX_API_SECURITY`,
+  `MANUAL_FINAL_ACTIVATION`, …)
+- **ONAYLA butonu YOK** — canlıyı açan UI bu kartta gösterilmez.
+  Aksiyonlar: GÖZLEM, PROMPT, RAPORU YENİLE (sadece callback).
+
+### Bu fazda kesinlikle dokunulmadı
+
+- Canlı trading açılmadı.
+- `HARD_LIVE_TRADING_ALLOWED=false` korundu.
+- `DEFAULT_TRADING_MODE=paper` korundu.
+- `enable_live_trading=false` korundu.
+- `MIN_SIGNAL_CONFIDENCE=70` korundu.
+- `openLiveOrder` hâlâ `LIVE_EXECUTION_NOT_IMPLEMENTED`.
+- Yasaklı Binance private endpoint'leri eklenmedi.
+- Risk ayarları otomatik değiştirilmedi.
+- Threshold/SL kuralı değiştirilmedi.
+- Worker lock korundu.
+- `averageDownEnabled=false` korundu.
+- `liveExecutionBound=false`, `leverageExecutionBound=false` korundu.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+İlgili dosyalar:
+- `src/lib/live-readiness/{types,checks,summary,index}.ts` — modül
+- `src/app/api/live-readiness/status/route.ts` — read-only endpoint
+- `src/components/dashboard/Cards.tsx` — `LiveReadinessCard` eklendi
+- `src/__tests__/live-readiness-phase23.test.ts` — 44 test
+
+---
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
