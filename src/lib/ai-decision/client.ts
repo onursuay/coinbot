@@ -27,6 +27,8 @@ export interface AIClientConfig {
   timeoutMs?: number;
   /** Test edilebilirlik için injectable fetch impl. */
   fetchImpl?: typeof fetch;
+  /** Observability: anahtar log olaylarını bildirir; asla throw etmez. */
+  onLog?: (event: string, meta: Record<string, unknown>) => void;
 }
 
 export function readOpenAIConfigFromEnv(): { apiKey: string | null; model: string } {
@@ -49,14 +51,29 @@ export async function callAIDecision(
   const startedAt = Date.now();
   const contextJson = JSON.stringify(context);
   const contextSizeChars = contextJson.length;
+  const safeLog = config.onLog ?? (() => {});
 
   // 1. API key yok → fallback
   if (!config.apiKey) {
+    safeLog("ai_fallback_returned", {
+      model: config.model,
+      hasOpenAiKey: false,
+      fallbackReason: "AI_UNCONFIGURED",
+      contextSizeApprox: contextSizeChars,
+      durationMs: Date.now() - startedAt,
+    });
     return wrapFallback("AI_UNCONFIGURED", config.model, contextSizeChars, startedAt);
   }
 
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") {
+    safeLog("ai_fallback_returned", {
+      model: config.model,
+      hasOpenAiKey: true,
+      fallbackReason: "AI_DISABLED",
+      contextSizeApprox: contextSizeChars,
+      durationMs: Date.now() - startedAt,
+    });
     return wrapFallback("AI_DISABLED", config.model, contextSizeChars, startedAt);
   }
 
@@ -65,11 +82,23 @@ export async function callAIDecision(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    safeLog("ai_openai_call_started", {
+      model: config.model,
+      hasOpenAiKey: true,
+      contextSizeApprox: contextSizeChars,
+    });
+
+    const userPrompt = buildUserPrompt(contextJson);
+    safeLog("ai_prompt_generated", {
+      model: config.model,
+      promptSizeApprox: userPrompt.length,
+    });
+
     const body = {
       model: config.model,
       input: [
-        { role: "system", content: AI_DECISION_SYSTEM_PROMPT },
-        { role: "user", content: buildUserPrompt(contextJson) },
+        { role: "system" as const, content: AI_DECISION_SYSTEM_PROMPT },
+        { role: "user" as const, content: userPrompt },
       ],
       text: {
         format: {
@@ -92,9 +121,14 @@ export async function callAIDecision(
     });
 
     if (!res.ok) {
-      // HTTP hatası: response body içeriğini AI'a karşı kullanmıyoruz; secret
-      // sızıntısı önlemek için detayı log'a bile yazmıyoruz, sadece status kodu.
-      void res.status;
+      // HTTP hatası: secret sızıntısı önlemek için sadece status kodu loglanır.
+      safeLog("ai_openai_call_failed", {
+        model: config.model,
+        hasOpenAiKey: true,
+        fallbackReason: "AI_HTTP_ERROR",
+        errorSafe: `HTTP ${res.status}`,
+        durationMs: Date.now() - startedAt,
+      });
       return wrapFallback("AI_HTTP_ERROR", config.model, contextSizeChars, startedAt);
     }
 
@@ -122,6 +156,13 @@ export async function callAIDecision(
     }
 
     if (!textOut) {
+      safeLog("ai_openai_call_failed", {
+        model: config.model,
+        hasOpenAiKey: true,
+        fallbackReason: "AI_PARSE_ERROR",
+        errorSafe: "empty_output_text",
+        durationMs: Date.now() - startedAt,
+      });
       return wrapFallback("AI_PARSE_ERROR", config.model, contextSizeChars, startedAt);
     }
 
@@ -129,10 +170,35 @@ export async function callAIDecision(
     try {
       parsed = JSON.parse(textOut);
     } catch {
+      safeLog("ai_openai_call_failed", {
+        model: config.model,
+        hasOpenAiKey: true,
+        fallbackReason: "AI_PARSE_ERROR",
+        errorSafe: "json_parse_error",
+        durationMs: Date.now() - startedAt,
+      });
       return wrapFallback("AI_PARSE_ERROR", config.model, contextSizeChars, startedAt);
     }
 
     const data: AIDecisionOutput = normalizeAIDecisionOutput(parsed);
+
+    safeLog("ai_decision_output_normalized", {
+      model: config.model,
+      status: data.status,
+      actionType: data.actionType,
+      riskLevel: data.riskLevel,
+      confidence: data.confidence,
+      blockedBy: data.blockedBy,
+      durationMs: Date.now() - startedAt,
+    });
+
+    safeLog("ai_openai_call_succeeded", {
+      model: config.model,
+      status: data.status,
+      actionType: data.actionType,
+      confidence: data.confidence,
+      durationMs: Date.now() - startedAt,
+    });
 
     return {
       ok: true,
@@ -149,6 +215,13 @@ export async function callAIDecision(
   } catch (err: any) {
     // AbortError → timeout; diğer her şey → AI_HTTP_ERROR
     const reason: AIFallbackReason = err?.name === "AbortError" ? "AI_TIMEOUT" : "AI_HTTP_ERROR";
+    safeLog("ai_openai_call_failed", {
+      model: config.model,
+      hasOpenAiKey: true,
+      fallbackReason: reason,
+      errorSafe: reason === "AI_TIMEOUT" ? "request_timeout" : "fetch_error",
+      durationMs: Date.now() - startedAt,
+    });
     return wrapFallback(reason, config.model, contextSizeChars, startedAt);
   } finally {
     clearTimeout(timer);

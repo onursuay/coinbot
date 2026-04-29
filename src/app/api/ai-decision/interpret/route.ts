@@ -12,6 +12,7 @@ import { ok, fail } from "@/lib/api-helpers";
 import { supabaseAdmin, supabaseConfigured } from "@/lib/supabase/server";
 import { getCurrentUserId } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { botLog } from "@/lib/logger";
 import { getWorkerHealth } from "@/lib/engines/heartbeat";
 import { getMarketFeedStatus } from "@/lib/market-feed/status";
 import {
@@ -68,6 +69,21 @@ export async function POST(req: Request) {
     }
 
     const userId = getCurrentUserId();
+    const requestId = Math.random().toString(36).slice(2, 10);
+    const cfg = readOpenAIConfigFromEnv();
+    void botLog({
+      userId,
+      level: "info",
+      eventType: "ai_decision_requested",
+      message: "AI yorum isteği alındı",
+      metadata: {
+        requestId,
+        model: cfg.model,
+        hasOpenAiKey: !!cfg.apiKey,
+        mode: bodyMode,
+        createdAt: new Date().toISOString(),
+      },
+    });
     const sb = supabaseAdmin();
 
     // ── Paper / live trades ─────────────────────────────────────────────────
@@ -335,18 +351,83 @@ export async function POST(req: Request) {
       mode: bodyMode,
     });
 
-    return ok(await runAI(context));
+    const contextSections = [
+      context.performanceDecision ? "performanceDecision" : null,
+      context.tradeAuditSummary ? "tradeAuditSummary" : null,
+      context.liveReadiness ? "liveReadiness" : null,
+      context.riskConfig ? "riskConfig" : null,
+      context.diagnostics ? "diagnostics" : null,
+      context.closedTradesRecent.length > 0 ? "closedTradesRecent" : null,
+      context.openPositions.length > 0 ? "openPositions" : null,
+    ].filter(Boolean) as string[];
+
+    void botLog({
+      userId,
+      level: "info",
+      eventType: "ai_context_built",
+      message: `AI context hazırlandı (${contextSections.length} bölüm)`,
+      metadata: {
+        requestId,
+        contextSections,
+        contextSizeApprox: JSON.stringify(context).length,
+        closedTradesCount: context.closedTradesRecent.length,
+        openPositionsCount: context.openPositions.length,
+        scanRowsCount: context.scanRowsCount,
+      },
+    });
+
+    return ok(await runAI(context, userId, requestId));
   } catch (e: any) {
     return fail(e?.message ?? "ai-decision/interpret hata", 500);
   }
 }
 
-async function runAI(context: ReturnType<typeof buildAIDecisionContext>) {
+async function runAI(
+  context: ReturnType<typeof buildAIDecisionContext>,
+  userId?: string,
+  requestId?: string,
+) {
   const cfg = readOpenAIConfigFromEnv();
   const response = await callAIDecision(context, {
     apiKey: cfg.apiKey,
     model: cfg.model,
+    onLog: userId
+      ? (event, meta) => {
+          void botLog({
+            userId: userId!,
+            level: meta.fallbackReason ? "warn" : "info",
+            eventType: event,
+            message: `AI: ${event}`,
+            metadata: { requestId: requestId ?? "unknown", ...meta },
+          });
+        }
+      : undefined,
   });
+
+  if (userId) {
+    const isCompleted = response.fallback === null;
+    void botLog({
+      userId,
+      level: isCompleted ? "info" : "warn",
+      eventType: isCompleted ? "ai_decision_completed" : "ai_fallback_returned",
+      message: isCompleted
+        ? `AI yorum tamamlandı: ${response.data.status} / ${response.data.actionType}`
+        : `AI fallback döndü: ${response.fallback}`,
+      metadata: {
+        requestId: requestId ?? "unknown",
+        model: cfg.model,
+        hasOpenAiKey: !!cfg.apiKey,
+        status: response.data.status,
+        actionType: response.data.actionType,
+        riskLevel: response.data.riskLevel,
+        confidence: response.data.confidence,
+        blockedBy: response.data.blockedBy,
+        fallbackReason: response.fallback ?? null,
+        durationMs: response.meta.durationMs,
+      },
+    });
+  }
+
   return {
     response,
     contextMeta: {

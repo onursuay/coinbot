@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 
 type Filter = "last100" | "last500" | "last1000" | "last24h" | "last7d" | "error" | "kill_switch";
 
@@ -14,22 +15,51 @@ const FILTERS: FilterOption[] = [
   { value: "kill_switch",  label: "Kill Switch"},
 ];
 
-interface Meta { filter: Filter; limit: number; total: number }
+/** AI event label mapping — Logs UI'da anlaşılır gösterim */
+const AI_EVENT_LABELS: Record<string, string> = {
+  ai_decision_requested:         "AI yorum isteği",
+  ai_context_built:              "AI context hazırlandı",
+  ai_prompt_generated:           "AI prompt oluşturuldu",
+  ai_openai_call_started:        "OpenAI çağrısı başlatıldı",
+  ai_openai_call_succeeded:      "OpenAI çağrısı başarılı",
+  ai_openai_call_failed:         "OpenAI çağrısı başarısız",
+  ai_fallback_returned:          "AI fallback döndü",
+  ai_decision_output_normalized: "AI çıktısı normalize edildi",
+  ai_decision_completed:         "AI yorum tamamlandı",
+};
 
-export default function LogsPage() {
+function formatEventLabel(eventType: string): string {
+  return AI_EVENT_LABELS[eventType] ?? eventType;
+}
+
+interface Meta { filter: Filter; limit: number; total: number; q: string | null }
+
+function LogsContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
   const [logs, setLogs]         = useState<any[]>([]);
   const [risk, setRisk]         = useState<any[]>([]);
   const [meta, setMeta]         = useState<Meta | null>(null);
   const [filter, setFilter]     = useState<Filter>("last500");
+  const [search, setSearch]     = useState(() => searchParams.get("q") ?? "");
+  const [activeQ, setActiveQ]   = useState(() => searchParams.get("q") ?? "");
   const [loading, setLoading]   = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [cleanupResult, setCleanupResult] = useState<{ deleted: number; ranAt: string } | null>(null);
   const [cleanupRunning, setCleanupRunning] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const refresh = useCallback(async (f: Filter = filter) => {
+  const buildUrl = useCallback((f: Filter, q: string) => {
+    const params = new URLSearchParams({ filter: f });
+    if (q.trim()) params.set("q", q.trim());
+    return `/api/logs?${params.toString()}`;
+  }, []);
+
+  const refresh = useCallback(async (f: Filter, q: string) => {
     setLoading(true);
     try {
-      const r = await fetch(`/api/logs?filter=${f}`, { cache: "no-store" }).then((res) => res.json());
+      const r = await fetch(buildUrl(f, q), { cache: "no-store" }).then((res) => res.json());
       if (r.ok) {
         setLogs(r.data.logs);
         setRisk(r.data.riskEvents);
@@ -39,9 +69,25 @@ export default function LogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [buildUrl]);
 
-  useEffect(() => { refresh(filter); }, [filter]);
+  // Filtre veya aktif arama değişince yenile
+  useEffect(() => {
+    refresh(filter, activeQ);
+  }, [filter, activeQ, refresh]);
+
+  // Search debounce — 300ms bekle, sonra activeQ güncelle
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setActiveQ(search);
+      const params = new URLSearchParams();
+      if (search.trim()) params.set("q", search.trim());
+      const qs = params.toString();
+      router.replace(qs ? `?${qs}` : window.location.pathname, { scroll: false });
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [search, router]);
 
   const handleCleanup = async () => {
     setCleanupRunning(true);
@@ -49,7 +95,7 @@ export default function LogsPage() {
       const r = await fetch("/api/logs/cleanup", { method: "POST", cache: "no-store" }).then((res) => res.json());
       if (r.ok) {
         setCleanupResult({ deleted: r.data.deleted_total, ranAt: r.data.ran_at });
-        await refresh(filter);
+        await refresh(filter, activeQ);
       }
     } finally {
       setCleanupRunning(false);
@@ -69,7 +115,7 @@ export default function LogsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           {meta && (
             <span className="text-xs text-muted">
-              {meta.total} kayıt gösteriliyor
+              {meta.total} kayıt{meta.q ? ` (ara: "${meta.q}")` : ""}
             </span>
           )}
           {lastRefresh && (
@@ -79,7 +125,7 @@ export default function LogsPage() {
           )}
           <button
             className="btn-primary whitespace-nowrap px-3 text-sm"
-            onClick={() => refresh(filter)}
+            onClick={() => refresh(filter, activeQ)}
             disabled={loading}
           >
             {loading ? "Yükleniyor..." : "Yenile"}
@@ -95,8 +141,8 @@ export default function LogsPage() {
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex gap-2 flex-wrap">
+      {/* Filter bar + Search */}
+      <div className="flex items-center gap-2 flex-wrap">
         {FILTERS.map((f) => (
           <button
             key={f.value}
@@ -110,6 +156,31 @@ export default function LogsPage() {
             {f.label}
           </button>
         ))}
+        <div className="ml-auto flex items-center gap-1.5">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                if (debounceRef.current) clearTimeout(debounceRef.current);
+                setActiveQ(search);
+              }
+            }}
+            placeholder="Loglarda ara…"
+            className="h-7 w-48 rounded border border-border bg-bg-soft px-2 text-xs text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="text-xs text-muted hover:text-foreground px-1"
+              title="Aramayı temizle"
+            >
+              ✕
+            </button>
+          )}
+          {loading && <span className="text-xs text-muted">…</span>}
+        </div>
       </div>
 
       {/* Cleanup result */}
@@ -151,7 +222,9 @@ export default function LogsPage() {
                     {l.level}
                   </span>
                 </td>
-                <td className="text-xs">{l.event_type}</td>
+                <td className="text-xs" title={l.event_type}>
+                  {formatEventLabel(l.event_type)}
+                </td>
                 <td className="text-xs">{l.exchange_name ?? "—"}</td>
                 <td className="text-xs">{l.message}</td>
               </tr>
@@ -190,7 +263,9 @@ export default function LogsPage() {
                     {l.severity}
                   </span>
                 </td>
-                <td className="text-xs">{l.event_type}</td>
+                <td className="text-xs" title={l.event_type}>
+                  {formatEventLabel(l.event_type)}
+                </td>
                 <td className="text-xs">{l.symbol ?? "—"}</td>
                 <td className="text-xs">{l.message}</td>
               </tr>
@@ -199,5 +274,13 @@ export default function LogsPage() {
         </table>
       </section>
     </div>
+  );
+}
+
+export default function LogsPage() {
+  return (
+    <Suspense fallback={<div className="text-muted text-sm p-4">Loglar yükleniyor…</div>}>
+      <LogsContent />
+    </Suspense>
   );
 }

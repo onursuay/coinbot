@@ -7,16 +7,19 @@ export const dynamic = "force-dynamic";
 
 type Filter = "last100" | "last500" | "last1000" | "last24h" | "last7d" | "error" | "kill_switch";
 
+const VALID_FILTERS: Filter[] = ["last100", "last500", "last1000", "last24h", "last7d", "error", "kill_switch"];
+const VALID_LEVELS = ["debug", "info", "warn", "error"];
+const MAX_LIMIT = 1000;
+
 function parseFilter(raw: string | null): Filter {
-  const valid: Filter[] = ["last100", "last500", "last1000", "last24h", "last7d", "error", "kill_switch"];
-  return valid.includes(raw as Filter) ? (raw as Filter) : "last500";
+  return VALID_FILTERS.includes(raw as Filter) ? (raw as Filter) : "last500";
 }
 
 function filterToLimit(f: Filter): number {
   if (f === "last100") return 100;
   if (f === "last1000") return 1000;
   if (f === "last24h" || f === "last7d" || f === "error" || f === "kill_switch") return 1000;
-  return 500; // last500 default
+  return 500;
 }
 
 function cutoffForFilter(f: Filter): string | null {
@@ -25,16 +28,35 @@ function cutoffForFilter(f: Filter): string | null {
   return null;
 }
 
+/** Arama terimindeki % ve _ karakterlerini escape eder; SQL injection önlenir. */
+function buildIlikePattern(term: string): string {
+  return `%${term.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const filter = parseFilter(url.searchParams.get("filter"));
 
   if (!supabaseConfigured()) return ok({ logs: [], riskEvents: [], meta: { filter, total: 0 } });
+
   const limitOverride = url.searchParams.get("limit");
   const limit = limitOverride
-    ? Math.min(1000, Math.max(1, Number(limitOverride) || 500))
+    ? Math.min(MAX_LIMIT, Math.max(1, Number(limitOverride) || 500))
     : filterToLimit(filter);
   const cutoff = cutoffForFilter(filter);
+
+  // ── Arama parametreleri ────────────────────────────────────────────────
+  const rawQ = url.searchParams.get("q")?.trim() ?? null;
+  const q = rawQ && rawQ.length > 0 ? rawQ.slice(0, 100) : null;
+
+  const rawLevel = url.searchParams.get("level") ?? null;
+  const levelFilter = rawLevel && VALID_LEVELS.includes(rawLevel) ? rawLevel : null;
+
+  const rawEvent = url.searchParams.get("event")?.trim() ?? null;
+  const eventFilter = rawEvent && rawEvent.length > 0 ? rawEvent.slice(0, 100) : null;
+
+  const errorsOnly = url.searchParams.get("errorsOnly") === "true";
+  const killSwitchOnly = url.searchParams.get("killSwitch") === "true";
 
   const userId = getCurrentUserId();
   const sb = supabaseAdmin();
@@ -53,16 +75,35 @@ export async function GET(req: Request) {
     .order("created_at", { ascending: false })
     .limit(limit);
 
-  if (filter === "error") {
+  // ── Temel filtre (zaman / seviye) ──────────────────────────────────────
+  if (filter === "error" || errorsOnly) {
     logsQuery = logsQuery.eq("level", "error");
     riskQuery = riskQuery.eq("severity", "critical");
-  } else if (filter === "kill_switch") {
+  } else if (filter === "kill_switch" || killSwitchOnly) {
     logsQuery = logsQuery.ilike("event_type", "%kill_switch%");
-    // risk_events don't have kill_switch events; return empty for that table
     riskQuery = riskQuery.ilike("event_type", "%kill_switch%");
   } else if (cutoff) {
     logsQuery = logsQuery.gte("created_at", cutoff);
     riskQuery = riskQuery.gte("created_at", cutoff);
+  }
+
+  // ── Keyword arama (q) — event_type ve message üzerinde case-insensitive ─
+  if (q) {
+    const pattern = buildIlikePattern(q);
+    logsQuery = logsQuery.or(`event_type.ilike.${pattern},message.ilike.${pattern}`);
+    riskQuery = riskQuery.or(`event_type.ilike.${pattern},message.ilike.${pattern}`);
+  }
+
+  // ── Level filtresi ──────────────────────────────────────────────────────
+  if (levelFilter && !errorsOnly && filter !== "error") {
+    logsQuery = logsQuery.eq("level", levelFilter);
+  }
+
+  // ── Event-type filtresi ─────────────────────────────────────────────────
+  if (eventFilter) {
+    const evtPattern = buildIlikePattern(eventFilter);
+    logsQuery = logsQuery.ilike("event_type", evtPattern);
+    riskQuery = riskQuery.ilike("event_type", evtPattern);
   }
 
   const [{ data: logs }, { data: riskEvents }] = await Promise.all([logsQuery, riskQuery]);
@@ -70,6 +111,11 @@ export async function GET(req: Request) {
   return ok({
     logs: logs ?? [],
     riskEvents: riskEvents ?? [],
-    meta: { filter, limit, total: (logs?.length ?? 0) + (riskEvents?.length ?? 0) },
+    meta: {
+      filter,
+      limit,
+      q: q ?? null,
+      total: (logs?.length ?? 0) + (riskEvents?.length ?? 0),
+    },
   });
 }

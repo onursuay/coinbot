@@ -1231,6 +1231,11 @@ export interface AIDecisionCardInput {
   /** Daima false — AI çıktıları otomatik uygulanmaz. */
   appliedToTradeEngine: false;
   fallbackReason?: string | null;
+  /** Observability alanları — opsiyonel; durum çubuğunda gösterilir. */
+  hasOpenAiKey?: boolean;
+  model?: string | null;
+  lastCallAt?: string | null;
+  aiCallSucceeded?: boolean | null;
 }
 
 const AI_STATUS_LABEL: Record<string, string> = {
@@ -1273,6 +1278,16 @@ export function AIDecisionAssistantCard({
   const riskTone = AI_RISK_TONE[riskLevel] ?? "muted";
   const isPrompt = data?.actionType === "PROMPT" && data?.suggestedPrompt;
 
+  // AI durum çubuğu hesabı
+  const aiStatusInfo = (() => {
+    if (!data) return { label: "YÜKLENIYOR", tone: "muted" as Tone };
+    if (data.fallbackReason === "AI_UNCONFIGURED" || data.hasOpenAiKey === false)
+      return { label: "API KEY YOK", tone: "warning" as Tone };
+    if (data.fallbackReason) return { label: "FALLBACK", tone: "warning" as Tone };
+    if (data.aiCallSucceeded === false) return { label: "HATA", tone: "danger" as Tone };
+    return { label: "AKTİF", tone: "success" as Tone };
+  })();
+
   return (
     <div className="card">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
@@ -1284,6 +1299,52 @@ export function AIDecisionAssistantCard({
             <Pill tone="accent">GÜVEN: %{Math.round(data!.confidence)}</Pill>
           )}
         </div>
+      </div>
+
+      {/* AI Durum Çubuğu */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border/40 bg-bg-soft px-3 py-1.5 text-[11px]">
+        <span>
+          AI:{" "}
+          <span className={`font-medium ${
+            aiStatusInfo.tone === "success" ? "text-success"
+            : aiStatusInfo.tone === "warning" ? "text-warning"
+            : aiStatusInfo.tone === "danger"  ? "text-danger"
+            : "text-muted"
+          }`}>{aiStatusInfo.label}</span>
+        </span>
+        {data?.model && (
+          <span className="text-muted">
+            Model: <span className="text-foreground">{data.model}</span>
+          </span>
+        )}
+        {data?.lastCallAt && (
+          <span className="text-muted">
+            Son:{" "}
+            <span className="text-foreground">
+              {new Date(data.lastCallAt).toLocaleTimeString("tr-TR")}
+            </span>
+          </span>
+        )}
+        {data?.actionType && data.actionType !== "DATA_INSUFFICIENT" && (
+          <span className="text-muted">
+            Aksiyon: <span className="text-foreground">{data.actionType}</span>
+          </span>
+        )}
+        {data && data.confidence > 0 && (
+          <span className="text-muted">
+            Güven: <span className="text-foreground">%{Math.round(data.confidence)}</span>
+          </span>
+        )}
+        {data?.fallbackReason && data.fallbackReason !== "AI_UNCONFIGURED" && (
+          <span className="text-warning">
+            AI fallback çalıştı — OpenAI API çağrısı yapılmadı.
+          </span>
+        )}
+        {data?.fallbackReason === "AI_UNCONFIGURED" && (
+          <span className="text-warning">
+            OpenAI API anahtarı yapılandırılmamış — AI fallback modda.
+          </span>
+        )}
       </div>
 
       {empty ? (
