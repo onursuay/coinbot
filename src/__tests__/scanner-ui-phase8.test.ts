@@ -74,7 +74,7 @@ describe("Phase 8 — tablo başlıkları büyük harf ve yeni kolon seti", () =
   it("Varsayılan kolon başlıkları büyük harf ve doğru sırada", () => {
     const expected = [
       "COIN", "KAYNAK", "YÖN", "KALİTE", "FIRSAT",
-      "İŞLEM SKORU", "EŞİĞE KALAN", "KARAR", "SEBEP",
+      "TRADE SKORU", "KARAR", "SEBEP",
     ];
     for (const h of expected) {
       // Her başlık <th> veya başlığı taşıyan elementte geçmeli.
@@ -598,5 +598,69 @@ describe("Bugfix 1.2 — trade & live gate invariantleri", () => {
     const CARDS = read("src/components/dashboard/Cards.tsx");
     expect(CARDS).not.toMatch(/enable_live_trading\s*=\s*true/);
     expect(CARDS).not.toMatch(/HARD_LIVE_TRADING_ALLOWED\s*=\s*true/);
+  });
+});
+
+// ── 24. Trade Score Column Simplification Patch ──────────────────────
+describe("Trade Score Column Simplification Patch", () => {
+  it("Scanner header'da TRADE SKORU görünür", () => {
+    expect(SCANNER_PAGE.includes(">TRADE SKORU<")).toBe(true);
+  });
+
+  it("İŞLEM SKORU header'ı görünmez", () => {
+    expect(SCANNER_PAGE.includes(">İŞLEM SKORU<")).toBe(false);
+  });
+
+  it("EŞİĞE KALAN header'ı görünmez", () => {
+    expect(SCANNER_PAGE.includes(">EŞİĞE KALAN<")).toBe(false);
+  });
+
+  it("tradeSignalScore varsa X/70 formatında gösterilir (örn. 42/70, 70/70)", () => {
+    // Kaynak kodunda {r.tradeSignalScore}/70 ifadesi bulunmalı.
+    expect(SCANNER_PAGE).toMatch(/r\.tradeSignalScore\}\/70/);
+  });
+
+  it("tradeSignalScore >= 70 ise text-success renk sınıfı uygulanır", () => {
+    expect(SCANNER_PAGE).toMatch(/tradeSignalScore >= 70.*text-success/s);
+  });
+
+  it("tradeSignalScore 50-69 ise text-warning renk sınıfı uygulanır", () => {
+    expect(SCANNER_PAGE).toMatch(/tradeSignalScore >= 50.*text-warning/s);
+  });
+
+  it("tradeSignalScore null/undefined ise SKOR YOK gösterilir", () => {
+    expect(SCANNER_PAGE).toMatch(/SKOR YOK/);
+    expect(SCANNER_PAGE).toMatch(/tradeSignalScore != null/);
+  });
+
+  it("SEBEP kolonu korunur", () => {
+    expect(SCANNER_PAGE.includes(">SEBEP<")).toBe(true);
+    expect(SCANNER_PAGE).toMatch(/buildReasonText/);
+  });
+
+  it("distanceToThreshold fonksiyonu kaldırıldı", () => {
+    expect(SCANNER_PAGE).not.toMatch(/function distanceToThreshold/);
+    expect(SCANNER_PAGE).not.toMatch(/distanceToThreshold/);
+  });
+
+  it("Trade logic değişmedi — MIN_SIGNAL_CONFIDENCE=70 korunur", () => {
+    const eng = read("src/lib/engines/signal-engine.ts");
+    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+  });
+
+  it("SIGNAL_THRESHOLD sabiti scanner sayfasında 70 olarak korunur", () => {
+    expect(SCANNER_PAGE).toMatch(/SIGNAL_THRESHOLD\s*=\s*70/);
+  });
+
+  it("Live gate değişmedi — HARD_LIVE_TRADING_ALLOWED=false", () => {
+    const env = read("src/lib/env.ts");
+    expect(env).toMatch(/HARD_LIVE_TRADING_ALLOWED.*false/);
+  });
+
+  it("Binance order/leverage endpoint yok", () => {
+    expect(SCANNER_PAGE).not.toMatch(/fapi\/v1\/order/);
+    expect(SCANNER_PAGE).not.toMatch(/fapi\/v1\/leverage/);
+    expect(SCANNER_PAGE).not.toMatch(/fapi\.binance\.com/);
+    expect(SCANNER_PAGE).not.toMatch(/api\.binance\.com/);
   });
 });

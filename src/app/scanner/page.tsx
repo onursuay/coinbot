@@ -156,14 +156,6 @@ function decisionClass(label: DirectionLabel | DecisionLabel, opened: boolean): 
   return sharedDecisionClass(label, opened);
 }
 
-// ── EŞİĞE KALAN ─────────────────────────────────────────────────────────
-function distanceToThreshold(row: ScanRow): number | null {
-  const score = row.tradeSignalScore ?? row.signalScore ?? 0;
-  if (row.opened) return 0;
-  if (score <= 0) return null;
-  return Math.max(0, SIGNAL_THRESHOLD - score);
-}
-
 // ── SEBEP — wait codes / scoreReason / rejectReason kısa metni ──────────
 const WAIT_CODE_TR: Record<string, string> = {
   EMA_ALIGNMENT_MISSING: "EMA dizilim",
@@ -553,8 +545,7 @@ export default function ScannerPage() {
                 <th>YÖN</th>
                 <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">KALİTE</th>
                 <th title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu">FIRSAT</th>
-                <th title="İşlem güven skoru — 70+ = işlem açılır">İŞLEM SKORU</th>
-                <th title="İşlem skoru 70 eşiğine kalan puan">EŞİĞE KALAN</th>
+                <th title="Final işlem skoru. İşlem açma eşiği: 70.">TRADE SKORU</th>
                 <th>KARAR</th>
                 <th className="pr-12">SEBEP</th>
                 {advColumns.map((c) => (
@@ -567,7 +558,6 @@ export default function ScannerPage() {
               {rows.map((r) => {
                 const directionLabel = mapDirectionLabel(r);
                 const decisionLabel = mapDecisionLabel(r);
-                const dist = distanceToThreshold(r);
                 const reasonText = buildReasonText(r);
                 const opened = r.opened === true;
                 const rowClass = opened
@@ -575,7 +565,6 @@ export default function ScannerPage() {
                   : "";
                 const quality = r.marketQualityScore ?? r.marketQualityPreScore ?? 0;
                 const setup = r.setupScore ?? 0;
-                const trade = r.tradeSignalScore ?? r.signalScore ?? 0;
 
                 return (
                   <tr key={r.symbol} className={`group${rowClass ? ` ${rowClass}` : ""}`}>
@@ -609,22 +598,17 @@ export default function ScannerPage() {
                         </span>
                       ) : <span className="text-muted">—</span>}
                     </td>
-                    <td>
-                      {trade > 0 ? (
-                        <span className={`text-xs font-medium ${trade >= 70 ? "text-success" : trade >= 50 ? "text-warning" : "text-muted"}`}>
-                          {trade}
+                    <td
+                      title={r.tradeSignalScore != null
+                        ? "Final işlem skoru. İşlem açma eşiği: 70."
+                        : "Final işlem skoru henüz oluşmadı. Coin izleniyor ama işlem şartları tamamlanmadı."}
+                    >
+                      {r.tradeSignalScore != null ? (
+                        <span className={`text-xs font-semibold ${r.tradeSignalScore >= 70 ? "text-success" : r.tradeSignalScore >= 50 ? "text-warning" : "text-muted"}`}>
+                          {r.tradeSignalScore}/70
                         </span>
-                      ) : <span className="text-muted text-xs">—</span>}
-                    </td>
-                    <td>
-                      {dist === null ? (
-                        <span className="text-muted text-xs">—</span>
-                      ) : dist === 0 ? (
-                        <span className="text-success text-xs font-medium">0</span>
                       ) : (
-                        <span className={`text-xs ${dist <= 10 ? "text-warning font-medium" : "text-muted"}`}>
-                          {dist}
-                        </span>
+                        <span className="text-muted text-xs">SKOR YOK</span>
                       )}
                     </td>
                     <td>
