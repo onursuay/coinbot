@@ -187,6 +187,26 @@ async function tickLoop() {
         status: "error",
         lastError: e?.message ?? String(e),
       }).catch(() => undefined);
+      // Write error summary so diagnostics freshness is maintained even on crash.
+      // Non-fatal: silently ignored if DB is unavailable.
+      try {
+        if (supabaseConfigured()) {
+          const _userId = getCurrentUserId();
+          const generatedAt = new Date().toISOString();
+          await supabaseAdmin().from("bot_settings").update({
+            last_tick_at: generatedAt,
+            last_tick_summary: {
+              at: generatedAt,
+              generatedAt,
+              tickSkipped: false,
+              skipReason: null,
+              tickError: String(e?.message ?? e).slice(0, 500),
+              workerLockOwner: isLockOwner,
+              worker_id: WORKER_ID,
+            },
+          }).eq("user_id", _userId);
+        }
+      } catch { /* diagnostics-only, non-fatal */ }
     }
     await sleep(TICK_INTERVAL_SEC * 1000);
   }

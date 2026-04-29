@@ -367,6 +367,34 @@ export interface TickResult {
 
 const PAPER_BALANCE = 1000;
 
+// Diagnostics-only: write a minimal tick summary so the freshness timestamp stays current
+// even when tickBot exits early (daily target, strategy gate, max positions, etc.).
+// Never called when isLockOwner is explicitly false — non-owners must not overwrite.
+// Failures are silently swallowed because this is diagnostics-only, not trade-critical.
+async function writeSkipSummary(
+  userId: string,
+  wCtx: WorkerContext | undefined,
+  skipReason: string
+): Promise<void> {
+  if (wCtx?.isLockOwner === false) return;
+  if (!supabaseConfigured()) return;
+  const generatedAt = new Date().toISOString();
+  try {
+    await supabaseAdmin().from("bot_settings").update({
+      last_tick_at: generatedAt,
+      last_tick_summary: {
+        at: generatedAt,
+        generatedAt,
+        tickSkipped: true,
+        skipReason,
+        tickError: null,
+        workerLockOwner: wCtx?.isLockOwner ?? true,
+        worker_id: wCtx?.workerId ?? null,
+      },
+    }).eq("user_id", userId);
+  } catch { /* diagnostics-only, non-fatal */ }
+}
+
 async function loadSettings(userId: string) {
   if (!supabaseConfigured()) return null;
   const sb = supabaseAdmin();
@@ -534,6 +562,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     result.reason = `Bot durumu: ${settings.bot_status}`;
     result.durationMs = Date.now() - start;
     await botLog({ userId, eventType: "tick_skipped", message: result.reason });
+    await writeSkipSummary(userId, opts?.workerContext, `bot_not_running:${settings.bot_status}`);
     return result;
   }
 
@@ -695,6 +724,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     result.reason = "daily_target_hit";
     result.durationMs = Date.now() - start;
     await botLog({ userId, eventType: "tick_completed", message: "Tick tamamlandı — günlük hedef doldu, işlem yok", metadata: { ...summary(result) } });
+    await writeSkipSummary(userId, opts?.workerContext, "daily_target_hit");
     return result;
   }
   if (daily.lossLimitHit) {
@@ -702,6 +732,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     result.reason = "daily_loss_limit_hit";
     result.durationMs = Date.now() - start;
     await botLog({ userId, level: "warn", eventType: "tick_completed", message: "Tick — günlük zarar limiti, bot duraklatıldı" });
+    await writeSkipSummary(userId, opts?.workerContext, "daily_loss_limit_hit");
     return result;
   }
 
@@ -716,6 +747,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       message: `Tick — strateji sağlık gate reddetti: ${strategyHealth.blockReason}`,
       metadata: { score: strategyHealth.score, totalTrades: strategyHealth.totalTrades },
     });
+    await writeSkipSummary(userId, opts?.workerContext, `strategy_health_blocked:${strategyHealth.blockReason ?? "unknown"}`);
     return result;
   }
 
@@ -727,6 +759,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     result.reason = "max_open_positions";
     result.durationMs = Date.now() - start;
     await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}) doldu` });
+    await writeSkipSummary(userId, opts?.workerContext, "max_open_positions");
     return result;
   }
 

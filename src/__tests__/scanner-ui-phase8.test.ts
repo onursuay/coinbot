@@ -14,6 +14,8 @@ const read = (rel: string) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8")
 const SCANNER_PAGE = read("src/app/scanner/page.tsx");
 const TOPBAR = read("src/components/TopBar.tsx");
 const DIAGNOSTICS_ROUTE = read("src/app/api/bot/diagnostics/route.ts");
+const ORCHESTRATOR = read("src/lib/engines/bot-orchestrator.ts");
+const WORKER = read("worker/index.ts");
 
 // ── 1. Banner / status / dashboard blokları kaldırıldı ─────────────────
 describe("Phase 8 — Piyasa Tarayıcı banner/dashboard blokları kaldırıldı", () => {
@@ -295,5 +297,113 @@ describe("Bugfix 1 — trade & live gate invariantleri", () => {
   it("diagnostics route içinde Binance fetch eklenmedi", () => {
     expect(DIAGNOSTICS_ROUTE).not.toMatch(/fapi\.binance\.com/);
     expect(DIAGNOSTICS_ROUTE).not.toMatch(/api\.binance\.com/);
+  });
+});
+
+// ── 14. Bugfix 1.1 — writeSkipSummary helper var ─────────────────────
+describe("Bugfix 1.1 — writeSkipSummary helper", () => {
+  it("writeSkipSummary fonksiyonu orchestrator'da tanımlı", () => {
+    expect(ORCHESTRATOR).toMatch(/function writeSkipSummary/);
+  });
+
+  it("isLockOwner === false olan worker özet yazmaz (guard var)", () => {
+    expect(ORCHESTRATOR).toMatch(/wCtx\?\.isLockOwner\s*===\s*false/);
+  });
+
+  it("generatedAt ve tickSkipped alanları yazılıyor", () => {
+    expect(ORCHESTRATOR).toMatch(/generatedAt/);
+    expect(ORCHESTRATOR).toMatch(/tickSkipped/);
+  });
+
+  it("skipReason alanı yazılıyor", () => {
+    expect(ORCHESTRATOR).toMatch(/skipReason/);
+  });
+
+  it("workerLockOwner alanı yazılıyor", () => {
+    expect(ORCHESTRATOR).toMatch(/workerLockOwner/);
+  });
+});
+
+// ── 15. Bugfix 1.1 — early return path'ler summary yazıyor ───────────
+describe("Bugfix 1.1 — tickBot early return path'ler", () => {
+  it("daily_target_hit path summary yazıyor", () => {
+    // Son eşleşmeyi bul — writeSkipSummary call'ı en sondaki "daily_target_hit" stringidir
+    const idx = ORCHESTRATOR.lastIndexOf('"daily_target_hit"');
+    expect(idx).toBeGreaterThan(0);
+    const nearbyCtx = ORCHESTRATOR.slice(Math.max(0, idx - 100), idx + 100);
+    expect(nearbyCtx).toMatch(/writeSkipSummary/);
+  });
+
+  it("daily_loss_limit_hit path summary yazıyor", () => {
+    const idx = ORCHESTRATOR.lastIndexOf('"daily_loss_limit_hit"');
+    expect(idx).toBeGreaterThan(0);
+    const nearbyCtx = ORCHESTRATOR.slice(Math.max(0, idx - 100), idx + 100);
+    expect(nearbyCtx).toMatch(/writeSkipSummary/);
+  });
+
+  it("strategy_health_blocked path summary yazıyor", () => {
+    // writeSkipSummary ile strategy_health_blocked birlikte geçiyor
+    expect(ORCHESTRATOR).toMatch(/writeSkipSummary.*strategy_health_blocked|strategy_health_blocked.*writeSkipSummary/s);
+  });
+
+  it("max_open_positions path summary yazıyor", () => {
+    const idx = ORCHESTRATOR.lastIndexOf('"max_open_positions"');
+    expect(idx).toBeGreaterThan(0);
+    const nearbyCtx = ORCHESTRATOR.slice(Math.max(0, idx - 100), idx + 100);
+    expect(nearbyCtx).toMatch(/writeSkipSummary/);
+  });
+
+  it("bot_not_running path summary yazıyor", () => {
+    expect(ORCHESTRATOR).toMatch(/bot_not_running/);
+    expect(ORCHESTRATOR).toMatch(/writeSkipSummary.*bot_not_running|bot_not_running.*writeSkipSummary/s);
+  });
+});
+
+// ── 16. Bugfix 1.1 — worker catch bloğu error summary yazıyor ────────
+describe("Bugfix 1.1 — worker error summary", () => {
+  it("tickLoop catch bloğu tickError summary yazıyor", () => {
+    expect(WORKER).toMatch(/tickError/);
+  });
+
+  it("worker catch bloğunda last_tick_at güncelleniyor", () => {
+    expect(WORKER).toMatch(/last_tick_at/);
+  });
+
+  it("worker error summary non-fatal (try-catch ile sarılı)", () => {
+    // Worker catch içinde diagnostics write kendi try-catch'i içinde
+    expect(WORKER).toMatch(/diagnostics-only, non-fatal/);
+  });
+});
+
+// ── 17. Bugfix 1.1 — trade logic ve invariantler korunmuş ────────────
+describe("Bugfix 1.1 — invariantler korunmuş", () => {
+  it("signal-engine MIN_SIGNAL_CONFIDENCE=70 değişmedi", () => {
+    const eng = read("src/lib/engines/signal-engine.ts");
+    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+  });
+
+  it("orchestrator içinde Binance API çağrısı eklenmedi", () => {
+    expect(ORCHESTRATOR).not.toMatch(/fapi\.binance\.com/);
+    expect(ORCHESTRATOR).not.toMatch(/api\.binance\.com/);
+  });
+
+  it("worker içinde Binance API çağrısı eklenmedi", () => {
+    expect(WORKER).not.toMatch(/fapi\.binance\.com/);
+    expect(WORKER).not.toMatch(/api\.binance\.com/);
+  });
+
+  it("HARD_LIVE_TRADING_ALLOWED=false korunmuş", () => {
+    const env = read("src/lib/env.ts");
+    expect(env).toMatch(/HARD_LIVE_TRADING_ALLOWED.*false/);
+  });
+
+  it("writeSkipSummary trade kararı vermiyor (openPaperTrade çağrısı yok)", () => {
+    // writeSkipSummary fonksiyonu sadece bot_settings günceller, trade açmaz
+    const helperStart = ORCHESTRATOR.indexOf("async function writeSkipSummary");
+    const helperEnd = ORCHESTRATOR.indexOf("\nasync function loadSettings");
+    const helperBody = ORCHESTRATOR.slice(helperStart, helperEnd);
+    expect(helperBody).not.toMatch(/openPaperTrade/);
+    expect(helperBody).not.toMatch(/generateSignal/);
+    expect(helperBody).not.toMatch(/evaluateRisk/);
   });
 });
