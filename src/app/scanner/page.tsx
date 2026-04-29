@@ -15,7 +15,14 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
-import { mapTickSkipReasonTr } from "@/lib/dashboard/labels";
+import {
+  mapTickSkipReasonTr,
+  mapDirectionLabel as sharedMapDirectionLabel,
+  mapDecisionLabel as sharedMapDecisionLabel,
+  decisionClass as sharedDecisionClass,
+  type DirectionLabel as SharedDirectionLabel,
+  type DecisionActionLabel as SharedDecisionActionLabel,
+} from "@/lib/dashboard/labels";
 
 // ── Tipler ─────────────────────────────────────────────────────────────
 type DirectionCandidate = "LONG_CANDIDATE" | "SHORT_CANDIDATE" | "MIXED" | "NONE";
@@ -133,45 +140,20 @@ function mapSourceLabel(row: ScanRow): string {
 }
 
 // ── Decision/direction mapping ─────────────────────────────────────────
-type DecisionLabel =
-  | "LONG ADAY" | "LONG AÇILDI"
-  | "SHORT ADAY" | "SHORT AÇILDI"
-  | "YÖN BEKLİYOR" | "İŞLEM YOK"
-  | "RİSK REDDİ" | "BTC FİLTRESİ";
+// YÖN ve KARAR ayrı tipler — KARAR sütunu artık LONG ADAY/SHORT ADAY üretmez.
+type DirectionLabel = SharedDirectionLabel;
+type DecisionLabel = SharedDecisionActionLabel;
 
-function mapDirectionLabel(row: ScanRow): DecisionLabel {
-  // YÖN kolonu: doğrultu eğilimi (sadece LONG ADAY / SHORT ADAY / YÖN BEKLİYOR).
-  if (row.opened && row.signalType === "LONG") return "LONG AÇILDI";
-  if (row.opened && row.signalType === "SHORT") return "SHORT AÇILDI";
-  if (row.signalType === "LONG") return "LONG ADAY";
-  if (row.signalType === "SHORT") return "SHORT ADAY";
-  if (row.directionCandidate === "LONG_CANDIDATE") return "LONG ADAY";
-  if (row.directionCandidate === "SHORT_CANDIDATE") return "SHORT ADAY";
-  return "YÖN BEKLİYOR";
+function mapDirectionLabel(row: ScanRow): DirectionLabel {
+  return sharedMapDirectionLabel(row);
 }
 
 function mapDecisionLabel(row: ScanRow): DecisionLabel {
-  // KARAR kolonu: nihai karar.
-  if (row.opened && row.signalType === "LONG") return "LONG AÇILDI";
-  if (row.opened && row.signalType === "SHORT") return "SHORT AÇILDI";
-  if (row.btcTrendRejected) return "BTC FİLTRESİ";
-  if (row.riskAllowed === false || row.riskRejectReason) return "RİSK REDDİ";
-  if (row.signalType === "LONG") return "LONG ADAY";
-  if (row.signalType === "SHORT") return "SHORT ADAY";
-  if (row.signalType === "NO_TRADE") return "İŞLEM YOK";
-  if (row.directionCandidate === "LONG_CANDIDATE") return "LONG ADAY";
-  if (row.directionCandidate === "SHORT_CANDIDATE") return "SHORT ADAY";
-  return "YÖN BEKLİYOR";
+  return sharedMapDecisionLabel(row);
 }
 
-function decisionClass(label: DecisionLabel, opened: boolean): string {
-  if (opened) return "text-success";
-  if (label === "SHORT AÇILDI") return "text-blue-300";
-  if (label === "LONG ADAY") return "text-success";
-  if (label === "SHORT ADAY") return "text-blue-300";
-  if (label === "RİSK REDDİ" || label === "BTC FİLTRESİ") return "text-danger";
-  if (label === "İŞLEM YOK") return "text-muted";
-  return "text-muted"; // YÖN BEKLİYOR
+function decisionClass(label: DirectionLabel | DecisionLabel, opened: boolean): string {
+  return sharedDecisionClass(label, opened);
 }
 
 // ── EŞİĞE KALAN ─────────────────────────────────────────────────────────

@@ -151,26 +151,51 @@ describe("Phase 9 — KAYNAK mapping", () => {
   });
 });
 
-// ── 5. Decision/direction mapping (WAIT/NO_TRADE raw görünmez) ────────
+// ── 5. Decision/direction mapping ─────────────────────────────────────
+// YÖN sütunu: yön eğilimi (LONG ADAY / SHORT ADAY / LONG AÇILDI vb.)
+// KARAR sütunu: aksiyon kararı (İŞLEM AÇILDI / EŞİK ALTINDA / FİLTRELENDİ
+// vb.) — KARAR artık ASLA LONG ADAY / SHORT ADAY üretmez.
 describe("Phase 9 — yön/karar mapping", () => {
-  it("açılan LONG → 'LONG AÇILDI'", () => {
-    expect(mapDecisionLabel({ signalType: "LONG", opened: true })).toBe("LONG AÇILDI");
+  it("YÖN: açılan LONG → 'LONG AÇILDI', KARAR: 'İŞLEM AÇILDI'", () => {
     expect(mapDirectionLabel({ signalType: "LONG", opened: true })).toBe("LONG AÇILDI");
+    expect(mapDecisionLabel({ signalType: "LONG", opened: true })).toBe("İŞLEM AÇILDI");
   });
-  it("LONG aday (henüz açılmamış) → 'LONG ADAY'", () => {
-    expect(mapDecisionLabel({ signalType: "LONG", opened: false })).toBe("LONG ADAY");
+  it("YÖN: aday LONG → 'LONG ADAY' (KARAR'da 'LONG ADAY' YAZILMAZ)", () => {
+    expect(mapDirectionLabel({ signalType: "LONG", opened: false })).toBe("LONG ADAY");
+    const decision = mapDecisionLabel({ signalType: "LONG", opened: false, tradeSignalScore: 80 });
+    expect(decision).not.toBe("LONG ADAY");
+    expect(decision).not.toBe("SHORT ADAY");
   });
-  it("WAIT + directionCandidate yok → 'YÖN BEKLİYOR'", () => {
-    expect(mapDecisionLabel({ signalType: "WAIT" })).toBe("YÖN BEKLİYOR");
+  it("YÖN: aday SHORT → 'SHORT ADAY'; KARAR adaylık döndürmez", () => {
+    expect(mapDirectionLabel({ signalType: "SHORT", opened: false })).toBe("SHORT ADAY");
+    const decision = mapDecisionLabel({ signalType: "SHORT", opened: false, tradeSignalScore: 80 });
+    expect(decision).not.toBe("SHORT ADAY");
+    expect(decision).not.toBe("LONG ADAY");
   });
-  it("NO_TRADE → 'İŞLEM YOK'", () => {
+  it("KARAR: skor < 70 → 'EŞİK ALTINDA'", () => {
+    expect(mapDecisionLabel({ signalType: "WAIT", tradeSignalScore: 66 })).toBe("EŞİK ALTINDA");
+    expect(mapDecisionLabel({ signalType: "LONG", tradeSignalScore: 65 })).toBe("EŞİK ALTINDA");
+  });
+  it("KARAR: WAIT + skor yok → 'İŞLEM YOK'", () => {
+    expect(mapDecisionLabel({ signalType: "WAIT" })).toBe("İŞLEM YOK");
+  });
+  it("KARAR: NO_TRADE → 'İŞLEM YOK'", () => {
     expect(mapDecisionLabel({ signalType: "NO_TRADE" })).toBe("İŞLEM YOK");
   });
-  it("BTC veto → 'BTC FİLTRESİ'", () => {
+  it("KARAR: BTC veto → 'BTC FİLTRESİ'", () => {
     expect(mapDecisionLabel({ signalType: "WAIT", btcTrendRejected: true })).toBe("BTC FİLTRESİ");
   });
-  it("risk reddi → 'RİSK REDDİ'", () => {
+  it("KARAR: risk reddi → 'RİSK REDDİ'", () => {
     expect(mapDecisionLabel({ signalType: "LONG", riskAllowed: false, riskRejectReason: "Spread yüksek" })).toBe("RİSK REDDİ");
+  });
+  it("KARAR: displayFilterPassed === false → 'FİLTRELENDİ'", () => {
+    expect(mapDecisionLabel({ signalType: "LONG", displayFilterPassed: false, tradeSignalScore: 75 })).toBe("FİLTRELENDİ");
+  });
+  it("KARAR: signalType yok ve skor yok → 'VERİ YETERSİZ'", () => {
+    expect(mapDecisionLabel({})).toBe("VERİ YETERSİZ");
+  });
+  it("YÖN: MIXED candidate → 'YÖN KARIŞIK'", () => {
+    expect(mapDirectionLabel({ directionCandidate: "MIXED" })).toBe("YÖN KARIŞIK");
   });
 
   it("ham WAIT/NO_TRADE etiketleri Cards.tsx içinde görünür metin olarak basılmıyor", () => {
@@ -180,6 +205,27 @@ describe("Phase 9 — yön/karar mapping", () => {
     expect(CARDS).not.toMatch(/<th>NO_TRADE<\/th>/);
     expect(CARDS).not.toMatch(/>WAIT</);
     expect(CARDS).not.toMatch(/>NO_TRADE</);
+  });
+});
+
+// ── 5b. Sebep sütunu — KARAR'ı destekler ──────────────────────────────
+describe("Phase 9 — buildReasonText", () => {
+  it("EŞİK ALTINDA için skor temelli sebep: 'İşlem skoru 66/70'", () => {
+    expect(buildReasonText({ signalType: "WAIT", tradeSignalScore: 66 })).toBe("İşlem skoru 66/70");
+  });
+  it("BTC veto → 'BTC trend filtresi'", () => {
+    expect(buildReasonText({ btcTrendRejected: true })).toBe("BTC trend filtresi");
+  });
+  it("risk reddi → reason metni", () => {
+    expect(buildReasonText({ riskRejectReason: "Spread yüksek" })).toBe("Spread yüksek");
+  });
+  it("displayFilterPassed=false → reason text", () => {
+    expect(
+      buildReasonText({ displayFilterPassed: false, displayFilterReasonText: "Filtrelendi: piyasa kalitesi düşük" }),
+    ).toBe("Filtrelendi: piyasa kalitesi düşük");
+  });
+  it("WAIT + waitReasonSummary → özet kullanılır", () => {
+    expect(buildReasonText({ signalType: "WAIT", waitReasonSummary: "EMA dizilim · MA çatışma" })).toBe("EMA dizilim · MA çatışma");
   });
 });
 

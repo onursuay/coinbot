@@ -7,11 +7,24 @@
 
 export type DirectionCandidate = "LONG_CANDIDATE" | "SHORT_CANDIDATE" | "MIXED" | "NONE";
 
-export type DecisionLabel =
-  | "LONG ADAY" | "LONG AÇILDI"
-  | "SHORT ADAY" | "SHORT AÇILDI"
-  | "YÖN BEKLİYOR" | "İŞLEM YOK"
-  | "RİSK REDDİ" | "BTC FİLTRESİ";
+// YÖN kolonu için eğilim etiketleri.
+export type DirectionLabel =
+  | "LONG ADAY" | "SHORT ADAY"
+  | "LONG AÇILDI" | "SHORT AÇILDI"
+  | "YÖN BEKLİYOR" | "YÖN KARIŞIK";
+
+// KARAR kolonu için aksiyon etiketleri (LONG ADAY/SHORT ADAY artık burada YOK).
+export type DecisionActionLabel =
+  | "İŞLEM AÇILDI" | "İŞLEM YOK"
+  | "EŞİK ALTINDA"
+  | "RİSK REDDİ" | "BTC FİLTRESİ"
+  | "VERİ YETERSİZ"
+  | "FİLTRELENDİ"
+  | "BEKLEMEDE";
+
+// Geri uyumluluk: tüm etiketlerin birleşimi (eski kullanım yerlerinde tip
+// kaymaması için tutuluyor; yeni kod yön/karar tiplerini ayrı kullansın).
+export type DecisionLabel = DirectionLabel | DecisionActionLabel;
 
 export interface DecisionInput {
   signalType?: string;
@@ -21,41 +34,68 @@ export interface DecisionInput {
   btcTrendRejected?: boolean;
   directionCandidate?: DirectionCandidate;
   rejectReason?: string | null;
+  tradeSignalScore?: number | null;
+  signalScore?: number | null;
+  displayFilterPassed?: boolean;
 }
 
-/** Yön kolonu: doğrultu eğilimi. */
-export function mapDirectionLabel(row: DecisionInput): DecisionLabel {
+/** Yön kolonu: doğrultu eğilimi. Aksiyon kararı GÖSTERMEZ. */
+export function mapDirectionLabel(row: DecisionInput): DirectionLabel {
   if (row.opened && row.signalType === "LONG") return "LONG AÇILDI";
   if (row.opened && row.signalType === "SHORT") return "SHORT AÇILDI";
+  if (row.opened) {
+    if (row.directionCandidate === "LONG_CANDIDATE") return "LONG AÇILDI";
+    if (row.directionCandidate === "SHORT_CANDIDATE") return "SHORT AÇILDI";
+  }
   if (row.signalType === "LONG") return "LONG ADAY";
   if (row.signalType === "SHORT") return "SHORT ADAY";
   if (row.directionCandidate === "LONG_CANDIDATE") return "LONG ADAY";
   if (row.directionCandidate === "SHORT_CANDIDATE") return "SHORT ADAY";
+  if (row.directionCandidate === "MIXED") return "YÖN KARIŞIK";
   return "YÖN BEKLİYOR";
 }
 
-/** Karar kolonu: nihai karar. */
-export function mapDecisionLabel(row: DecisionInput): DecisionLabel {
-  if (row.opened && row.signalType === "LONG") return "LONG AÇILDI";
-  if (row.opened && row.signalType === "SHORT") return "SHORT AÇILDI";
+/**
+ * Karar kolonu: botun aksiyon sonucu. LONG ADAY / SHORT ADAY üretmez —
+ * adaylık YÖN kolonunda gösterilir; KARAR sadece aksiyon etiketi döner.
+ */
+export function mapDecisionLabel(row: DecisionInput): DecisionActionLabel {
+  if (row.opened) return "İŞLEM AÇILDI";
   if (row.btcTrendRejected) return "BTC FİLTRESİ";
   if (row.riskAllowed === false || row.riskRejectReason) return "RİSK REDDİ";
-  if (row.signalType === "LONG") return "LONG ADAY";
-  if (row.signalType === "SHORT") return "SHORT ADAY";
-  if (row.signalType === "NO_TRADE") return "İŞLEM YOK";
-  if (row.directionCandidate === "LONG_CANDIDATE") return "LONG ADAY";
-  if (row.directionCandidate === "SHORT_CANDIDATE") return "SHORT ADAY";
-  return "YÖN BEKLİYOR";
+  if (row.displayFilterPassed === false) return "FİLTRELENDİ";
+
+  const score = row.tradeSignalScore ?? row.signalScore ?? null;
+  const sig = row.signalType;
+
+  if (typeof score === "number" && score > 0 && score < SIGNAL_THRESHOLD) {
+    return "EŞİK ALTINDA";
+  }
+  if (sig === "WAIT" || sig === "NO_TRADE" || sig === "NONE" || !sig) {
+    if (score === null || score === 0) {
+      // Skor hiç üretilmemişse veri yetersizliği vardır.
+      if (!sig || sig === "NONE") return "VERİ YETERSİZ";
+    }
+    return "İŞLEM YOK";
+  }
+  return "İŞLEM YOK";
 }
 
 /** Aday/açıldı/red etiketleri için tek tip class. */
 export function decisionClass(label: DecisionLabel, opened: boolean): string {
   if (opened) return "text-success";
+  // Yön etiketleri.
+  if (label === "LONG AÇILDI") return "text-success";
   if (label === "SHORT AÇILDI") return "text-blue-300";
   if (label === "LONG ADAY") return "text-success";
   if (label === "SHORT ADAY") return "text-blue-300";
+  if (label === "YÖN BEKLİYOR" || label === "YÖN KARIŞIK") return "text-muted";
+  // Karar etiketleri.
+  if (label === "İŞLEM AÇILDI") return "text-success";
   if (label === "RİSK REDDİ" || label === "BTC FİLTRESİ") return "text-danger";
-  if (label === "İŞLEM YOK") return "text-muted";
+  if (label === "EŞİK ALTINDA") return "text-warning";
+  if (label === "FİLTRELENDİ" || label === "VERİ YETERSİZ") return "text-muted";
+  if (label === "İŞLEM YOK" || label === "BEKLEMEDE") return "text-muted";
   return "text-muted";
 }
 
@@ -107,15 +147,32 @@ export function buildReasonText(row: {
   rejectReason?: string | null;
   riskRejectReason?: string | null;
   btcTrendRejected?: boolean;
+  tradeSignalScore?: number | null;
+  signalScore?: number | null;
+  displayFilterPassed?: boolean;
+  displayFilterReasonText?: string;
+  displayFilterReasons?: string[];
+  opened?: boolean;
 }): string {
   if (row.btcTrendRejected) return "BTC trend filtresi";
   if (row.riskRejectReason) return row.riskRejectReason;
+  if (row.displayFilterPassed === false) {
+    if (row.displayFilterReasonText && row.displayFilterReasonText.length > 0) return row.displayFilterReasonText;
+    const reasons = row.displayFilterReasons ?? [];
+    if (reasons.length > 0) return reasons.slice(0, 2).join(" · ");
+    return "Filtrelendi";
+  }
   if (row.signalType === "WAIT" && row.waitReasonSummary && row.waitReasonSummary.length > 0) {
     return row.waitReasonSummary;
   }
   const codes = row.waitReasonCodes ?? [];
   if (codes.length > 0) {
     return codes.slice(0, 3).map((c) => WAIT_CODE_TR[c] ?? c).join(" · ");
+  }
+  // Skor üretildi ama eşiğin altında — KARAR=EŞİK ALTINDA kararını destekleyen sebep.
+  const score = row.tradeSignalScore ?? row.signalScore ?? null;
+  if (!row.opened && typeof score === "number" && score > 0 && score < SIGNAL_THRESHOLD) {
+    return `İşlem skoru ${score}/${SIGNAL_THRESHOLD}`;
   }
   if (row.scoreReason) return row.scoreReason;
   if (row.rejectReason) return row.rejectReason;

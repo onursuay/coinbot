@@ -12,6 +12,7 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const read = (rel: string) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
 
 const SCANNER_PAGE = read("src/app/scanner/page.tsx");
+const LABELS_LIB = read("src/lib/dashboard/labels.ts");
 const TOPBAR = read("src/components/TopBar.tsx");
 const DIAGNOSTICS_ROUTE = read("src/app/api/bot/diagnostics/route.ts");
 const ORCHESTRATOR = read("src/lib/engines/bot-orchestrator.ts");
@@ -105,15 +106,20 @@ describe("Phase 8 — kaynak (KAYNAK) mapping GMT/MT/MİL/KRM", () => {
 
 // ── 5. WAIT/NO_TRADE → Türkçe etiket mapping ───────────────────────────
 describe("Phase 8 — WAIT/NO_TRADE raw ifadeleri Türkçe etiketlere maplanır", () => {
-  it("ana UI etiketleri (LONG ADAY / LONG AÇILDI / ... / İŞLEM YOK) kullanılır", () => {
-    expect(SCANNER_PAGE).toMatch(/"LONG ADAY"/);
-    expect(SCANNER_PAGE).toMatch(/"LONG AÇILDI"/);
-    expect(SCANNER_PAGE).toMatch(/"SHORT ADAY"/);
-    expect(SCANNER_PAGE).toMatch(/"SHORT AÇILDI"/);
-    expect(SCANNER_PAGE).toMatch(/"YÖN BEKLİYOR"/);
-    expect(SCANNER_PAGE).toMatch(/"İŞLEM YOK"/);
-    expect(SCANNER_PAGE).toMatch(/"RİSK REDDİ"/);
-    expect(SCANNER_PAGE).toMatch(/"BTC FİLTRESİ"/);
+  it("ana UI etiketleri (LONG ADAY / LONG AÇILDI / ... / İŞLEM YOK) merkezi labels.ts'te tanımlı", () => {
+    // Etiketler scanner page'inden labels.ts'e taşındı — mapping artık paylaşılan
+    // modülde yaşıyor; scanner sayfası fonksiyonları import edip kullanıyor.
+    expect(LABELS_LIB).toMatch(/"LONG ADAY"/);
+    expect(LABELS_LIB).toMatch(/"LONG AÇILDI"/);
+    expect(LABELS_LIB).toMatch(/"SHORT ADAY"/);
+    expect(LABELS_LIB).toMatch(/"SHORT AÇILDI"/);
+    expect(LABELS_LIB).toMatch(/"YÖN BEKLİYOR"/);
+    expect(LABELS_LIB).toMatch(/"İŞLEM YOK"/);
+    expect(LABELS_LIB).toMatch(/"RİSK REDDİ"/);
+    expect(LABELS_LIB).toMatch(/"BTC FİLTRESİ"/);
+    // Scanner page mapping fonksiyonlarını paylaşılan modülden alıyor.
+    expect(SCANNER_PAGE).toMatch(/sharedMapDirectionLabel|mapDirectionLabel/);
+    expect(SCANNER_PAGE).toMatch(/sharedMapDecisionLabel|mapDecisionLabel/);
   });
 
   it("ham WAIT/NO_TRADE etiketleri ana tablo render'ına basılmaz", () => {
@@ -554,10 +560,12 @@ describe("Scanner Coin Column Alignment Patch", () => {
     expect(SCANNER_PAGE).not.toMatch(/display filtresi/);
   });
 
-  it("YÖN sütunundaki LONG ADAY / SHORT ADAY etiketleri korunur", () => {
-    expect(SCANNER_PAGE).toMatch(/"LONG ADAY"/);
-    expect(SCANNER_PAGE).toMatch(/"SHORT ADAY"/);
-    expect(SCANNER_PAGE).toMatch(/"YÖN BEKLİYOR"/);
+  it("YÖN sütunundaki LONG ADAY / SHORT ADAY etiketleri korunur (labels.ts)", () => {
+    expect(LABELS_LIB).toMatch(/"LONG ADAY"/);
+    expect(LABELS_LIB).toMatch(/"SHORT ADAY"/);
+    expect(LABELS_LIB).toMatch(/"YÖN BEKLİYOR"/);
+    // Scanner sayfası YÖN için mapDirectionLabel'ı render ediyor.
+    expect(SCANNER_PAGE).toMatch(/directionLabel/);
   });
 
   it("Diğer kolon başlıklarına !text-left eklenmedi (yalnız COIN)", () => {
