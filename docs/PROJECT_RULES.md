@@ -233,6 +233,71 @@ korundu.
 - `src/lib/market-universe/bulk-ticker-cache.ts` (60s TTL)
 - `src/app/api/candidate-pool/snapshot/route.ts` (read-only)
 
+## Worker'a Güvenli Entegrasyon (Faz 6)
+
+Faz 5'in birleşik aday havuzu **opt-in feature flag** ile worker tick'ine
+bağlanır. Varsayılan **kapalıdır** — flag kapalıyken Faz 5 davranışı bire
+bir korunur (orchestrator hiçbir şekilde tick hot path'inde çağrılmaz).
+
+**Feature flag:**
+
+| Env | Default | Anlamı |
+|---|---|---|
+| `USE_UNIFIED_CANDIDATE_POOL` | `false` | Açıldığında worker'ın ek (non-core) aday listesi unified deep-analysis alt kümesinden gelir. |
+| `UNIFIED_DEEP_ANALYSIS_MAX` | `30` | Worker'a teslim edilen unified deep candidate hard cap'i. `DEFAULT_MARKET_UNIVERSE_CONFIG.deepAnalysisMax` (30) ile sınırlanır. |
+| `UNIFIED_CANDIDATE_REFRESH_INTERVAL_SEC` | `120` | Worker tarafı pool snapshot TTL'i. Bu süre dolmadan tick'lerde orchestrator yeniden çalıştırılmaz. |
+
+**Flag açıkken worker davranışı:**
+
+1. **Mevcut core 10 coin korunur** (`tierWhitelist()`); her tick analizden
+   geçer.
+2. Worker, `getUnifiedCandidates()` ile pool snapshot'ını alır:
+   - Snapshot cache geçerliyse (≤ 120 s) yeniden hesaplanmaz.
+   - Süre dolmuşsa Faz 2 cache'li evren (6 saat TTL) + Faz 5 bulk ticker
+     cache'i (60 s TTL) üzerinden saf orchestrator çalıştırılır.
+3. Unified deep candidate listesi (≤ 30) core listesiyle **dedupe edilir**
+   ve mevcut DYNAMIC akışına dahil edilir (paper-only, TIER_3 politikası).
+   Live mode'da unified adaylar da otomatik trade açmaz — mevcut whitelist
+   kuralı korunur.
+4. Orchestrator hata verirse `getUnifiedCandidates()` **null** döner;
+   worker, eski `selectDynamicCandidates` çıktısına **sessizce geri
+   düşer**. Tick düşmez, kullanıcıya görünür yan etki yoktur.
+5. Manuel İzleme Listesi pasifse veya boşsa `MANUAL_LIST` adayları
+   katılmaz (Faz 1 garantisi).
+
+**Trade kararı değişmez:** Pozisyon açma kapısı hâlâ `signal-engine →
+risk-engine → SL/TP/R:R → paper-only`. `MIN_SIGNAL_CONFIDENCE=70`,
+`HARD_LIVE_TRADING_ALLOWED=false`, `enable_live_trading=false`,
+`DEFAULT_TRADING_MODE=paper`, BTC trend filtresi, leverage tavanı, daily
+loss limit — hepsi aynen yerinde.
+
+**Binance API yükü artmaz:**
+- Worker hiçbir tick'te orchestrator için yeni Binance isteği üretmez.
+- Universe çağrısı 6 saatte bir, bulk ticker çağrısı 60 saniyede bir
+  olur (zaten Faz 2 / Faz 5 cache'li). Per-symbol kline / order-book
+  çağrısı **yoktur**.
+- Pool kendi TTL'i dolmadan yeniden hesaplanmaz.
+
+**ScanDetail metadata (display-only):** `sourceDisplay` (GMT/MT/MİL/KRM),
+`candidateSources`, `candidateRank`, `marketQualityPreScore`,
+`momentumScore`, `candidatePoolGeneratedAt`. Bu alanlar skor hesabına ve
+trade kararına müdahale **etmez**; sadece dashboard / `scan_details` /
+debug kullanımı içindir.
+
+İlgili dosyalar:
+- `src/lib/env.ts` — `useUnifiedCandidatePool`,
+  `unifiedDeepAnalysisMax`, `unifiedCandidateRefreshIntervalSec`.
+- `src/lib/engines/unified-candidate-provider.ts` — TTL cache + fail-safe
+  fallback.
+- `src/lib/engines/bot-orchestrator.ts` — flag-gated entegrasyon
+  (orchestrator import'u sadece bu çağrı çevresinde kullanılır; flag
+  kapalıyken çağrılmaz).
+- `worker/.env.example` — yeni env'lerin worker tarafı dökümanı.
+
+Bu faz [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md)
+kurallarını **değişmez** kabul eder; ek her tick fetch, per-symbol
+kline/order-book spam'i veya merkezi adapter dışı çağrı **yoktur**.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

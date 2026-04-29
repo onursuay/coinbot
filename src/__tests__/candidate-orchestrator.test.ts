@@ -372,13 +372,22 @@ describe("Phase-5 invariants — module/codebase hygiene + global guarantees", (
     expect(src).toMatch(/getCachedAllTickers/);
   });
 
-  it("worker tick code does NOT import the orchestrator (existing trading universe untouched)", () => {
+  it("worker entry does NOT import the orchestrator directly (only via bot-orchestrator + provider)", () => {
+    // worker/index.ts itself must stay free of orchestrator imports — the
+    // routing goes through bot-orchestrator → unified-candidate-provider.
     const workerOrchestratorRefs = grepRepo("worker", /candidate-orchestrator/);
     expect(workerOrchestratorRefs).toEqual([]);
-    // Also: bot-orchestrator engine (which the worker wraps) must not import it
-    // at this phase — orchestrator is a separate scaffold, not wired in.
+  });
+
+  it("Phase 6 — bot-orchestrator imports the provider, not the orchestrator directly, and the call is feature-flag gated", () => {
     const botOrchestrator = read("src/lib/engines/bot-orchestrator.ts");
-    expect(botOrchestrator).not.toMatch(/candidate-orchestrator/);
+    // The pure orchestrator must not be imported into the engine — only the
+    // safe provider wrapper (which adds TTL cache + fail-safe fallback).
+    expect(botOrchestrator).not.toMatch(/from\s+["']@\/lib\/candidate-orchestrator["']/);
+    // The provider must be imported.
+    expect(botOrchestrator).toMatch(/unified-candidate-provider/);
+    // The provider call must be gated by env.useUnifiedCandidatePool.
+    expect(botOrchestrator).toMatch(/env\.useUnifiedCandidatePool/);
   });
 
   it("signal-engine still rejects trades below 70", () => {

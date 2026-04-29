@@ -10,6 +10,11 @@ import { getAdapter } from "@/lib/exchanges/exchange-factory";
 import { getDailyStatus } from "./daily-target";
 import { getUniverseSlice, type ScanUniverse } from "./symbol-universe";
 import { selectDynamicCandidates, type DynamicCandidateResult } from "@/lib/engines/dynamic-universe";
+import {
+  getUnifiedCandidates,
+  type UnifiedCandidateBundle,
+  type UnifiedCandidateMetadata,
+} from "@/lib/engines/unified-candidate-provider";
 import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist, getTierPolicy } from "@/lib/risk-tiers";
 import { calculateStrategyHealth } from "./strategy-health";
 import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
@@ -98,6 +103,23 @@ export interface ScanDetail {
   strongSetupCandidate?: boolean;
   // Set when signal-engine returned NO_TRADE specifically because of the BTC trend veto.
   btcTrendRejected?: boolean;
+  // ── Phase 6: unified candidate metadata (display / debug only) ──
+  // These fields are observation-only and never alter signal-engine, risk
+  // engine, the trade-open gate or the live-trading gate. They are
+  // populated only when the unified-candidate-pool feature flag is on AND
+  // the symbol entered analysis via the orchestrator's deep-analysis subset.
+  /** Resolved source label: "GMT" / "MT" / "MİL" / "KRM". */
+  sourceDisplay?: string | null;
+  /** Full source list (e.g., ["WIDE_MARKET","MOMENTUM"]). */
+  candidateSources?: string[];
+  /** 1-based rank in the unified deep-analysis subset. */
+  candidateRank?: number;
+  /** 0-100 lightweight pre-score (orchestrator). Distinct from marketQualityScore. */
+  marketQualityPreScore?: number;
+  /** 0-100 momentum quality score, when the candidate originated from MT. */
+  momentumScore?: number;
+  /** Snapshot timestamp of the unified pool the metadata was taken from. */
+  candidatePoolGeneratedAt?: number;
 }
 
 // A dynamic row is shown in the scanner table only if it carries real opportunity signal.
@@ -233,6 +255,15 @@ export interface TickResult {
   // Broader pool used by the "Fırsata En Yakın 5 Coin" card — includes high-setup dynamics
   // that didn't clear the strict scanner gate.
   opportunityPool?: ScanDetail[];
+  // ── Phase 6 — unified candidate pool diagnostics (display only) ──
+  /** True when the unified pool fed this tick's additional candidates. */
+  unifiedCandidatePoolActive?: boolean;
+  /** Pool size from the orchestrator (≤ 50). */
+  unifiedPoolSize?: number;
+  /** Deep-analysis subset size (≤ 30). */
+  unifiedDeepCandidatesCount?: number;
+  /** Snapshot timestamp of the unified pool used. */
+  unifiedPoolGeneratedAt?: number;
 }
 
 const PAPER_BALANCE = 1000;
@@ -431,6 +462,13 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   let tickerMap: Record<string, any> = {};
   let nextCursor = "0";
   let dynamicResult: DynamicCandidateResult | null = null;
+  // Phase 6: unified candidate bundle (null when feature flag off or any
+  // failure inside the provider — falls back to legacy core+dynamic flow).
+  let unifiedBundle: UnifiedCandidateBundle | null = null;
+  let unifiedMetaBySymbol: Record<string, UnifiedCandidateMetadata> = {};
+  // Symbols routed in via the unified pool (treated as DYNAMIC for tier/risk
+  // gates — never auto-traded in live mode, just like legacy dynamics).
+  const unifiedSymbolSet = new Set<string>();
 
   if (opts?.symbols && opts.symbols.length > 0) {
     symbols = opts.symbols;
@@ -467,8 +505,40 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         minMomentumPct: 1.0,   // |24h change| must be >= 1% — dead/flat markets excluded
       });
 
-      // Batch = 10 core coins + up to DYNAMIC_ANALYSIS_LIMIT dynamic candidates
-      symbols = [...tierWhitelist(), ...dynamicResult.candidates];
+      // ── Phase 6: optional unified candidate pool ──
+      // When the feature flag is on, the unified orchestrator's deep-analysis
+      // subset (≤30) replaces the legacy dynamic-candidate list as the
+      // additional non-core analysis batch. Core coins are always preserved.
+      // On any failure (universe/ticker/orchestrator), the bundle is null and
+      // we transparently fall through to the legacy dynamic candidates.
+      let unifiedSymbols: string[] = [];
+      if (env.useUnifiedCandidatePool) {
+        try {
+          unifiedBundle = await getUnifiedCandidates({ exchange });
+        } catch {
+          unifiedBundle = null; // belt-and-braces — provider already swallows.
+        }
+        if (unifiedBundle && unifiedBundle.deepCandidates.length > 0) {
+          unifiedMetaBySymbol = unifiedBundle.metadataBySymbol;
+          // Strip core coins (already in batch) and dedupe across legacy
+          // dynamic candidates so we never analyse the same symbol twice.
+          const seen = new Set<string>(tierWhitelist());
+          for (const c of unifiedBundle.deepCandidates) {
+            if (seen.has(c.symbol)) continue;
+            seen.add(c.symbol);
+            unifiedSymbols.push(c.symbol);
+            unifiedSymbolSet.add(c.symbol);
+          }
+        }
+      }
+
+      // Batch = core coins + (unified deep candidates IF flag on AND non-empty,
+      // else legacy dynamic candidates). Hard caps preserved by the orchestrator
+      // (deepMax ≤ 30) and the legacy selector (DYNAMIC_ANALYSIS_LIMIT).
+      const additional = (unifiedBundle && unifiedSymbols.length > 0)
+        ? unifiedSymbols
+        : dynamicResult.candidates;
+      symbols = [...tierWhitelist(), ...additional];
 
       await sb.from("bot_settings").update({ scanner_cursor: nextCursor }).eq("user_id", userId);
     } catch {
@@ -487,6 +557,15 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   result.dynamicRejectedPumpDump = dynamicResult?.rejectedPumpDump ?? 0;
   result.dynamicRejectedWeakMomentum = dynamicResult?.rejectedWeakMomentum ?? 0;
   result.dynamicRejectedNoData = dynamicResult?.rejectedNoData ?? 0;
+  // Phase 6 — populate unified diagnostics. These are display-only and never
+  // gate trade decisions. When the flag is off or the bundle is null, all
+  // unified fields stay undefined so existing dashboards see no change.
+  if (unifiedBundle) {
+    result.unifiedCandidatePoolActive = unifiedSymbolSet.size > 0;
+    result.unifiedPoolSize = unifiedBundle.poolSize;
+    result.unifiedDeepCandidatesCount = unifiedBundle.deepCandidates.length;
+    result.unifiedPoolGeneratedAt = unifiedBundle.generatedAt;
+  }
 
   const daily = await getDailyStatus(userId, PAPER_BALANCE);
   if (daily.targetHit) {
@@ -537,6 +616,11 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   // Symbols not in either set (e.g. from opts.symbols) run the legacy filter.
   const ANALYSIS_MIN_VOLUME_USDT = 5_000_000;
   const dynamicCandidateSet = new Set(dynamicResult?.candidates ?? []);
+  // Phase 6: unified candidates are treated as DYNAMIC for tier/risk gates
+  // (never auto-traded in live mode). Adding them to dynamicCandidateSet
+  // bypasses the legacy whitelist/volume pre-filter — they were already
+  // hygiene-screened by the orchestrator's lightweight + momentum screeners.
+  for (const sym of unifiedSymbolSet) dynamicCandidateSet.add(sym);
   let lowVolumeSkipped = 0;
   let nonWhitelistSkipped = 0;
   const symbolsToAnalyze = symbols.filter((sym) => {
@@ -553,6 +637,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
   for (const symbol of symbolsToAnalyze) {
     const isDynamic = dynamicCandidateSet.has(symbol);
+    const unifiedMeta = unifiedMetaBySymbol[symbol];
     const detail: ScanDetail = {
       symbol,
       coinClass: isDynamic ? "DYNAMIC" : "CORE",
@@ -578,6 +663,19 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       riskRejectReason: null,
       opened: false,
       opportunityCandidate: false,
+      // Phase 6 — observation-only metadata. Skipped when the flag is off
+      // (unifiedMetaBySymbol stays empty) or the symbol entered analysis via
+      // the legacy dynamic path.
+      ...(unifiedMeta
+        ? {
+            sourceDisplay: unifiedMeta.sourceDisplay,
+            candidateSources: unifiedMeta.candidateSources,
+            candidateRank: unifiedMeta.candidateRank,
+            marketQualityPreScore: unifiedMeta.marketQualityPreScore,
+            momentumScore: unifiedMeta.momentumScore,
+            candidatePoolGeneratedAt: unifiedMeta.candidatePoolGeneratedAt,
+          }
+        : {}),
     };
 
     try {
@@ -936,6 +1034,11 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     durationMs: result.durationMs,
     scanDetails: result.scanDetails.slice(0, 50), // cap at 50 to limit JSONB size
     opportunityPool: (result.opportunityPool ?? []).slice(0, 30),
+    // Phase 6 unified pool diagnostics
+    unifiedCandidatePoolActive: result.unifiedCandidatePoolActive ?? false,
+    unifiedPoolSize: result.unifiedPoolSize ?? 0,
+    unifiedDeepCandidatesCount: result.unifiedDeepCandidatesCount ?? 0,
+    unifiedPoolGeneratedAt: result.unifiedPoolGeneratedAt ?? null,
     lastOpenedTrade: result.openedPaperTrades[0] ?? null,
     topRejectReasons: result.rejectedSignals.slice(0, 10).map((r) => `${r.symbol}: ${r.reason}`),
     topNearMiss: result.nearMissSignals.slice(0, 5).map((n) => `${n.direction} ${n.symbol} skor=${n.score}`),
