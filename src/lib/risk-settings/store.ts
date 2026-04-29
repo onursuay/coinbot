@@ -179,36 +179,53 @@ async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number
   }
   const sb = supabaseAdmin();
   const userId = getCurrentUserId();
-  const payload = { user_id: userId, risk_settings: s };
   try {
-    // Primary path — upsert on the unique user_id constraint.
-    const { error: upsertErr } = await sb
-      .from("bot_settings")
-      .upsert(payload, { onConflict: "user_id" });
-    if (upsertErr) {
-      // Fallback — if the unique constraint isn't honored as expected,
-      // explicitly select-then-update/insert so we never silently no-op.
-      const { data: existing, error: selErr } = await sb
+    // Primary path — RPC bypasses PostgREST column resolution for writes.
+    // In production we observed supabase-js upserts returning 200 OK while
+    // the JSONB column stayed NULL, even after NOTIFY pgrst, 'reload schema'.
+    // Raw-SQL UPDATEs on the same row worked, so the issue is at the REST
+    // layer's cached prepared statements for the freshly-added column.
+    // The plpgsql function executes the UPDATE/INSERT in raw SQL and
+    // RETURNING surfaces the stored value — no silent no-op possible.
+    const rpcRes = await sb.rpc("set_risk_settings", {
+      p_user_id: userId,
+      p_settings: s as unknown as Record<string, unknown>,
+    });
+    let rpcOk = !rpcRes.error && rpcRes.data != null;
+    let lastErr: string | null = rpcRes.error ? safeErr(rpcRes.error) : null;
+
+    if (!rpcOk) {
+      // Fallback — RPC not deployed yet (migration 0015 missing) or other
+      // PostgREST function-cache issue. Try the upsert path so an older
+      // environment still saves.
+      const { error: upsertErr } = await sb
         .from("bot_settings")
-        .select("user_id")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (selErr) throw selErr;
-      if (existing) {
-        const { error: updErr } = await sb
+        .upsert({ user_id: userId, risk_settings: s }, { onConflict: "user_id" });
+      if (upsertErr) {
+        lastErr = safeErr(upsertErr);
+        // Last-ditch — explicit select-then-update/insert.
+        const { data: existing, error: selErr } = await sb
           .from("bot_settings")
-          .update({ risk_settings: s })
-          .eq("user_id", userId);
-        if (updErr) throw updErr;
-      } else {
-        const { error: insErr } = await sb
-          .from("bot_settings")
-          .insert(payload);
-        if (insErr) throw insErr;
+          .select("user_id")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (selErr) throw selErr;
+        if (existing) {
+          const { error: updErr } = await sb
+            .from("bot_settings")
+            .update({ risk_settings: s })
+            .eq("user_id", userId);
+          if (updErr) throw updErr;
+        } else {
+          const { error: insErr } = await sb
+            .from("bot_settings")
+            .insert({ user_id: userId, risk_settings: s });
+          if (insErr) throw insErr;
+        }
       }
     }
-    // Verify by reading back — confirms the write actually landed and
-    // that the row is keyed where we expect.
+
+    // Verify by reading back — confirms the write actually landed.
     const { data: verify, error: verifyErr } = await sb
       .from("bot_settings")
       .select("risk_settings")
@@ -216,7 +233,8 @@ async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number
       .maybeSingle();
     if (verifyErr) throw verifyErr;
     if (!verify || (verify as any).risk_settings == null) {
-      throw new Error("DB write verified empty — risk_settings did not persist");
+      const hint = lastErr ? ` (last write error: ${lastErr})` : "";
+      throw new Error(`DB write verified empty — risk_settings did not persist${hint}`);
     }
     const savedAt = Date.now();
     setStatus({
