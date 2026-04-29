@@ -108,6 +108,47 @@ korundu.
   max 50.
 - `src/lib/market-universe/deep-analysis.ts` — top-N seçici (max 30).
 
+## Momentum Taraması — Altyapı (Faz 3 — iskelet)
+
+Momentum Taraması her zaman **hem en çok yükselenleri hem en çok düşenleri
+birlikte** değerlendirir. Kullanıcıya `Yükselenler / Düşenler / İkisi`
+seçeneği **sunulmaz**; UI'da yalnızca Aktif/Pasif kontrolü vardır.
+
+İşleyiş:
+1. Faz 2 evreninden + zaten çekilmiş bulk ticker verisinden başlar; **yeni
+   Binance HTTP isteği atılmaz** (saf fonksiyon).
+2. Hijyen filtreleri: stablecoin tabanları (USDT/USDC/BUSD/DAI/TUSD/USDP/
+   FDUSD/USDD/PYUSD), pasif/non-perp/USDT-dışı semboller, `minQuoteVolumeUsd`
+   altı hacim, bid/ask varsa `maxSpreadPercent` üstü spread, `minAbsMovePercent`
+   altı hareket → elenir.
+3. İki yön ayrı sıralanır: top-N gainers (default 20), top-N losers
+   (default 20). Birleştirilir, sembol bazında dedupe edilir.
+4. Her aday için 0–100 `momentumScore` hesaplanır (movement + volume +
+   spread health + direction clarity). `directionBias` = `UP` / `DOWN`
+   signed change%'a göre.
+5. Final cap: `maxMomentumCandidates` (default 40). `momentumRank` 1..N
+   atanır.
+
+**Faz 2 entegrasyonu:** `MomentumCandidate extends LightweightCandidate`
+olduğundan `buildCandidatePool([momentumCandidates, ...])` doğrudan
+çalışır. `WIDE_MARKET` + `MOMENTUM` çakışmasında ana gösterim **MIXED →
+KRM**'dir; `sourceCandidates` listesi korunur.
+
+**Faz 3 kapsamı sadece iskelet:** worker tick davranışı **değiştirilmedi**,
+signal-engine / risk engine / live-gate / SL-TP-R:R / leverage **dokunulmadı**.
+Yeni periyodik Binance API yükü oluşturulmadı. Tarama Modları sayfası
+mevcut Aktif/Pasif arayüzüyle kalır; Panel/Piyasa Tarayıcı'da aktif mod
+özeti gösterilmez (Faz 1.1 ürün kuralı).
+[BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) kuralları korundu.
+
+İlgili dosyalar:
+- `src/lib/momentum-screener/types.ts` — `MomentumCandidate`,
+  `MomentumScreenerConfig`, `DEFAULT_MOMENTUM_CONFIG`.
+- `src/lib/momentum-screener/momentum-screener.ts` —
+  `runMomentumScreen()`, `computeMomentumScore()`. Saf fonksiyon, HTTP
+  içermez.
+- `src/lib/momentum-screener/index.ts` — barrel.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
