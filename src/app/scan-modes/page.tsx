@@ -222,6 +222,7 @@ function ManualListBody({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchWarning, setSearchWarning] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const symbolsSet = useMemo(() => new Set(symbols), [symbols]);
@@ -245,11 +246,15 @@ function ManualListBody({
         if (res.ok) {
           setResults(res.data.results ?? []);
           setSearchError(null);
+          setSearchWarning(res.data.warning ?? null);
         } else {
-          setSearchError(res.error ?? "Arama başarısız");
+          setResults([]);
+          setSearchError("Arama geçici olarak kullanılamıyor.");
+          setSearchWarning(null);
         }
-      } catch (e) {
-        setSearchError(e instanceof Error ? e.message : "Arama hatası");
+      } catch {
+        setSearchError("Arama geçici olarak kullanılamıyor.");
+        setSearchWarning(null);
       } finally {
         setSearching(false);
       }
@@ -302,7 +307,8 @@ function ManualListBody({
       </div>
 
       {/* Search results */}
-      {searchError && <div className="text-xs text-danger">{searchError}</div>}
+      {searchWarning && <div className="text-xs text-warning">{searchWarning}</div>}
+      {searchError && <div className="text-xs text-muted">{searchError}</div>}
       {query.trim() && !searching && results.length === 0 && !searchError && (
         <div className="text-xs text-muted italic">Sonuç bulunamadı</div>
       )}

@@ -5,11 +5,18 @@ import { fmtNum, fmtUsd, fmtPct } from "@/lib/format";
 export default function PaperTradesPage() {
   const [open, setOpen] = useState<any[]>([]);
   const [closed, setClosed] = useState<any[]>([]);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const refresh = async () => {
     const r = await fetch("/api/paper-trades?limit=200").then((r) => r.json());
     if (r.ok) { setOpen(r.data.open); setClosed(r.data.closed); }
   };
-  useEffect(() => { refresh(); const t = setInterval(refresh, 8000); return () => clearInterval(t); }, []);
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 8000);
+    return () => clearInterval(t);
+  }, []);
 
   const close = async (id: string) => {
     if (!confirm("Pozisyon canlı fiyattan paper olarak kapatılsın mı?")) return;
@@ -21,17 +28,34 @@ export default function PaperTradesPage() {
     refresh();
   };
 
+  const deleteTrade = async (id: string) => {
+    if (!confirm("Bu paper işlem kaydını silmek istiyor musun?")) return;
+    setDeleteError(null);
+    const res = await fetch(`/api/paper-trades/${id}`, { method: "DELETE" }).then((r) => r.json());
+    if (!res.ok) {
+      setDeleteError(res.error ?? "Silinemedi");
+    } else {
+      refresh();
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {deleteError && (
+        <div className="text-sm text-danger bg-danger/10 border border-danger/30 rounded-lg px-3 py-2">
+          {deleteError}
+        </div>
+      )}
+
       <section className="card overflow-x-auto">
         <h2 className="font-semibold mb-2">Açık Pozisyonlar</h2>
         <table className="t">
           <thead><tr>
             <th>Sembol</th><th>Yön</th><th>Kaldıraç</th><th>Marjin</th><th>Boyut</th>
-            <th>Giriş</th><th>Zarar Durdur</th><th>Kâr Al</th><th>Tahmini Likidasyon</th><th>Risk/Ödül</th><th>Skor</th><th>Açılış</th><th></th>
+            <th>Giriş</th><th>Zarar Durdur</th><th>Kâr Al</th><th>Tahmini Likidasyon</th><th>Risk/Ödül</th><th>Skor</th><th>Açılış</th><th></th><th></th>
           </tr></thead>
           <tbody>
-            {open.length === 0 && <tr><td colSpan={13} className="text-muted">Açık pozisyon yok</td></tr>}
+            {open.length === 0 && <tr><td colSpan={14} className="text-muted">Açık pozisyon yok</td></tr>}
             {open.map((t) => (
               <tr key={t.id}>
                 <td className="font-medium">{t.symbol}</td>
@@ -47,6 +71,16 @@ export default function PaperTradesPage() {
                 <td>{fmtNum(t.signal_score, 0)}</td>
                 <td className="text-xs text-muted">{new Date(t.opened_at).toLocaleString()}</td>
                 <td><button className="btn-ghost text-xs" onClick={() => close(t.id)}>Kapat</button></td>
+                <td>
+                  <button
+                    className="text-muted hover:text-danger transition-colors p-1"
+                    title="Kaydı sil"
+                    onClick={() => deleteTrade(t.id)}
+                    aria-label="Kaydı sil"
+                  >
+                    <TrashIcon />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -58,10 +92,10 @@ export default function PaperTradesPage() {
         <table className="t">
           <thead><tr>
             <th>Sembol</th><th>Yön</th><th>Kaldıraç</th><th>Giriş</th><th>Çıkış</th><th>Kâr/Zarar</th><th>%</th>
-            <th>Ücretler</th><th>Kayma</th><th>Fonlama</th><th>Sebep</th><th>Kapanış</th>
+            <th>Ücretler</th><th>Kayma</th><th>Fonlama</th><th>Sebep</th><th>Kapanış</th><th></th>
           </tr></thead>
           <tbody>
-            {closed.length === 0 && <tr><td colSpan={12} className="text-muted">Henüz kapanan işlem yok</td></tr>}
+            {closed.length === 0 && <tr><td colSpan={13} className="text-muted">Henüz kapanan işlem yok</td></tr>}
             {closed.map((t) => (
               <tr key={t.id}>
                 <td className="font-medium">{t.symbol}</td>
@@ -76,11 +110,32 @@ export default function PaperTradesPage() {
                 <td>{fmtUsd(t.funding_estimated, 4)}</td>
                 <td>{t.exit_reason}</td>
                 <td className="text-xs text-muted">{t.closed_at ? new Date(t.closed_at).toLocaleString() : "—"}</td>
+                <td>
+                  <button
+                    className="text-muted hover:text-danger transition-colors p-1"
+                    title="Kaydı sil"
+                    onClick={() => deleteTrade(t.id)}
+                    aria-label="Kaydı sil"
+                  >
+                    <TrashIcon />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </section>
     </div>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4h6v2" />
+    </svg>
   );
 }

@@ -63,6 +63,7 @@ export function decisionClass(label: DecisionLabel, opened: boolean): string {
 export interface SourceInput {
   sourceDisplay?: string | null;
   candidateSources?: string[];
+  coinClass?: "CORE" | "DYNAMIC";
 }
 
 export function mapSourceLabel(row: SourceInput): string {
@@ -75,6 +76,7 @@ export function mapSourceLabel(row: SourceInput): string {
     if (s === "MOMENTUM") return "MT";
     if (s === "MANUAL_LIST") return "MİL";
   }
+  if (row.coinClass === "CORE") return "ÇEKİRDEK";
   return "—";
 }
 

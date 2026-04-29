@@ -15,6 +15,14 @@ async function safeJson(url: string, opts?: RequestInit): Promise<any> {
   }
 }
 
+function sanitizeApiError(err: unknown): string {
+  if (!err || typeof err !== "string") return "Veri alınamadı.";
+  // Never show raw HTTP status codes (451, 403, 429 etc.) to the user.
+  if (/^HTTP\s+\d{3}/i.test(err)) return "Veri geçici olarak alınamıyor.";
+  if (err.length > 120) return err.slice(0, 120) + "…";
+  return err;
+}
+
 export default function CoinDetail() {
   const params = useParams<{ symbol: string }>();
   const search = useSearchParams();
@@ -45,9 +53,9 @@ export default function CoinDetail() {
         body: JSON.stringify({ exchange, symbol, timeframe: tf }),
       });
       if (sig.ok) setSignal(sig.data);
-      else setSignalError(sig.error ?? "Sinyal verisi alınamadı.");
-    } catch (e) {
-      setSignalError(e instanceof Error ? e.message : "Sinyal verisi alınamadı.");
+      else setSignalError(sanitizeApiError(sig.error) ?? "Sinyal verisi alınamadı.");
+    } catch {
+      setSignalError("Sinyal verisi alınamadı.");
     } finally { setLoading(false); }
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [tf, exchange, symbol]);

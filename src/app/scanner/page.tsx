@@ -88,7 +88,7 @@ const SIGNAL_THRESHOLD = 70;
 
 // ── Source mapping (GMT / MT / MİL / KRM) ──────────────────────────────
 function mapSourceLabel(row: ScanRow): string {
-  if (row.sourceDisplay) return row.sourceDisplay; // worker zaten "GMT/MT/MİL/KRM" gönderir
+  if (row.sourceDisplay) return row.sourceDisplay;
   const sources = row.candidateSources ?? [];
   if (sources.length >= 2) return "KRM";
   if (sources.length === 1) {
@@ -97,7 +97,8 @@ function mapSourceLabel(row: ScanRow): string {
     if (s === "MOMENTUM") return "MT";
     if (s === "MANUAL_LIST") return "MİL";
   }
-  // Çekirdek (CORE) coinler unified havuza girmez — tabloda kaynak boş kalır.
+  // Core coinler unified candidate havuzuna girmez — kaynak sütununu dolu göster.
+  if (row.coinClass === "CORE") return "ÇEKİRDEK";
   return "—";
 }
 

@@ -4,7 +4,7 @@
 
 :root { color-scheme: dark; }
 
-html, body { background: #0b0e13; color: #e2e8f0; }
+html, body { background: #0b0e13; color: #e2e8f0; overflow-x: hidden; }
 
 .card { @apply bg-bg-card border border-border rounded-xl p-4; }
 .btn { @apply inline-flex items-center justify-center px-3 py-2 rounded-lg text-sm font-medium transition-colors; }

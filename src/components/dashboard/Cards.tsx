@@ -243,6 +243,7 @@ export interface DecisionRow extends RadarRow, BlockingReasonRow {
   scoreReason?: string;
   sourceDisplay?: string | null;
   candidateSources?: string[];
+  coinClass?: "CORE" | "DYNAMIC";
 }
 
 export function DecisionCenterCard({ rows, exchange, max = 8 }: {
@@ -613,7 +614,7 @@ export function PaperValidationCard({ data, hardLiveAllowed }: {
           )}
         </div>
       </div>
-      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
         {data.checks!.map((c) => {
           // first_trade_opened için kırmızı yerine gri bekleniyor.
           const pendingFirstTrade = c.name === "first_trade_opened" && !c.ok && !c.skipped;
@@ -622,19 +623,21 @@ export function PaperValidationCard({ data, hardLiveAllowed }: {
             c.ok ? "success" :
             pendingFirstTrade ? "muted" : "danger";
           return (
-            <li key={c.name} className="flex items-start gap-2 text-xs">
-              <span className={`mt-0.5 font-bold flex-shrink-0 ${
+            <li key={c.name} className="flex items-start gap-2 text-xs min-w-0">
+              <span className={`mt-0.5 font-bold flex-shrink-0 w-3 text-center ${
                 tone === "success" ? "text-success" :
                 tone === "danger"  ? "text-danger"  : "text-muted"
               }`}>
                 {c.skipped ? "—" : c.ok ? "✓" : pendingFirstTrade ? "·" : "×"}
               </span>
-              <div className="flex-1 min-w-0">
-                <span className={`font-medium ${
+              <div className="flex-1 min-w-0 overflow-hidden">
+                <div className={`font-medium leading-tight break-words ${
                   tone === "success" ? "" :
                   tone === "danger"  ? "text-danger" : "text-muted"
-                }`}>{c.label}</span>
-                {c.detail && <span className="text-muted ml-2 truncate">{c.detail}</span>}
+                }`}>{c.label}</div>
+                {c.detail && (
+                  <div className="text-muted text-[10px] leading-snug break-words mt-0.5">{c.detail}</div>
+                )}
               </div>
             </li>
           );
