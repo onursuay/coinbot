@@ -72,6 +72,42 @@ sayfalarında aktif mod rozet/banner/özet satırı gösterilmez.
 - `src/app/api/scan-modes/` — GET/PUT, manual-list POST/DELETE.
 - `src/app/scan-modes/page.tsx` — 3-kartlı modlar sayfası.
 
+## Geniş Market Taraması — Katmanlı Altyapı (Faz 2 — iskelet)
+
+Geniş Market Taraması **tüm piyasayı her tick derin analize sokmaz**.
+Pipeline 4 katmandan oluşur:
+
+1. **Universe** — Binance Futures `exchangeInfo`'dan yalnızca `PERPETUAL` +
+   `quoteAsset=USDT` + `status=TRADING` semboller; varsayılan TTL **6 saat**.
+2. **Lightweight Screener** — zaten merkezi adapter tarafından çekilmiş
+   bulk ticker verisi üzerinden saf fonksiyon; volume/spread/movement
+   eşikleri ve 0–100 `marketQualityPreScore` üretir. **Yeni Binance isteği
+   atmaz.** Önerilen tarama periyodu **2 dakika** (henüz worker'a
+   bağlanmadı).
+3. **Candidate Pool** — birden fazla kaynaktan (Geniş/Momentum/Manuel)
+   gelen adayları sembol bazında tekilleştirir, kaynakları birleştirir,
+   üst sınır **50** uygular. Ana gösterimde ≥2 kaynak → `KRM` (MIXED).
+4. **Deep Analysis Selection** — `getDeepAnalysisCandidates(pool, max=30)`
+   ile sıralanmış üst-N listesi. Bu fazda signal-engine çağrılmaz; sadece
+   bir sonraki faz için sınır arayüzü hazırlanmıştır.
+
+**Faz 2 kapsamı sadece iskelet:** worker tick davranışı değişmedi, mevcut
+10 core coin akışı bozulmadı, signal-engine / risk engine / live-gate /
+SL-TP-R:R / leverage parametreleri **değiştirilmedi**. Yeni periyodik
+Binance isteği eklenmedi; tüm fetch'ler **merkezi adapter** üzerinden
+geçer (`getAdapter().getFuturesSymbols()`). Bu doküman ve
+[BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) kuralları
+korundu.
+
+İlgili dosyalar:
+- `src/lib/market-universe/types.ts` — config + DTO'lar.
+- `src/lib/market-universe/universe-store.ts` — 6 saat TTL'li sembol
+  evreni; tek allowed Binance call site (adapter üzerinden).
+- `src/lib/market-universe/lightweight-screener.ts` — saf filtre + skor.
+- `src/lib/market-universe/candidate-pool.ts` — multi-source merge +
+  max 50.
+- `src/lib/market-universe/deep-analysis.ts` — top-N seçici (max 30).
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
