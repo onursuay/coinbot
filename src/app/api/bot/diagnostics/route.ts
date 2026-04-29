@@ -217,14 +217,42 @@ export async function GET() {
         dynamicRejectedInsufficientDepth: tickSummary.dynamicRejectedInsufficientDepth ?? 0,
       } : EMPTY_TICK_STATS,
       scan_details: tickSummary?.scanDetails ?? [],
+      // Aliases (Dynamic Market Visibility patch) — preferred shapes for the scanner.
+      scan_details_all: tickSummary?.allAnalyzedScanDetails ?? tickSummary?.scanDetails ?? [],
+      scan_details_filtered: tickSummary?.scanDetails ?? [],
       all_analyzed_scan_details: tickSummary?.allAnalyzedScanDetails ?? tickSummary?.scanDetails ?? [],
-      display_filter_summary: tickSummary ? {
-        rawAnalyzedCount: (tickSummary.allAnalyzedScanDetails ?? tickSummary.scanDetails ?? []).length,
-        filteredVisibleCount: (tickSummary.scanDetails ?? []).length,
-        dynamicFilteredCount: tickSummary.dynamicEliminatedLowSignal ?? 0,
-        coreCount: tickSummary.coreSymbolsCount ?? 0,
-        unifiedSymbolsCount: tickSummary.unifiedSymbolsCount ?? 0,
-      } : null,
+      display_filter_summary: tickSummary ? (() => {
+        const allAnalyzed: any[] = tickSummary.allAnalyzedScanDetails ?? tickSummary.scanDetails ?? [];
+        let gmtCount = 0, mtCount = 0, milCount = 0, krmCount = 0, dynamicAnalyzed = 0;
+        for (const d of allAnalyzed) {
+          if (d?.coinClass === "DYNAMIC") dynamicAnalyzed++;
+          const sources: string[] = Array.isArray(d?.candidateSources) ? d.candidateSources : [];
+          const srcDisp: string | null = d?.sourceDisplay ?? null;
+          // Resolve effective source label using same rule as the UI.
+          let label = srcDisp ?? "";
+          if (!label) {
+            if (sources.length >= 2) label = "KRM";
+            else if (sources.length === 1) {
+              if (sources[0] === "WIDE_MARKET") label = "GMT";
+              else if (sources[0] === "MOMENTUM") label = "MT";
+              else if (sources[0] === "MANUAL_LIST") label = "MİL";
+            }
+          }
+          if (label === "GMT") gmtCount++;
+          else if (label === "MT") mtCount++;
+          else if (label === "MİL" || label === "MIL") milCount++;
+          else if (label === "KRM") krmCount++;
+        }
+        return {
+          rawAnalyzedCount: allAnalyzed.length,
+          filteredVisibleCount: (tickSummary.scanDetails ?? []).length,
+          dynamicAnalyzedCount: dynamicAnalyzed,
+          dynamicFilteredCount: tickSummary.dynamicEliminatedLowSignal ?? 0,
+          coreCount: tickSummary.coreSymbolsCount ?? 0,
+          unifiedSymbolsCount: tickSummary.unifiedSymbolsCount ?? 0,
+          gmtCount, mtCount, milCount, krmCount,
+        };
+      })() : null,
       opportunity_pool: tickSummary?.opportunityPool ?? tickSummary?.scanDetails ?? [],
       tick_identity: tickSummary ? {
         worker_id:    tickSummary.worker_id    ?? null,

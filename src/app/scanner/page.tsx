@@ -69,17 +69,42 @@ interface ScanRow {
   displayFilterPassed?: boolean;
   displayFilterReason?: string | null;
   displayFilterReasons?: string[];
+  displayFilterReasonText?: string;
   // Optional 24h quote volume (USDT) — surfaced when worker provides it,
   // otherwise the UI falls back to "—" (no Binance call from the dashboard).
   quoteVolume24h?: number;
   indicators?: ScanIndicators;
 }
 
+interface DisplayFilterSummary {
+  rawAnalyzedCount?: number;
+  filteredVisibleCount?: number;
+  dynamicAnalyzedCount?: number;
+  dynamicFilteredCount?: number;
+  coreCount?: number;
+  gmtCount?: number;
+  mtCount?: number;
+  milCount?: number;
+  krmCount?: number;
+}
+
+interface UnifiedDiagnostics {
+  unifiedPoolSize?: number | null;
+  unifiedProviderError?: string | null;
+  unifiedCandidatePoolBlockedReason?: string | null;
+}
+
 interface DiagData {
   active_exchange: string;
   scan_details: ScanRow[];
-  /** All analyzed scan details including display-filter-eliminated rows. Use over scan_details when present. */
+  /** Preferred — all analyzed scan details including display-filter-eliminated rows. */
+  scan_details_all?: ScanRow[];
+  /** Legacy alias of scan_details_all (worker versions before alias rollout). */
   all_analyzed_scan_details?: ScanRow[];
+  /** Alias of scan_details — kept for clarity. */
+  scan_details_filtered?: ScanRow[];
+  display_filter_summary?: DisplayFilterSummary | null;
+  unified_diagnostics?: UnifiedDiagnostics | null;
   tickSkipped?: boolean;
   skipReason?: string | null;
   tickError?: string | null;
@@ -171,7 +196,30 @@ const WAIT_CODE_TR: Record<string, string> = {
   BTC_DIRECTION_CONFLICT: "BTC zıt",
 };
 
+// Display filter reason text mapping — mirrors backend buildDisplayFilterReasonText.
+// Used as fallback when worker did not populate displayFilterReasonText (older versions).
+const DISPLAY_FILTER_TR: Record<string, string> = {
+  quality_below_threshold: "Filtrelendi: piyasa kalitesi düşük",
+  setup_below_threshold: "Filtrelendi: setup eşiği düşük",
+  signal_below_threshold: "Filtrelendi: işlem skoru düşük",
+  low_volume: "Hacim zayıf",
+  weak_momentum: "Yön teyidi bekleniyor: hacim zayıf",
+  btc_conflict: "BTC yönü ters",
+  no_confirmed_direction: "Yön teyidi yok",
+};
+
 function buildReasonText(row: ScanRow): string {
+  // Display-filtered dynamic rows: explain WHY they didn't make the strict scanner gate.
+  // Trade logic is unaffected — this is purely the SEBEP column for the user.
+  if (row.displayFilterPassed === false) {
+    if (row.displayFilterReasonText && row.displayFilterReasonText.length > 0) {
+      return row.displayFilterReasonText;
+    }
+    const reasons = row.displayFilterReasons ?? (row.displayFilterReason ? [row.displayFilterReason] : []);
+    if (reasons.length > 0) {
+      return reasons.slice(0, 2).map((r) => DISPLAY_FILTER_TR[r] ?? r).join(" · ");
+    }
+  }
   if (row.btcTrendRejected) return "BTC trend filtresi";
   if (row.riskRejectReason) return row.riskRejectReason;
   // Faz 12 — backend tarafı zaten 2–3 sebebi içeren kısa Türkçe özet üretiyor.
@@ -346,13 +394,16 @@ export default function ScannerPage() {
   };
   useAutoRefresh(refresh);
 
-  // Prefer all_analyzed_scan_details (raw with display-filter annotations),
-  // fall back to scan_details for backward compat with older worker versions.
+  // Data priority (Dynamic Market Visibility patch):
+  //   1. scan_details_all   — preferred (canonical alias, all analyzed rows)
+  //   2. all_analyzed_scan_details — legacy alias (older diagnostics)
+  //   3. scan_details       — backward-compat fallback (filtered survivors only)
   // Dismiss filter: hide rows temporarily dismissed by the user unless a strong
   // signal (score>=70 / LONG / SHORT / opened) overrides the dismissal.
+  // Cap at 80 rows — sort is decision-priority (real signal first, then scores).
   const rows = useMemo(() => {
     const now = Date.now();
-    const raw = data?.all_analyzed_scan_details ?? data?.scan_details ?? [];
+    const raw = data?.scan_details_all ?? data?.all_analyzed_scan_details ?? data?.scan_details ?? [];
     if (raw.length === 0) return raw;
     const filtered = raw.filter((r) => {
       const entry = dismissals[r.symbol];
@@ -362,13 +413,20 @@ export default function ScannerPage() {
       if (r.opened === true) return true;
       return false;
     });
-    return filtered.sort((a, b) => {
+    const sorted = filtered.sort((a, b) => {
       if (a.opened !== b.opened) return a.opened ? -1 : 1;
-      const sa = a.tradeSignalScore ?? a.signalScore ?? 0;
-      const sb = b.tradeSignalScore ?? b.signalScore ?? 0;
+      const aHasDir = a.signalType === "LONG" || a.signalType === "SHORT" ? 1 : 0;
+      const bHasDir = b.signalType === "LONG" || b.signalType === "SHORT" ? 1 : 0;
+      if (aHasDir !== bHasDir) return bHasDir - aHasDir;
+      const ta = a.tradeSignalScore ?? a.signalScore ?? 0;
+      const tb = b.tradeSignalScore ?? b.signalScore ?? 0;
+      if (tb !== ta) return tb - ta;
+      const sa = a.setupScore ?? 0;
+      const sb = b.setupScore ?? 0;
       if (sb !== sa) return sb - sa;
-      return (b.setupScore ?? 0) - (a.setupScore ?? 0);
+      return (b.marketQualityScore ?? 0) - (a.marketQualityScore ?? 0);
     });
+    return sorted.slice(0, 80);
   }, [data, dismissals]);
 
   const dismissedCount = useMemo(() => {
@@ -378,6 +436,16 @@ export default function ScannerPage() {
   const exchange = data?.active_exchange ?? "binance";
   const advColumns = ADV_COLUMNS.filter((c) => isAdvVisible(c.key));
   const isStale = data?.diagnosticsStale === true;
+  const summary = data?.display_filter_summary ?? null;
+  const unifiedDiag = data?.unified_diagnostics ?? null;
+  const poolEmpty = unifiedDiag != null && (unifiedDiag.unifiedPoolSize === 0 || (unifiedDiag.unifiedProviderError != null && unifiedDiag.unifiedProviderError !== ""));
+  const poolEmptyMessage = (() => {
+    if (!unifiedDiag) return null;
+    if (unifiedDiag.unifiedProviderError) return `Unified provider hata aldı: ${String(unifiedDiag.unifiedProviderError).slice(0, 120)}`;
+    if (unifiedDiag.unifiedCandidatePoolBlockedReason) return `Geniş market ön eleme: ${unifiedDiag.unifiedCandidatePoolBlockedReason}`;
+    if (unifiedDiag.unifiedPoolSize === 0) return "Dinamik aday havuzu boş.";
+    return null;
+  })();
   const emptyStateMessage = data?.tickSkipped === true
     ? `Tarama atlandı: ${mapTickSkipReasonTr(data.skipReason)}`
     : "Bu periyotta güçlü aday bulunamadı.";
@@ -408,6 +476,26 @@ export default function ScannerPage() {
           {typeof data?.diagnosticsAgeSec === "number" && (
             <span className="ml-auto text-muted">{data.diagnosticsAgeSec}s önce</span>
           )}
+        </div>
+      )}
+
+      {/* Compact source mix summary — shows the user the scanner actually swept the market */}
+      {summary && (summary.rawAnalyzedCount ?? 0) > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+          <span>Analiz edilen: <strong className="text-slate-300">{summary.rawAnalyzedCount}</strong></span>
+          {(summary.coreCount ?? 0) > 0 && <span>· CORE: <strong className="text-slate-300">{summary.coreCount}</strong></span>}
+          {(summary.gmtCount ?? 0) > 0 && <span>· GMT: <strong className="text-slate-300">{summary.gmtCount}</strong></span>}
+          {(summary.mtCount ?? 0) > 0 && <span>· MT: <strong className="text-slate-300">{summary.mtCount}</strong></span>}
+          {(summary.milCount ?? 0) > 0 && <span>· MİL: <strong className="text-slate-300">{summary.milCount}</strong></span>}
+          {(summary.krmCount ?? 0) > 0 && <span>· KRM: <strong className="text-slate-300">{summary.krmCount}</strong></span>}
+          {(summary.dynamicFilteredCount ?? 0) > 0 && <span>· Filtrelenen: <strong className="text-slate-300">{summary.dynamicFilteredCount}</strong></span>}
+        </div>
+      )}
+
+      {/* Candidate pool empty / provider error notice */}
+      {poolEmpty && poolEmptyMessage && (
+        <div className="rounded-md border border-border bg-bg-soft px-3 py-2 text-xs text-slate-400">
+          {poolEmptyMessage}
         </div>
       )}
 

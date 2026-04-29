@@ -207,8 +207,28 @@ export interface ScanDetail {
   displayFilterPassed?: boolean;
   /** Primary reason a DYNAMIC row was eliminated from the strict scanner gate. */
   displayFilterReason?: "quality_below_threshold" | "setup_below_threshold" | "signal_below_threshold" | null;
-  /** All elimination reasons (currently max one, reserved for future multi-reason). */
+  /** All elimination reasons (may contain multiple codes, e.g. signal_below_threshold + btc_conflict). */
   displayFilterReasons?: string[];
+  /** Short Turkish reason summary for the scanner SEBEP column when the row was display-filtered. */
+  displayFilterReasonText?: string;
+}
+
+// ── Display filter reason text mapping (Turkish, scanner SEBEP column) ──
+// Display-only — never used by trade/signal/risk logic.
+const DISPLAY_FILTER_REASON_TR: Record<string, string> = {
+  quality_below_threshold: "Filtrelendi: piyasa kalitesi düşük",
+  setup_below_threshold: "Filtrelendi: setup eşiği düşük",
+  signal_below_threshold: "Filtrelendi: işlem skoru düşük",
+  low_volume: "Hacim zayıf",
+  weak_momentum: "Yön teyidi bekleniyor: hacim zayıf",
+  btc_conflict: "BTC yönü ters",
+  no_confirmed_direction: "Yön teyidi yok",
+};
+
+export function buildDisplayFilterReasonText(reasons: string[]): string {
+  if (!reasons || reasons.length === 0) return "";
+  const parts = reasons.map((r) => DISPLAY_FILTER_REASON_TR[r] ?? r);
+  return parts.slice(0, 2).join(" · ");
 }
 
 // A dynamic row is shown in the scanner table only if it carries real opportunity signal.
@@ -274,9 +294,13 @@ export function filterScanDetailsForDisplay(details: ScanDetail[]): FilterScanRe
     if (mqs < DYNAMIC_MIN_QUALITY) {
       eliminatedQuality++;
       if (d.btcTrendRejected) btcTrendRejected++;
+      const reasons = ["quality_below_threshold"];
+      if (mqs < 50) reasons.push("low_volume");
+      if (d.btcTrendRejected) reasons.push("btc_conflict");
       d.displayFilterPassed = false;
       d.displayFilterReason = "quality_below_threshold";
-      d.displayFilterReasons = ["quality_below_threshold"];
+      d.displayFilterReasons = reasons;
+      d.displayFilterReasonText = buildDisplayFilterReasonText(reasons);
       continue;
     }
 
@@ -285,9 +309,13 @@ export function filterScanDetailsForDisplay(details: ScanDetail[]): FilterScanRe
     if (setup < DYNAMIC_MIN_SETUP) {
       eliminatedSetup++;
       if (d.btcTrendRejected) btcTrendRejected++;
+      const reasons = ["setup_below_threshold"];
+      if ((d.signalScore ?? 0) < 30) reasons.push("weak_momentum");
+      if (d.btcTrendRejected) reasons.push("btc_conflict");
       d.displayFilterPassed = false;
       d.displayFilterReason = "setup_below_threshold";
-      d.displayFilterReasons = ["setup_below_threshold"];
+      d.displayFilterReasons = reasons;
+      d.displayFilterReasonText = buildDisplayFilterReasonText(reasons);
       continue;
     }
 
@@ -299,15 +327,20 @@ export function filterScanDetailsForDisplay(details: ScanDetail[]): FilterScanRe
     if (!hasSignal && !hasDirection && !hasNearMiss && !hasStrongSetup) {
       eliminatedSignal++;
       if (d.btcTrendRejected) btcTrendRejected++;
+      const reasons = ["signal_below_threshold"];
+      if (!hasDirection) reasons.push("no_confirmed_direction");
+      if (d.btcTrendRejected) reasons.push("btc_conflict");
       d.displayFilterPassed = false;
       d.displayFilterReason = "signal_below_threshold";
-      d.displayFilterReasons = ["signal_below_threshold"];
+      d.displayFilterReasons = reasons;
+      d.displayFilterReasonText = buildDisplayFilterReasonText(reasons);
       continue;
     }
 
     d.displayFilterPassed = true;
     d.displayFilterReason = null;
     d.displayFilterReasons = [];
+    d.displayFilterReasonText = "";
     kept.push(d);
   }
 
@@ -1263,7 +1296,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   const dynamicAnalyzed = rawScanDetails.filter((d) => d.coinClass === "DYNAMIC").length;
   const opportunityPool = buildOpportunityPool(rawScanDetails);
   const filterRes = filterScanDetailsForDisplay(rawScanDetails); // annotates in-place
-  result.allAnalyzedScanDetails = rawScanDetails.slice(0, 80); // all analyzed with annotations
+  result.allAnalyzedScanDetails = rawScanDetails.slice(0, 120); // all analyzed with annotations
   result.scanDetails = filterRes.kept; // backward compat — trade/dashboard consumers unchanged
   result.opportunityPool = opportunityPool;
   result.dynamicEliminatedLowSignal = filterRes.eliminated;
@@ -1318,7 +1351,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     errors: result.errors.length,
     durationMs: result.durationMs,
     scanDetails: result.scanDetails.slice(0, 50), // cap at 50 — backward compat
-    allAnalyzedScanDetails: (result.allAnalyzedScanDetails ?? []).slice(0, 80), // all analyzed with displayFilter annotations
+    allAnalyzedScanDetails: (result.allAnalyzedScanDetails ?? []).slice(0, 120), // all analyzed with displayFilter annotations
     opportunityPool: (result.opportunityPool ?? []).slice(0, 30),
     // Phase 6 / 7 unified pool diagnostics
     unifiedCandidatePoolActive: result.unifiedCandidatePoolActive ?? false,
