@@ -6,7 +6,7 @@
 //   • Güvenlik invariantlarını (env hard gate, no Binance calls) sentinel olarak doğrular.
 //   • Mock adapter'ın deterministik çalıştığını doğrular.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 

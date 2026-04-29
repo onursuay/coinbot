@@ -1138,6 +1138,81 @@ döndürür. Gerçek Binance çağrısı gelecek bir fazda eklenecek.
 
 ---
 
+## Faz 17 — Binance Credential / Permission / IP Validation
+
+**Hedef:** Canlıya geçiş öncesi Binance API credential güvenliğini ve permission
+durumunu doğrulayacak read-only validation altyapısı kurmak. Bu faz canlı
+trading açmaz, gerçek emir göndermez ve `/fapi/v1/order` çağırmaz.
+
+### Mimari
+
+`src/lib/binance-credentials/`:
+- `types.ts` — `CredentialPresence`, `FuturesAccessResult`, `BinanceSecurityChecklist`, `BinanceCredentialStatus`, `EXPECTED_VPS_IP`
+- `validator.ts` — `checkCredentialPresence()`, `validateFuturesAccess()`, `maskApiKey()`
+- `index.ts` — barrel
+
+API:
+- `GET  /api/binance-credentials/status` — credential presence + futures read + checklist + recommendedVpsIp
+- `POST /api/binance-credentials/checklist` — sadece checklist state günceller; secret/api key kabul etmez
+
+UI: `src/app/api-settings/page.tsx` üzerine 3 kart eklendi
+1. Binance Credential Durumu (read-only)
+2. Güvenlik Checklist (manuel)
+3. Önerilen VPS IP
+
+### Validator davranışı
+
+| Kontrol | Endpoint | Tip |
+|---|---|---|
+| Credential presence | (env okuma) | yerel |
+| Futures public erişim | `GET /fapi/v1/time` | unsigned |
+| Account read | `GET /fapi/v2/account` | signed (read-only) |
+| Order endpoint | — | **YASAK** |
+
+- API key maskelenir: ilk 4 + `****` + son 4.
+- Secret hiçbir response/log'a yazılmaz.
+- Hata mesajları `safeErrorMessage()` ile temizlenir (signature/uzun token kaldırılır).
+
+### Manuel checklist
+
+| Alan | Tip |
+|---|---|
+| `withdrawPermissionDisabled` | `unknown` / `confirmed` / `failed` |
+| `ipRestrictionConfigured` | `unknown` / `confirmed` / `failed` |
+| `futuresPermissionConfirmed` | `unknown` / `confirmed` / `failed` |
+| `extraPermissionsReviewed` | `unknown` / `confirmed` / `failed` |
+
+State `bot_settings.binance_security_checklist` JSONB kolonunda tutulur
+(migration `0010_binance_security_checklist.sql`).
+
+### VPS IP
+
+`EXPECTED_VPS_IP=72.62.146.159`. UI ve `/status` response içinde
+`recommendedVpsIp` olarak döner. Binance API Management tarafında IP
+restriction alanına bu IP girilmelidir.
+
+### Bu fazda kesinlikle dokunulmadı
+
+- Canlı trading açılmadı (`HARD_LIVE_TRADING_ALLOWED=false` korundu).
+- `DEFAULT_TRADING_MODE=paper` korundu.
+- `enable_live_trading=false` korundu.
+- `MIN_SIGNAL_CONFIDENCE=70` korundu.
+- `/fapi/v1/order` çağrısı eklenmedi.
+- `openLiveOrder` hâlâ `LIVE_EXECUTION_NOT_IMPLEMENTED` döner.
+- Risk/signal/trade engine değiştirilmedi.
+- Worker lock korundu.
+- Withdraw izni hiçbir koşulda kullanılmaz; checklist'te kapalı doğrulanmalı.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+İlgili dosyalar:
+- `src/lib/binance-credentials/{types,validator,index}.ts`
+- `src/app/api/binance-credentials/{status,checklist}/route.ts`
+- `src/app/api-settings/page.tsx` (kart entegrasyonu)
+- `supabase/migrations/0010_binance_security_checklist.sql`
+- `src/__tests__/binance-credentials-phase17.test.ts`
+
+---
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

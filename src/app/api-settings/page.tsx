@@ -3,6 +3,43 @@ import { useEffect, useState } from "react";
 
 const EXCHANGES = ["binance", "mexc", "okx", "bybit"] as const;
 
+type ChecklistState = "unknown" | "confirmed" | "failed";
+type CredStatus = {
+  presence: {
+    apiKeyPresent: boolean;
+    apiSecretPresent: boolean;
+    apiKeyMasked: string | null;
+    baseUrl: string;
+    usingTestnet: boolean;
+    credentialConfigured: boolean;
+  };
+  futuresAccess: {
+    futuresAccessOk: boolean;
+    accountReadOk: boolean;
+    permissionError: string | null;
+    errorCode: string | null;
+    errorMessageSafe: string | null;
+    lastCheckedAt: string;
+  };
+  checklist: {
+    withdrawPermissionDisabled: ChecklistState;
+    ipRestrictionConfigured: ChecklistState;
+    futuresPermissionConfirmed: ChecklistState;
+    extraPermissionsReviewed: ChecklistState;
+    updatedAt: string | null;
+  };
+  recommendedVpsIp: string;
+  liveGateOpen: boolean;
+};
+
+const CHECKLIST_LABELS: Record<keyof CredStatus["checklist"], string> = {
+  withdrawPermissionDisabled: "Withdraw izni kapalı",
+  ipRestrictionConfigured: "IP restriction VPS IP ile sınırlı",
+  futuresPermissionConfirmed: "Futures permission doğrulandı",
+  extraPermissionsReviewed: "Gereksiz izinler kapalı",
+  updatedAt: "",
+};
+
 export default function ApiSettings() {
   const [supported, setSupported] = useState<any[]>([]);
   const [connected, setConnected] = useState<any[]>([]);
@@ -11,6 +48,28 @@ export default function ApiSettings() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [diagChecks, setDiagChecks] = useState<Record<string, string> | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
+  const [credStatus, setCredStatus] = useState<CredStatus | null>(null);
+  const [credBusy, setCredBusy] = useState(false);
+
+  const refreshCredStatus = async () => {
+    setCredBusy(true);
+    try {
+      const r = await fetch(`/api/binance-credentials/status?t=${Date.now()}`, { cache: "no-store" });
+      const j = await r.json();
+      if (j.ok) setCredStatus(j.data as CredStatus);
+    } catch { /* silent */ }
+    finally { setCredBusy(false); }
+  };
+
+  const setChecklist = async (key: keyof CredStatus["checklist"], value: ChecklistState) => {
+    if (key === "updatedAt") return;
+    await fetch("/api/binance-credentials/checklist", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ [key]: value }),
+    });
+    await refreshCredStatus();
+  };
 
   const refresh = async () => {
     const t = Date.now();
@@ -21,7 +80,7 @@ export default function ApiSettings() {
     if (s.ok) setSupported(s.data);
     if (c.ok) setConnected(c.data);
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); refreshCredStatus(); }, []);
 
   const connect = async () => {
     setBusy(true);
@@ -86,6 +145,96 @@ export default function ApiSettings() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">API Settings</h1>
+
+      {/* Faz 17 — Binance Credential / Permission / IP Validation */}
+      <section className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">Binance Credential Durumu (read-only)</h2>
+          <button className="btn-ghost text-xs" onClick={refreshCredStatus} disabled={credBusy}>
+            {credBusy ? "Kontrol ediliyor..." : "Yenile"}
+          </button>
+        </div>
+        {!credStatus && <div className="text-sm text-muted">Yükleniyor...</div>}
+        {credStatus && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+            <div className="space-y-1">
+              <div><span className="text-muted">API Key:</span> {credStatus.presence.apiKeyPresent
+                ? <span className="font-mono">{credStatus.presence.apiKeyMasked}</span>
+                : <span className="text-warning">tanımlı değil</span>}</div>
+              <div><span className="text-muted">API Secret:</span> {credStatus.presence.apiSecretPresent
+                ? <span className="text-success">tanımlı (gizli)</span>
+                : <span className="text-warning">tanımlı değil</span>}</div>
+              <div><span className="text-muted">Base URL:</span> <span className="font-mono">{credStatus.presence.baseUrl}</span></div>
+              <div><span className="text-muted">Mod:</span> {credStatus.presence.usingTestnet
+                ? <span className="tag-muted">testnet</span>
+                : <span className="tag-success">mainnet</span>}</div>
+            </div>
+            <div className="space-y-1">
+              <div><span className="text-muted">Futures public erişim:</span> {credStatus.futuresAccess.futuresAccessOk
+                ? <span className="text-success">OK</span>
+                : <span className="text-danger">FAIL</span>}</div>
+              <div><span className="text-muted">Account read:</span> {credStatus.futuresAccess.accountReadOk
+                ? <span className="text-success">OK</span>
+                : <span className="text-danger">FAIL</span>}</div>
+              {credStatus.futuresAccess.errorMessageSafe && (
+                <div className="text-xs text-danger">Hata: {credStatus.futuresAccess.errorMessageSafe}</div>
+              )}
+              <div className="text-xs text-muted">Son kontrol: {credStatus.futuresAccess.lastCheckedAt}</div>
+              <div><span className="text-muted">Live gate:</span> {credStatus.liveGateOpen
+                ? <span className="text-warning">açık (env)</span>
+                : <span className="tag-success">kapalı</span>}</div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {credStatus && (
+        <section className="card space-y-3">
+          <h2 className="font-semibold">Güvenlik Checklist (manuel doğrulama)</h2>
+          <div className="text-xs text-muted">
+            Aşağıdaki kontroller Binance API Management üzerinde manuel olarak yapılır.
+            Bu sayfa sadece durumu kayıt altına alır; Binance hesabına müdahale etmez.
+          </div>
+          <div className="grid grid-cols-1 gap-2">
+            {(["withdrawPermissionDisabled", "ipRestrictionConfigured", "futuresPermissionConfirmed", "extraPermissionsReviewed"] as const).map((k) => {
+              const v = credStatus.checklist[k];
+              return (
+                <div key={k} className="flex items-center justify-between gap-3 border border-white/5 rounded p-2">
+                  <div className="text-sm">{CHECKLIST_LABELS[k]}</div>
+                  <div className="flex gap-1">
+                    <button
+                      className={v === "confirmed" ? "btn-primary text-xs" : "btn-ghost text-xs"}
+                      onClick={() => setChecklist(k, "confirmed")}
+                    >Onaylandı</button>
+                    <button
+                      className={v === "failed" ? "btn-danger text-xs" : "btn-ghost text-xs"}
+                      onClick={() => setChecklist(k, "failed")}
+                    >Başarısız</button>
+                    <button
+                      className={v === "unknown" ? "btn-ghost text-xs underline" : "btn-ghost text-xs"}
+                      onClick={() => setChecklist(k, "unknown")}
+                    >Bilinmiyor</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {credStatus.checklist.updatedAt && (
+            <div className="text-xs text-muted">Son güncelleme: {credStatus.checklist.updatedAt}</div>
+          )}
+        </section>
+      )}
+
+      {credStatus && (
+        <section className="card space-y-1">
+          <h2 className="font-semibold">Önerilen VPS IP</h2>
+          <div className="text-sm font-mono">{credStatus.recommendedVpsIp}</div>
+          <div className="text-xs text-muted">
+            Binance API Management tarafında IP restriction alanına yukarıdaki IP girilmelidir.
+            Withdraw izni kapalı bırakılmalıdır.
+          </div>
+        </section>
+      )}
 
       <div className="card text-sm text-warning space-y-1">
         <div>⚠ API key oluştururken <b>Withdrawal</b> iznini AÇMAYIN.</div>
