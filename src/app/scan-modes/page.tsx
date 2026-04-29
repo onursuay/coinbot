@@ -1,16 +1,23 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { COIN_SOURCE_LABEL, type ScanModesConfig } from "@/lib/scan-modes/types";
 
-// Phase 1 — Tarama Modları sayfası.
-// 3 mod kartı: Geniş Market Taraması, Momentum Taraması, Manuel İzleme Listesi.
-// Sadece Aktif/Pasif kontrolü ve Manuel İzleme Listesi için sembol chip iskeleti.
-// Bu sayfa scanner/sinyal/risk davranışını DEĞİŞTİRMEZ — yalnızca mod state'i yönetir.
+// Tarama Modları sayfası.
+// Faz 1 — 3 mod kartı + Aktif/Pasif toggle.
+// Faz 4 — Manuel İzleme Listesi için Binance Futures evrenine bağlı arama
+// (cache'li, dağınık fetch yok). Arama sonuçları satır olarak gösterilir;
+// her satırda "Ekle" veya zaten ekliyse "Seçili" pasif rozeti bulunur.
+// Bu sayfa scanner/sinyal/risk davranışını DEĞİŞTİRMEZ.
+
+interface SearchResult {
+  symbol: string;
+  baseAsset: string;
+  alreadyAdded: boolean;
+}
 
 export default function ScanModesPage() {
   const [config, setConfig] = useState<ScanModesConfig | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [newSymbol, setNewSymbol] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
@@ -43,10 +50,10 @@ export default function ScanModesPage() {
     }
   };
 
-  const addSymbol = async () => {
-    const sym = newSymbol.trim();
+  const addSymbol = async (rawSym: string) => {
+    const sym = rawSym.trim();
     if (!sym) return;
-    setBusy("add");
+    setBusy(`add:${sym}`);
     setError(null);
     try {
       const res = await fetch("/api/scan-modes/manual-list", {
@@ -54,10 +61,8 @@ export default function ScanModesPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ symbol: sym }),
       }).then((r) => r.json());
-      if (res.ok) {
-        setConfig(res.data);
-        setNewSymbol("");
-      } else setError(res.error ?? "Ekleme başarısız");
+      if (res.ok) setConfig(res.data);
+      else setError(res.error ?? "Ekleme başarısız");
     } finally {
       setBusy(null);
     }
@@ -127,8 +132,6 @@ export default function ScanModesPage() {
           <ManualListBody
             symbols={config.manualList.symbols}
             active={config.manualList.active}
-            newSymbol={newSymbol}
-            setNewSymbol={setNewSymbol}
             addSymbol={addSymbol}
             removeSymbol={removeSymbol}
             busy={busy}
@@ -205,22 +208,60 @@ function Toggle({
 function ManualListBody({
   symbols,
   active,
-  newSymbol,
-  setNewSymbol,
   addSymbol,
   removeSymbol,
   busy,
 }: {
   symbols: string[];
   active: boolean;
-  newSymbol: string;
-  setNewSymbol: (s: string) => void;
-  addSymbol: () => void;
+  addSymbol: (sym: string) => void | Promise<void>;
   removeSymbol: (s: string) => void;
   busy: string | null;
 }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const symbolsSet = useMemo(() => new Set(symbols), [symbols]);
+
+  // Debounced search — fetches from /api/scan-modes/manual-list/search.
+  // The endpoint is backed by the Phase-2 cached market universe (6h TTL),
+  // so each keystroke does NOT trigger a Binance API call.
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!query.trim()) {
+      setResults([]);
+      setSearchError(null);
+      return;
+    }
+    setSearching(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/scan-modes/manual-list/search?q=${encodeURIComponent(query.trim())}&limit=20`,
+        ).then((r) => r.json());
+        if (res.ok) {
+          setResults(res.data.results ?? []);
+          setSearchError(null);
+        } else {
+          setSearchError(res.error ?? "Arama başarısız");
+        }
+      } catch (e) {
+        setSearchError(e instanceof Error ? e.message : "Arama hatası");
+      } finally {
+        setSearching(false);
+      }
+    }, 220);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [query]);
+
   return (
     <div className="space-y-3">
+      {/* Selected coin chips */}
       <div className="flex flex-wrap gap-1.5 min-h-[36px]">
         {symbols.length === 0 && (
           <div className="text-xs text-muted italic">Henüz coin eklenmedi</div>
@@ -245,26 +286,55 @@ function ManualListBody({
           </span>
         ))}
       </div>
-      <div className="flex gap-2">
+
+      {/* Search input */}
+      <div className="relative">
         <input
           type="text"
-          value={newSymbol}
-          onChange={(e) => setNewSymbol(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") addSymbol();
-          }}
-          placeholder="BTC/USDT"
-          className="flex-1 px-2 py-1.5 rounded-lg bg-bg-soft border border-border text-sm focus:outline-none focus:border-accent"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Coin ara (örn. SOL, BTC, ETH)"
+          className="w-full px-2 py-1.5 rounded-lg bg-bg-soft border border-border text-sm focus:outline-none focus:border-accent"
         />
-        <button
-          type="button"
-          onClick={addSymbol}
-          disabled={busy === "add" || !newSymbol.trim()}
-          className="btn-ghost text-xs px-3"
-        >
-          Ekle
-        </button>
+        {searching && (
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted">…</div>
+        )}
       </div>
+
+      {/* Search results */}
+      {searchError && <div className="text-xs text-danger">{searchError}</div>}
+      {query.trim() && !searching && results.length === 0 && !searchError && (
+        <div className="text-xs text-muted italic">Sonuç bulunamadı</div>
+      )}
+      {results.length > 0 && (
+        <ul className="space-y-1 max-h-56 overflow-y-auto pr-1">
+          {results.map((r) => {
+            const already = r.alreadyAdded || symbolsSet.has(r.symbol);
+            const adding = busy === `add:${r.symbol}`;
+            return (
+              <li
+                key={r.symbol}
+                className="flex items-center justify-between gap-2 px-2 py-1 rounded border border-border bg-bg-soft/40 text-xs"
+              >
+                <span className="font-mono truncate">{r.symbol}</span>
+                {already ? (
+                  <span className="text-[10px] text-success uppercase tracking-wider">Seçili</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => addSymbol(r.symbol)}
+                    disabled={adding}
+                    className="btn-ghost text-[10px] px-2 py-0.5"
+                  >
+                    {adding ? "Ekleniyor…" : "Ekle"}
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
       {!active && symbols.length > 0 && (
         <div className="text-[10px] text-muted">
           Mod pasif — liste korunur, taramaya dahil edilmez.

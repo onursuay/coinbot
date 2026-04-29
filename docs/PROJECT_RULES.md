@@ -149,6 +149,49 @@ mevcut Aktif/Pasif arayüzüyle kalır; Panel/Piyasa Tarayıcı'da aktif mod
   içermez.
 - `src/lib/momentum-screener/index.ts` — barrel.
 
+## Manuel İzleme Listesi — Arama ve Yönetim (Faz 4)
+
+Manuel İzleme Listesi yalnızca **Tarama Modları** sayfasında yönetilir.
+Panel/Dashboard veya Piyasa Tarayıcı üzerinde aktif mod özeti gösterilmez
+(Faz 1.1 ürün kuralı).
+
+İşleyiş:
+- **Arama** `GET /api/scan-modes/manual-list/search?q=…&limit=20`
+  endpoint'i Faz 2'nin **cache'li market evrenini** kullanır
+  (`getMarketUniverse()`, varsayılan TTL 6 saat). Her tuş basışı yeni
+  Binance isteği üretmez.
+- **Filtreler:** USDT perpetual + `status=TRADING` + stablecoin tabanları
+  hariç. Sadece bu evren aranır; sonuçlar prefix-match önceliklidir.
+- **Boş sorgu** boş liste döner — gereksiz uzun varsayılan liste
+  gösterilmez.
+- **Ekleme** `POST /api/scan-modes/manual-list` artık girdiyi cache'li
+  evrenle doğrular (`resolveManualListSymbol`): "sol" → `SOL/USDT`,
+  "btcusdt" → `BTC/USDT`, "BTC-USDT-SWAP" → `BTC/USDT`. Evrende
+  bulunmayan veya stablecoin tabanlı semboller reddedilir.
+- **Duplicate koruması:** aynı sembol zaten listedeyse 409.
+- **Kaldırma** `DELETE /api/scan-modes/manual-list?symbol=…` mevcut
+  davranışla aynı.
+- **Mod pasif yapılırsa liste silinmez** (Faz 1 garantisi sürer).
+
+**Kaynak gösterimi:** `MANUAL_LIST` → `MİL`. Aynı coin başka kaynakla
+çakışırsa ana gösterim **MIXED → KRM**'dir.
+
+**Faz 4 kapsamı:** mevcut çalışan trade açma mantığı, signal-engine, risk
+engine, leverage, live-gate, worker tick **dokunulmadı**. Tüm Binance
+trafiği merkezi adapter üzerinden ve cache'li evren ile yönetilir;
+[BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) kuralları
+korundu.
+
+İlgili dosyalar:
+- `src/lib/scan-modes/manual-list-search.ts` — saf
+  `searchManualListCandidates` + `resolveManualListSymbol`.
+- `src/app/api/scan-modes/manual-list/search/route.ts` — arama endpoint'i
+  (cache'li evren).
+- `src/app/api/scan-modes/manual-list/route.ts` — POST artık evren
+  doğrulaması yapar.
+- `src/app/scan-modes/page.tsx` — debounce'lu arama + sonuç listesi +
+  "Seçili" rozet.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
