@@ -11,7 +11,7 @@
 //    canlı trading gate'i bu sayfadan etkilenmez.
 //  - Gelişmiş metrik seçici sadece UI kolon görünürlüğünü değiştirir;
 //    state localStorage'da tutulur, backend'e gönderilmez.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
@@ -65,6 +65,10 @@ interface ScanRow {
   sourceDisplay?: string | null;
   candidateSources?: string[];
   candidateRank?: number;
+  // Display filter annotations — set by filterScanDetailsForDisplay, never gates trades.
+  displayFilterPassed?: boolean;
+  displayFilterReason?: string | null;
+  displayFilterReasons?: string[];
   // Optional 24h quote volume (USDT) — surfaced when worker provides it,
   // otherwise the UI falls back to "—" (no Binance call from the dashboard).
   quoteVolume24h?: number;
@@ -74,6 +78,8 @@ interface ScanRow {
 interface DiagData {
   active_exchange: string;
   scan_details: ScanRow[];
+  /** All analyzed scan details including display-filter-eliminated rows. Use over scan_details when present. */
+  all_analyzed_scan_details?: ScanRow[];
   tickSkipped?: boolean;
   skipReason?: string | null;
   tickError?: string | null;
@@ -281,7 +287,19 @@ export default function ScannerPage() {
   };
   useAutoRefresh(refresh);
 
-  const rows = data?.scan_details ?? [];
+  // Prefer all_analyzed_scan_details (includes display-filter-eliminated rows with annotations)
+  // Fall back to scan_details for backward compat with older worker versions.
+  const rawRows = data?.all_analyzed_scan_details ?? data?.scan_details ?? [];
+  const rows = useMemo(() => {
+    if (rawRows.length === 0) return rawRows;
+    return [...rawRows].sort((a, b) => {
+      if (a.opened !== b.opened) return a.opened ? -1 : 1;
+      const sa = a.tradeSignalScore ?? a.signalScore ?? 0;
+      const sb = b.tradeSignalScore ?? b.signalScore ?? 0;
+      if (sb !== sa) return sb - sa;
+      return (b.setupScore ?? 0) - (a.setupScore ?? 0);
+    });
+  }, [rawRows]);
   const exchange = data?.active_exchange ?? "binance";
   const advColumns = ADV_COLUMNS.filter((c) => isAdvVisible(c.key));
   const isStale = data?.diagnosticsStale === true;
@@ -407,6 +425,14 @@ export default function ScannerPage() {
                       </Link>
                       {isStale && (
                         <span className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium bg-warning/15 text-warning align-middle">GÜNCEL DEĞİL</span>
+                      )}
+                      {r.displayFilterPassed === false && r.coinClass === "DYNAMIC" && (
+                        <span
+                          className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium bg-slate-700/60 text-slate-400 align-middle"
+                          title={r.displayFilterReason ?? "display filtresi"}
+                        >
+                          ADAY
+                        </span>
                       )}
                     </td>
                     <td title={(r.candidateSources ?? []).join(", ") || undefined}>

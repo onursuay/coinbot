@@ -201,6 +201,14 @@ export interface ScanDetail {
   momentumScore?: number;
   /** Snapshot timestamp of the unified pool the metadata was taken from. */
   candidatePoolGeneratedAt?: number;
+  // ── Display filter annotations (post-analysis, display-only) ──
+  // Set by filterScanDetailsForDisplay — never used by trade/signal/risk logic.
+  /** True when this row passed filterScanDetailsForDisplay; false when eliminated. */
+  displayFilterPassed?: boolean;
+  /** Primary reason a DYNAMIC row was eliminated from the strict scanner gate. */
+  displayFilterReason?: "quality_below_threshold" | "setup_below_threshold" | "signal_below_threshold" | null;
+  /** All elimination reasons (currently max one, reserved for future multi-reason). */
+  displayFilterReasons?: string[];
 }
 
 // A dynamic row is shown in the scanner table only if it carries real opportunity signal.
@@ -250,15 +258,26 @@ export function filterScanDetailsForDisplay(details: ScanDetail[]): FilterScanRe
   let eliminatedSignal = 0;
   let btcTrendRejected = 0;
 
-  const kept = details.filter((d) => {
-    if (d.coinClass !== "DYNAMIC") return true;
+  const kept: ScanDetail[] = [];
+
+  for (const d of details) {
+    if (d.coinClass !== "DYNAMIC") {
+      d.displayFilterPassed = true;
+      d.displayFilterReason = null;
+      d.displayFilterReasons = [];
+      kept.push(d);
+      continue;
+    }
 
     // Quality gate
-    const mqs = (d as any).marketQualityScore ?? 100; // default for legacy/test data
+    const mqs = (d as any).marketQualityScore ?? 100;
     if (mqs < DYNAMIC_MIN_QUALITY) {
       eliminatedQuality++;
       if (d.btcTrendRejected) btcTrendRejected++;
-      return false;
+      d.displayFilterPassed = false;
+      d.displayFilterReason = "quality_below_threshold";
+      d.displayFilterReasons = ["quality_below_threshold"];
+      continue;
     }
 
     // Setup gate
@@ -266,7 +285,10 @@ export function filterScanDetailsForDisplay(details: ScanDetail[]): FilterScanRe
     if (setup < DYNAMIC_MIN_SETUP) {
       eliminatedSetup++;
       if (d.btcTrendRejected) btcTrendRejected++;
-      return false;
+      d.displayFilterPassed = false;
+      d.displayFilterReason = "setup_below_threshold";
+      d.displayFilterReasons = ["setup_below_threshold"];
+      continue;
     }
 
     // Signal/opportunity gate — at least one must hold
@@ -277,11 +299,17 @@ export function filterScanDetailsForDisplay(details: ScanDetail[]): FilterScanRe
     if (!hasSignal && !hasDirection && !hasNearMiss && !hasStrongSetup) {
       eliminatedSignal++;
       if (d.btcTrendRejected) btcTrendRejected++;
-      return false;
+      d.displayFilterPassed = false;
+      d.displayFilterReason = "signal_below_threshold";
+      d.displayFilterReasons = ["signal_below_threshold"];
+      continue;
     }
 
-    return true;
-  });
+    d.displayFilterPassed = true;
+    d.displayFilterReason = null;
+    d.displayFilterReasons = [];
+    kept.push(d);
+  }
 
   return {
     kept,
@@ -346,6 +374,8 @@ export interface TickResult {
   // that didn't clear the strict scanner gate.
   opportunityPool?: ScanDetail[];
   // ── Phase 6 / 7 — unified candidate pool diagnostics (display only) ──
+  /** All analyzed scan details with display-filter annotations. Capped at 80. Display-only. */
+  allAnalyzedScanDetails?: ScanDetail[];
   /** True when the unified pool fed this tick's additional candidates. */
   unifiedCandidatePoolActive?: boolean;
   /** Pool size from the orchestrator (≤ 50). */
@@ -1225,11 +1255,16 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   // of (signalScore >= 50 / near-miss / explicit direction / strong-setup). Dynamic-only;
   // CORE rows always pass. The broader "opportunityPool" is built before this prune so
   // high-setup dynamics that didn't clear the strict gate still feed the top-5 card.
+  //
+  // allAnalyzedScanDetails retains ALL analyzed rows with displayFilterPassed annotations
+  // so the scanner frontend can show every analyzed coin (not just the kept set).
+  // Trade/signal/risk logic is never affected — scanDetails backward-compat kept list unchanged.
   const rawScanDetails = result.scanDetails;
   const dynamicAnalyzed = rawScanDetails.filter((d) => d.coinClass === "DYNAMIC").length;
   const opportunityPool = buildOpportunityPool(rawScanDetails);
-  const filterRes = filterScanDetailsForDisplay(rawScanDetails);
-  result.scanDetails = filterRes.kept;
+  const filterRes = filterScanDetailsForDisplay(rawScanDetails); // annotates in-place
+  result.allAnalyzedScanDetails = rawScanDetails.slice(0, 80); // all analyzed with annotations
+  result.scanDetails = filterRes.kept; // backward compat — trade/dashboard consumers unchanged
   result.opportunityPool = opportunityPool;
   result.dynamicEliminatedLowSignal = filterRes.eliminated;
   result.dynamicEliminatedQuality = filterRes.eliminatedQuality;
@@ -1282,7 +1317,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     nearMiss: result.nearMissSignals.length,
     errors: result.errors.length,
     durationMs: result.durationMs,
-    scanDetails: result.scanDetails.slice(0, 50), // cap at 50 to limit JSONB size
+    scanDetails: result.scanDetails.slice(0, 50), // cap at 50 — backward compat
+    allAnalyzedScanDetails: (result.allAnalyzedScanDetails ?? []).slice(0, 80), // all analyzed with displayFilter annotations
     opportunityPool: (result.opportunityPool ?? []).slice(0, 30),
     // Phase 6 / 7 unified pool diagnostics
     unifiedCandidatePoolActive: result.unifiedCandidatePoolActive ?? false,

@@ -217,6 +217,14 @@ export async function GET() {
         dynamicRejectedInsufficientDepth: tickSummary.dynamicRejectedInsufficientDepth ?? 0,
       } : EMPTY_TICK_STATS,
       scan_details: tickSummary?.scanDetails ?? [],
+      all_analyzed_scan_details: tickSummary?.allAnalyzedScanDetails ?? tickSummary?.scanDetails ?? [],
+      display_filter_summary: tickSummary ? {
+        rawAnalyzedCount: (tickSummary.allAnalyzedScanDetails ?? tickSummary.scanDetails ?? []).length,
+        filteredVisibleCount: (tickSummary.scanDetails ?? []).length,
+        dynamicFilteredCount: tickSummary.dynamicEliminatedLowSignal ?? 0,
+        coreCount: tickSummary.coreSymbolsCount ?? 0,
+        unifiedSymbolsCount: tickSummary.unifiedSymbolsCount ?? 0,
+      } : null,
       opportunity_pool: tickSummary?.opportunityPool ?? tickSummary?.scanDetails ?? [],
       tick_identity: tickSummary ? {
         worker_id:    tickSummary.worker_id    ?? null,
