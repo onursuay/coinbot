@@ -5,7 +5,7 @@
 // config altyapısı içindir; trade engine, signal engine, risk engine
 // execution veya canlı trading gate üzerinde HİÇBİR etkisi YOKTUR.
 // `appliedToTradeEngine = false` invariant'i korunur.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtUsd } from "@/lib/format";
 import {
   POLICY,
@@ -116,7 +116,7 @@ export default function RiskPage() {
         <div className="flex items-center justify-between flex-wrap gap-3">
           <h1 className="text-lg font-semibold tracking-wide">RİSK YÖNETİMİ</h1>
           <div className="flex items-center gap-2 flex-wrap">
-            <Chip tone="muted">EXECUTION&apos;A BAĞLI DEĞİL</Chip>
+            <Chip tone="success">CONFIG OKUNUYOR</Chip>
             <Chip tone="muted">PAPER MODE</Chip>
             {savedAt && (
               <span className="text-[11px] text-muted">
@@ -377,10 +377,8 @@ export default function RiskPage() {
           </ul>
         )}
         <p className="mt-3 text-[11px] text-muted">
-          Bu sayfanın hiçbir alanı bu fazda trade engine, signal-engine veya
-          canlı trading gate&apos;i tetiklemez. Risk ayarları kalıcı olarak
-          saklanır ve gelecekteki bir fazda execution path&apos;ine güvenli
-          şekilde bağlanır.
+          Risk config bot tarafından okunuyor. Canlı execution kapalı.
+          Kaldıraç execution kapalı.
         </p>
       </section>
 
@@ -442,7 +440,7 @@ function Chip({ tone, children }: { tone: Tone; children: React.ReactNode }) {
 }
 
 function NumberField({
-  label, value, onChange, hint, danger, ...rest
+  label, value, onChange, hint, danger, min, max, step,
 }: {
   label: string;
   value: number;
@@ -451,18 +449,84 @@ function NumberField({
   danger?: boolean;
   min?: number; max?: number; step?: number;
 }) {
+  const safeNum = Number.isFinite(value) && value >= 0 ? value : 0;
+  const [raw, setRaw] = useState(String(safeNum));
+  const prevValue = useRef(safeNum);
+
+  // Sync when the value changes externally (load / reset).
+  useEffect(() => {
+    const n = Number.isFinite(value) && value >= 0 ? value : 0;
+    if (n !== prevValue.current) {
+      prevValue.current = n;
+      setRaw(String(n));
+    }
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const s = e.target.value;
+    // Remove any leading zeros (e.g. "01000" → "1000"), but keep "0" alone.
+    const normalized = s.replace(/^0+(\d)/, "$1");
+    setRaw(normalized);
+    const n = parseFloat(normalized);
+    if (Number.isFinite(n) && n >= 0) {
+      prevValue.current = n;
+      onChange(n);
+    }
+  };
+
+  const handleBlur = () => {
+    const n = parseFloat(raw);
+    const fallback = min !== undefined && min > 0 ? min : 0;
+    const safe = Number.isFinite(n) && n >= 0 ? n : fallback;
+    prevValue.current = safe;
+    setRaw(String(safe));
+    onChange(safe);
+  };
+
   return (
     <div className={`rounded-lg border px-3 py-2.5 ${danger ? "border-danger/50 bg-danger/5" : "border-border bg-bg-soft"}`}>
       <label className="text-[10px] uppercase tracking-wider text-muted">{label}</label>
       <input
-        type="number"
+        type="text"
+        inputMode="decimal"
         className="mt-1 w-full bg-transparent border-b border-border focus:border-accent outline-none text-sm tabular-nums"
-        value={Number.isFinite(value) ? value : 0}
-        onChange={(e) => onChange(Number(e.target.value))}
-        {...rest}
+        value={raw}
+        min={min} max={max} step={step}
+        onChange={handleChange}
+        onFocus={(e) => e.target.select()}
+        onBlur={handleBlur}
       />
       {hint && <div className={`mt-1 text-[10px] ${danger ? "text-danger" : "text-muted"}`}>{hint}</div>}
     </div>
+  );
+}
+
+function LeverageInput({ value, min, max, onChange }: {
+  value: number; min: number; max: number; onChange: (v: number) => void;
+}) {
+  const [raw, setRaw] = useState(String(value));
+  const prevVal = useRef(value);
+  useEffect(() => {
+    if (value !== prevVal.current) { prevVal.current = value; setRaw(String(value)); }
+  }, [value]);
+  return (
+    <input
+      type="text" inputMode="numeric"
+      className="mt-1 w-full bg-transparent border-b border-border focus:border-accent outline-none text-sm tabular-nums"
+      value={raw}
+      onFocus={(e) => e.target.select()}
+      onChange={(e) => {
+        const s = e.target.value.replace(/^0+(\d)/, "$1");
+        setRaw(s);
+        const n = Math.round(Number(s));
+        if (Number.isFinite(n) && n >= 0) { prevVal.current = n; onChange(n); }
+      }}
+      onBlur={() => {
+        const n = Math.round(Number(raw));
+        const safe = Number.isFinite(n) && n >= min ? Math.min(n, max) : min;
+        prevVal.current = safe; setRaw(String(safe)); onChange(safe);
+      }}
+    />
   );
 }
 
@@ -490,20 +554,16 @@ function LeverageBox({
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="text-[10px] uppercase tracking-wider text-muted">{codeMin} (MIN)</label>
-          <input
-            type="number" min={POLICY.minLeverage} max={cap} step={1}
-            className="mt-1 w-full bg-transparent border-b border-border focus:border-accent outline-none text-sm tabular-nums"
-            value={range.min}
-            onChange={(e) => onChange(Math.round(Number(e.target.value)), range.max)}
+          <LeverageInput
+            value={range.min} min={POLICY.minLeverage} max={cap}
+            onChange={(v) => onChange(v, range.max)}
           />
         </div>
         <div>
           <label className="text-[10px] uppercase tracking-wider text-muted">{codeMax} (MAX)</label>
-          <input
-            type="number" min={POLICY.minLeverage} max={cap} step={1}
-            className="mt-1 w-full bg-transparent border-b border-border focus:border-accent outline-none text-sm tabular-nums"
-            value={range.max}
-            onChange={(e) => onChange(range.min, Math.round(Number(e.target.value)))}
+          <LeverageInput
+            value={range.max} min={POLICY.minLeverage} max={cap}
+            onChange={(v) => onChange(range.min, v)}
           />
         </div>
       </div>
