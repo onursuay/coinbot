@@ -86,23 +86,38 @@ export async function PUT(req: Request) {
   const parsed = await parseBody(req, Body);
   if (isResponse(parsed)) return parsed;
   const userId = getCurrentUserId();
+  // Comprehensive payload log so we can audit exactly what the API received.
+  // Useful when the user reports "saved but reverts on refresh" — Loglar
+  // page surfaces this so we can verify the body matches user intent.
+  const payloadDigest = JSON.stringify({
+    p: parsed.profile,
+    cap: parsed.capital?.totalCapitalUsdt,
+    risk: parsed.capital?.riskPerTradePercent,
+    loss: parsed.capital?.maxDailyLossPercent,
+    defPos: parsed.positions?.defaultMaxOpenPositions,
+    dynCap: parsed.positions?.dynamicMaxOpenPositionsCap,
+    maxTr: parsed.positions?.maxDailyTrades,
+    sl: parsed.stopLoss?.mode,
+    long: parsed.direction?.longEnabled,
+    short: parsed.direction?.shortEnabled,
+  });
   await botLog({
     userId, level: "info", eventType: "risk_settings_save_clicked",
-    message: `Risk Yönetimi save isteği — profile=${parsed.profile ?? "(no-change)"} capital=${parsed.capital?.totalCapitalUsdt ?? "(no-change)"}`,
+    message: `Risk save payload: ${payloadDigest}`,
   });
   const result = await updateAndPersistRiskSettings(parsed);
   if (!result.ok) {
     if (result.stage === "validation") {
       await botLog({
         userId, level: "warn", eventType: "risk_settings_save_failed",
-        message: `Risk Yönetimi validation reddi: ${result.errors.join(" | ").slice(0, 200)}`,
+        message: `Risk validation reddi: ${result.errors.join(" | ").slice(0, 200)} | payload=${payloadDigest}`,
       });
       return fail("Geçersiz risk ayarı", 400, { errors: result.errors });
     }
     // Persistence failure must NOT silently report success.
     await botLog({
       userId, level: "error", eventType: "risk_settings_save_failed",
-      message: `Risk Yönetimi DB yazılamadı: ${result.errorSafe.slice(0, 200)}`,
+      message: `Risk DB yazılamadı: ${result.errorSafe.slice(0, 200)} | payload=${payloadDigest}`,
     });
     return fail("Risk ayarları kalıcı olarak kaydedilemedi", 500, {
       persistenceStatus: "error",
@@ -110,9 +125,17 @@ export async function PUT(req: Request) {
       settings: result.data,
     });
   }
+  const savedDigest = JSON.stringify({
+    p: result.data.profile,
+    cap: result.data.capital.totalCapitalUsdt,
+    risk: result.data.capital.riskPerTradePercent,
+    loss: result.data.capital.maxDailyLossPercent,
+    defPos: result.data.positions.defaultMaxOpenPositions,
+    dynCap: result.data.positions.dynamicMaxOpenPositionsCap,
+  });
   await botLog({
     userId, level: "info", eventType: "risk_settings_save_success",
-    message: `Risk Yönetimi kaydedildi — profile=${result.data.profile} capital=${result.data.capital.totalCapitalUsdt}`,
+    message: `Risk kaydedildi via=${result.via}: ${savedDigest}`,
   });
   return ok({
     settings: result.data,

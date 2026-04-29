@@ -221,7 +221,7 @@ export async function forceReloadFromDb(): Promise<{
  * Awaited persistence. Returns ok:false with safe error string on failure
  * — caller must surface this to the UI; it is no longer fire-and-forget.
  */
-async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number } | { ok: false; errorSafe: string }> {
+async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number; via: "rpc" | "fallback" } | { ok: false; errorSafe: string }> {
   if (!supabaseConfigured()) {
     return { ok: false, errorSafe: "Supabase not configured" };
   }
@@ -239,13 +239,30 @@ async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number
       p_settings: s as unknown as Record<string, unknown>,
     });
     if (!rpcRes.error && rpcRes.data != null) {
+      // Sanity check — the RPC should echo back what we sent. If the echoed
+      // capital differs from what we sent, persistence is corrupted somehow
+      // (silent JSONB transcoding, pre-trigger overwrite, etc.) and we must
+      // surface it instead of reporting phantom success.
+      const echoed = rpcRes.data as { capital?: { totalCapitalUsdt?: number } };
+      const expectedCap = s.capital.totalCapitalUsdt;
+      const echoedCap = echoed?.capital?.totalCapitalUsdt;
+      if (typeof echoedCap === "number" && echoedCap !== expectedCap) {
+        const errorSafe = `RPC echo mismatch: sent capital=${expectedCap} but DB returned capital=${echoedCap}`;
+        setStatus({
+          state: "fallback",
+          errorSafe,
+          lastSavedAt: persistenceStatus.lastSavedAt,
+          lastHydratedAt: persistenceStatus.lastHydratedAt,
+        });
+        return { ok: false, errorSafe };
+      }
       const savedAt = Date.now();
       setStatus({
         state: "ok",
         lastSavedAt: savedAt,
         lastHydratedAt: persistenceStatus.lastHydratedAt,
       });
-      return { ok: true, savedAt };
+      return { ok: true, savedAt, via: "rpc" };
     }
     let lastErr: string | null = rpcRes.error ? safeErr(rpcRes.error) : null;
 
@@ -297,13 +314,30 @@ async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number
       const hint = lastErr ? ` (last write error: ${lastErr})` : "";
       throw new Error(`DB write verified empty — risk_settings did not persist${hint}`);
     }
+    // Fallback echo check — same as the RPC primary path. If verify-read
+    // returns a different capital than what we just wrote, the upsert
+    // silently dropped the JSONB column and we're seeing the OLD value.
+    // Phantom success: must reject.
+    const echoedFallback = storedAfter as { capital?: { totalCapitalUsdt?: number } };
+    const expectedCapFallback = s.capital.totalCapitalUsdt;
+    const echoedCapFallback = echoedFallback?.capital?.totalCapitalUsdt;
+    if (typeof echoedCapFallback === "number" && echoedCapFallback !== expectedCapFallback) {
+      const errorSafe = `DB verify mismatch: sent capital=${expectedCapFallback} but DB has capital=${echoedCapFallback} — PostgREST muhtemelen risk_settings sütununu sessizce drop etti`;
+      setStatus({
+        state: "fallback",
+        errorSafe,
+        lastSavedAt: persistenceStatus.lastSavedAt,
+        lastHydratedAt: persistenceStatus.lastHydratedAt,
+      });
+      return { ok: false, errorSafe };
+    }
     const savedAt = Date.now();
     setStatus({
       state: "ok",
       lastSavedAt: savedAt,
       lastHydratedAt: persistenceStatus.lastHydratedAt,
     });
-    return { ok: true, savedAt };
+    return { ok: true, savedAt, via: "fallback" };
   } catch (e) {
     const errorSafe = safeErr(e);
     setStatus({
@@ -510,7 +544,7 @@ export function updateRiskSettings(
 export async function updateAndPersistRiskSettings(
   patch: RiskSettingsPatch,
 ): Promise<
-  | { ok: true; data: RiskSettings; savedAt: number }
+  | { ok: true; data: RiskSettings; savedAt: number; via: "rpc" | "fallback" }
   | { ok: false; stage: "validation"; errors: string[] }
   | { ok: false; stage: "persistence"; errorSafe: string; data: RiskSettings }
 > {
@@ -518,7 +552,7 @@ export async function updateAndPersistRiskSettings(
   if (!r.ok) return { ok: false, stage: "validation", errors: r.errors };
   const p = await persistToDb(r.data);
   if (!p.ok) return { ok: false, stage: "persistence", errorSafe: p.errorSafe, data: r.data };
-  return { ok: true, data: r.data, savedAt: p.savedAt };
+  return { ok: true, data: r.data, savedAt: p.savedAt, via: p.via };
 }
 
 /** Test-only helper. */
