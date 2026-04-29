@@ -204,6 +204,11 @@ describe("Phase 8 — empty state sade mesaj kullanır", () => {
   it("'Bu periyotta güçlü aday bulunamadı.' mesajı tabloda boşken gösterilir", () => {
     expect(SCANNER_PAGE).toMatch(/Bu periyotta güçlü aday bulunamadı\./);
   });
+
+  it("tickSkipped=true olduğunda 'Tarama atlandı' mesajına geçebilir", () => {
+    expect(SCANNER_PAGE).toMatch(/Tarama atlandı:/);
+    expect(SCANNER_PAGE).toMatch(/mapTickSkipReasonTr/);
+  });
 });
 
 // ── 10. TopBar heartbeat parse bug düzeltmesi ─────────────────────────
@@ -251,6 +256,16 @@ describe("Bugfix 1 — diagnostics stale flag", () => {
     expect(DIAGNOSTICS_ROUTE).toMatch(/analyzedSymbolsCount/);
     expect(DIAGNOSTICS_ROUTE).toMatch(/tradeMode/);
     expect(DIAGNOSTICS_ROUTE).toMatch(/executionMode/);
+  });
+
+  it("tick runtime görünürlük alanları response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/tickSkipped/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/skipReason/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/tickError/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/workerLockOwner/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/worker_id/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/tickStartedAt/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/tickCompletedAt/);
   });
 });
 
@@ -322,6 +337,11 @@ describe("Bugfix 1.1 — writeSkipSummary helper", () => {
   it("workerLockOwner alanı yazılıyor", () => {
     expect(ORCHESTRATOR).toMatch(/workerLockOwner/);
   });
+
+  it("tickStartedAt ve tickCompletedAt alanları yazılıyor", () => {
+    expect(ORCHESTRATOR).toMatch(/tickStartedAt/);
+    expect(ORCHESTRATOR).toMatch(/tickCompletedAt/);
+  });
 });
 
 // ── 15. Bugfix 1.1 — early return path'ler summary yazıyor ───────────
@@ -373,6 +393,11 @@ describe("Bugfix 1.1 — worker error summary", () => {
     // Worker catch içinde diagnostics write kendi try-catch'i içinde
     expect(WORKER).toMatch(/diagnostics-only, non-fatal/);
   });
+
+  it("worker error summary tickStartedAt ve tickCompletedAt alanlarını da yazar", () => {
+    expect(WORKER).toMatch(/tickStartedAt/);
+    expect(WORKER).toMatch(/tickCompletedAt/);
+  });
 });
 
 // ── 17. Bugfix 1.1 — trade logic ve invariantler korunmuş ────────────
@@ -405,5 +430,134 @@ describe("Bugfix 1.1 — invariantler korunmuş", () => {
     expect(helperBody).not.toMatch(/openPaperTrade/);
     expect(helperBody).not.toMatch(/generateSignal/);
     expect(helperBody).not.toMatch(/evaluateRisk/);
+  });
+});
+
+// ── 18. Bugfix 1.2 — diagnostics response tickSkipped alanları ────────
+describe("Bugfix 1.2 — diagnostics tickSkipped alanları", () => {
+  it("tickSkipped response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/tickSkipped/);
+  });
+
+  it("skipReason response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/skipReason/);
+  });
+
+  it("tickError response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/tickError/);
+  });
+
+  it("workerLockOwner response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/workerLockOwner/);
+  });
+
+  it("tickStartedAt ve tickCompletedAt response'a eklendi", () => {
+    expect(DIAGNOSTICS_ROUTE).toMatch(/tickStartedAt/);
+    expect(DIAGNOSTICS_ROUTE).toMatch(/tickCompletedAt/);
+  });
+});
+
+// ── 19. Bugfix 1.2 — labels.ts mapTickSkipReasonTr mapping ───────────
+describe("Bugfix 1.2 — skipReason Türkçe mapping (labels.ts)", () => {
+  const LABELS = read("src/lib/dashboard/labels.ts");
+
+  it("mapTickSkipReasonTr fonksiyonu mevcut", () => {
+    expect(LABELS).toMatch(/function mapTickSkipReasonTr/);
+  });
+
+  it("normalizeTickSkipReason fonksiyonu mevcut", () => {
+    expect(LABELS).toMatch(/function normalizeTickSkipReason/);
+  });
+
+  it("tüm Türkçe mapping'ler mevcut", () => {
+    expect(LABELS).toMatch(/Bot duraklatıldı/);
+    expect(LABELS).toMatch(/Günlük hedef doldu/);
+    expect(LABELS).toMatch(/Günlük zarar limiti doldu/);
+    expect(LABELS).toMatch(/Strateji sağlık kontrolü engelledi/);
+    expect(LABELS).toMatch(/Maksimum açık pozisyon dolu/);
+    expect(LABELS).toMatch(/Worker lock sahibi değil/);
+  });
+
+  it("buildTickRuntimeNotice fonksiyonu mevcut", () => {
+    expect(LABELS).toMatch(/function buildTickRuntimeNotice/);
+  });
+
+  it("tickSkipped=true → warning notice üretir", () => {
+    expect(LABELS).toMatch(/Son tick atlandı/);
+  });
+
+  it("tickError → danger notice üretir", () => {
+    expect(LABELS).toMatch(/Son tick hatası/);
+  });
+});
+
+// ── 20. Bugfix 1.2 — BotStatusCard tickRuntimeNotice render ──────────
+describe("Bugfix 1.2 — BotStatusCard tickRuntimeNotice render", () => {
+  const CARDS = read("src/components/dashboard/Cards.tsx");
+
+  it("BotStatusCard tickSkipped/skipReason/tickError input alıyor", () => {
+    expect(CARDS).toMatch(/tickSkipped/);
+    expect(CARDS).toMatch(/skipReason/);
+    expect(CARDS).toMatch(/tickError/);
+  });
+
+  it("buildTickRuntimeNotice kullanılıyor", () => {
+    expect(CARDS).toMatch(/buildTickRuntimeNotice/);
+  });
+
+  it("tickRuntimeNotice varsa UI'da gösteriliyor", () => {
+    expect(CARDS).toMatch(/tickRuntimeNotice/);
+    expect(CARDS).toMatch(/tickRuntimeNotice\.message/);
+  });
+
+  it("warning ve danger tone'ları destekleniyor", () => {
+    expect(CARDS).toMatch(/text-warning/);
+    expect(CARDS).toMatch(/text-danger/);
+  });
+});
+
+// ── 21. Bugfix 1.2 — Scanner tickSkipped empty state ─────────────────
+describe("Bugfix 1.2 — Scanner tickSkipped boş tablo mesajı", () => {
+  it("tickSkipped=true için 'Tarama atlandı' mesajı gösteriliyor", () => {
+    expect(SCANNER_PAGE).toMatch(/Tarama atlandı/);
+  });
+
+  it("mapTickSkipReasonTr scanner'da kullanılıyor", () => {
+    expect(SCANNER_PAGE).toMatch(/mapTickSkipReasonTr/);
+  });
+
+  it("Tarama Akışı ve Görünürlük blokları geri gelmedi", () => {
+    expect(SCANNER_PAGE).not.toMatch(/Tarama Akışı/);
+    expect(SCANNER_PAGE).not.toMatch(/Görünürlük/);
+  });
+
+  it("aktif mod özeti geri gelmedi", () => {
+    expect(SCANNER_PAGE).not.toMatch(/ScanModesSummary/);
+    expect(SCANNER_PAGE).not.toMatch(/wideMarket\.active/);
+  });
+});
+
+// ── 22. Bugfix 1.2 — invariantler değişmedi ─────────────────────────
+describe("Bugfix 1.2 — trade & live gate invariantleri", () => {
+  it("MIN_SIGNAL_CONFIDENCE=70 korunmuş", () => {
+    const eng = read("src/lib/engines/signal-engine.ts");
+    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+  });
+
+  it("HARD_LIVE_TRADING_ALLOWED=false korunmuş", () => {
+    const env = read("src/lib/env.ts");
+    expect(env).toMatch(/HARD_LIVE_TRADING_ALLOWED.*false/);
+  });
+
+  it("labels.ts içinde Binance API çağrısı yok", () => {
+    const LABELS = read("src/lib/dashboard/labels.ts");
+    expect(LABELS).not.toMatch(/fapi\.binance\.com/);
+    expect(LABELS).not.toMatch(/api\.binance\.com/);
+  });
+
+  it("cards içinde canlı trading açılmıyor", () => {
+    const CARDS = read("src/components/dashboard/Cards.tsx");
+    expect(CARDS).not.toMatch(/enable_live_trading\s*=\s*true/);
+    expect(CARDS).not.toMatch(/HARD_LIVE_TRADING_ALLOWED\s*=\s*true/);
   });
 });

@@ -374,22 +374,25 @@ const PAPER_BALANCE = 1000;
 async function writeSkipSummary(
   userId: string,
   wCtx: WorkerContext | undefined,
-  skipReason: string
+  skipReason: string,
+  tickStartedAt: string,
 ): Promise<void> {
   if (wCtx?.isLockOwner === false) return;
   if (!supabaseConfigured()) return;
-  const generatedAt = new Date().toISOString();
+  const tickCompletedAt = new Date().toISOString();
   try {
     await supabaseAdmin().from("bot_settings").update({
-      last_tick_at: generatedAt,
+      last_tick_at: tickCompletedAt,
       last_tick_summary: {
-        at: generatedAt,
-        generatedAt,
+        at: tickCompletedAt,
+        generatedAt: tickCompletedAt,
         tickSkipped: true,
         skipReason,
         tickError: null,
         workerLockOwner: wCtx?.isLockOwner ?? true,
         worker_id: wCtx?.workerId ?? null,
+        tickStartedAt,
+        tickCompletedAt,
       },
     }).eq("user_id", userId);
   } catch { /* diagnostics-only, non-fatal */ }
@@ -536,6 +539,7 @@ export interface WorkerContext {
 
 export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; symbols?: string[]; workerContext?: WorkerContext }): Promise<TickResult> {
   const start = Date.now();
+  const tickStartedAt = new Date(start).toISOString();
   const result: TickResult = {
     ok: false,
     scannedSymbols: [],
@@ -562,7 +566,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     result.reason = `Bot durumu: ${settings.bot_status}`;
     result.durationMs = Date.now() - start;
     await botLog({ userId, eventType: "tick_skipped", message: result.reason });
-    await writeSkipSummary(userId, opts?.workerContext, `bot_not_running:${settings.bot_status}`);
+    await writeSkipSummary(userId, opts?.workerContext, `bot_not_running:${settings.bot_status}`, tickStartedAt);
     return result;
   }
 
@@ -724,7 +728,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     result.reason = "daily_target_hit";
     result.durationMs = Date.now() - start;
     await botLog({ userId, eventType: "tick_completed", message: "Tick tamamlandı — günlük hedef doldu, işlem yok", metadata: { ...summary(result) } });
-    await writeSkipSummary(userId, opts?.workerContext, "daily_target_hit");
+    await writeSkipSummary(userId, opts?.workerContext, "daily_target_hit", tickStartedAt);
     return result;
   }
   if (daily.lossLimitHit) {
@@ -732,7 +736,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     result.reason = "daily_loss_limit_hit";
     result.durationMs = Date.now() - start;
     await botLog({ userId, level: "warn", eventType: "tick_completed", message: "Tick — günlük zarar limiti, bot duraklatıldı" });
-    await writeSkipSummary(userId, opts?.workerContext, "daily_loss_limit_hit");
+    await writeSkipSummary(userId, opts?.workerContext, "daily_loss_limit_hit", tickStartedAt);
     return result;
   }
 
@@ -747,7 +751,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       message: `Tick — strateji sağlık gate reddetti: ${strategyHealth.blockReason}`,
       metadata: { score: strategyHealth.score, totalTrades: strategyHealth.totalTrades },
     });
-    await writeSkipSummary(userId, opts?.workerContext, `strategy_health_blocked:${strategyHealth.blockReason ?? "unknown"}`);
+    await writeSkipSummary(userId, opts?.workerContext, `strategy_health_blocked:${strategyHealth.blockReason ?? "unknown"}`, tickStartedAt);
     return result;
   }
 
@@ -759,7 +763,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     result.reason = "max_open_positions";
     result.durationMs = Date.now() - start;
     await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}) doldu` });
-    await writeSkipSummary(userId, opts?.workerContext, "max_open_positions");
+    await writeSkipSummary(userId, opts?.workerContext, "max_open_positions", tickStartedAt);
     return result;
   }
 
@@ -1175,7 +1179,13 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   const lastTickSummary = {
     at: generatedAt,
     generated_at: generatedAt,
+    tickSkipped: false,
+    skipReason: null,
+    tickError: null,
+    workerLockOwner: wCtx?.isLockOwner ?? true,
     worker_id:    wCtx?.workerId    ?? null,
+    tickStartedAt,
+    tickCompletedAt: generatedAt,
     container_id: wCtx?.containerId ?? null,
     git_commit:   wCtx?.gitCommit   ?? null,
     process_pid:  wCtx?.processPid  ?? null,

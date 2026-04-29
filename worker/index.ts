@@ -127,6 +127,7 @@ async function heartbeatLoop() {
 
 async function tickLoop() {
   while (!stopping) {
+    let tickStartedAt: string | null = null;
     try {
       if (!isLockOwner) {
         // Another worker holds the active lock — skip tick, stay quiet.
@@ -140,6 +141,7 @@ async function tickLoop() {
         continue;
       }
       const userId = getCurrentUserId();
+      tickStartedAt = new Date().toISOString();
       const result = await tickBot(userId, {
         workerContext: {
           workerId:    WORKER_ID,
@@ -192,17 +194,19 @@ async function tickLoop() {
       try {
         if (supabaseConfigured()) {
           const _userId = getCurrentUserId();
-          const generatedAt = new Date().toISOString();
+          const tickCompletedAt = new Date().toISOString();
           await supabaseAdmin().from("bot_settings").update({
-            last_tick_at: generatedAt,
+            last_tick_at: tickCompletedAt,
             last_tick_summary: {
-              at: generatedAt,
-              generatedAt,
+              at: tickCompletedAt,
+              generatedAt: tickCompletedAt,
               tickSkipped: false,
               skipReason: null,
               tickError: String(e?.message ?? e).slice(0, 500),
               workerLockOwner: isLockOwner,
               worker_id: WORKER_ID,
+              tickStartedAt: tickStartedAt ?? tickCompletedAt,
+              tickCompletedAt,
             },
           }).eq("user_id", _userId);
         }

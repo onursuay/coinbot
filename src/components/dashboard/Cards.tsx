@@ -13,6 +13,7 @@ import {
   decisionClass,
   mapSourceLabel,
   buildReasonText,
+  buildTickRuntimeNotice,
   distanceToThreshold,
   SIGNAL_THRESHOLD,
   type DecisionLabel,
@@ -34,6 +35,9 @@ export interface BotStatusInput {
   binance_api_status?: string | null;
   websocket_status?: string | null;
   last_tick_at?: string | null;
+  tickSkipped?: boolean | null;
+  skipReason?: string | null;
+  tickError?: string | null;
   kill_switch_active?: boolean;
   kill_switch_reason?: string | null;
   busy?: boolean;
@@ -65,6 +69,11 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
   const lastTickLabel = data.last_tick_at
     ? `${Math.max(0, Math.round((Date.now() - new Date(data.last_tick_at).getTime()) / 1000))}s önce`
     : "—";
+  const tickRuntimeNotice = buildTickRuntimeNotice({
+    tickSkipped: data.tickSkipped,
+    skipReason: data.skipReason,
+    tickError: data.tickError,
+  });
 
   return (
     <div className={`card border ${
@@ -92,6 +101,16 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
       {isKillSwitch && data.kill_switch_reason && (
         <div className="mt-3 rounded-lg border border-danger/50 bg-danger/10 px-3 py-2 text-xs text-danger">
           Kill switch sebebi: {data.kill_switch_reason}
+        </div>
+      )}
+
+      {tickRuntimeNotice && (
+        <div className={`mt-3 rounded-lg px-3 py-2 text-xs ${
+          tickRuntimeNotice.tone === "danger"
+            ? "border border-danger/40 bg-danger/10 text-danger"
+            : "border border-warning/30 bg-warning/10 text-warning"
+        }`}>
+          {tickRuntimeNotice.message}
         </div>
       )}
 

@@ -485,11 +485,73 @@ describe("diagnostics endpoint read-only", () => {
     const body = await response.json();
 
     expect(body.ok).toBe(true);
+    expect(body.data.tickSkipped).toBe(false);
+    expect(body.data.skipReason).toBeNull();
+    expect(body.data.tickError).toBeNull();
+    expect(body.data.workerLockOwner).toBeNull();
+    expect(body.data.worker_id).toBeNull();
+    expect(body.data.tickStartedAt).toBeNull();
+    expect(body.data.tickCompletedAt).toBeNull();
     expect(mock.botSettingsState.is_active).toBe(true);
     expect(mock.mutationSpies.insert).not.toHaveBeenCalled();
     expect(mock.mutationSpies.update).not.toHaveBeenCalled();
     expect(mock.mutationSpies.upsert).not.toHaveBeenCalled();
     expect(mock.mutationSpies.delete).not.toHaveBeenCalled();
+  });
+
+  it("GET /api/bot/diagnostics exposes tick skip runtime fields from last_tick_summary", async () => {
+    const mock = createSupabaseReadOnlyMock();
+    (mock.botSettingsState as any).last_tick_summary = {
+      tickSkipped: true,
+      skipReason: "strategy_health_blocked:score_low",
+      tickError: null,
+      workerLockOwner: true,
+      worker_id: "vps-prod-1",
+      tickStartedAt: "2026-04-29T10:00:00.000Z",
+      tickCompletedAt: "2026-04-29T10:00:05.000Z",
+    };
+    (mock.botSettingsState as any).last_tick_at = "2026-04-29T10:00:05.000Z";
+
+    vi.doMock("@/lib/supabase/server", () => ({
+      supabaseConfigured: () => true,
+      supabaseAdmin: mock.supabaseAdmin,
+    }));
+    vi.doMock("@/lib/auth", () => ({ getCurrentUserId: () => "test-user" }));
+    vi.doMock("@/lib/engines/heartbeat", () => ({
+      getWorkerHealth: async () => ({
+        online: true,
+        workerId: "test-worker",
+        status: "running_paper",
+        lastHeartbeat: new Date().toISOString(),
+        ageMs: 1000,
+        websocketStatus: "connected",
+        binanceApiStatus: "unknown",
+        openPositionsCount: 0,
+        lastError: null,
+      }),
+    }));
+    vi.doMock("@/lib/engines/live-readiness", () => ({
+      checkLiveReadiness: async () => ({
+        ready: false,
+        paperTradesCompleted: 0,
+        paperTradesRequired: 100,
+        blockers: [],
+        checks: [],
+      }),
+    }));
+
+    const { GET } = await import("@/app/api/bot/diagnostics/route");
+    const response = await GET();
+    const body = await response.json();
+
+    expect(body.ok).toBe(true);
+    expect(body.data.tickSkipped).toBe(true);
+    expect(body.data.skipReason).toBe("strategy_health_blocked:score_low");
+    expect(body.data.tickError).toBeNull();
+    expect(body.data.workerLockOwner).toBe(true);
+    expect(body.data.worker_id).toBe("vps-prod-1");
+    expect(body.data.tickStartedAt).toBe("2026-04-29T10:00:00.000Z");
+    expect(body.data.tickCompletedAt).toBe("2026-04-29T10:00:05.000Z");
   });
 
   it("POST /api/bot/diagnostics is rejected and does not mutate bot_settings.is_active", async () => {

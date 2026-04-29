@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
+import { mapTickSkipReasonTr } from "@/lib/dashboard/labels";
 
 // ── Tipler ─────────────────────────────────────────────────────────────
 type DirectionCandidate = "LONG_CANDIDATE" | "SHORT_CANDIDATE" | "MIXED" | "NONE";
@@ -73,6 +74,9 @@ interface ScanRow {
 interface DiagData {
   active_exchange: string;
   scan_details: ScanRow[];
+  tickSkipped?: boolean;
+  skipReason?: string | null;
+  tickError?: string | null;
   diagnosticsStale?: boolean;
   diagnosticsAgeSec?: number | null;
 }
@@ -280,6 +284,9 @@ export default function ScannerPage() {
   const exchange = data?.active_exchange ?? "binance";
   const advColumns = ADV_COLUMNS.filter((c) => isAdvVisible(c.key));
   const isStale = data?.diagnosticsStale === true;
+  const emptyStateMessage = data?.tickSkipped === true
+    ? `Tarama atlandı: ${mapTickSkipReasonTr(data.skipReason)}`
+    : "Bu periyotta güçlü aday bulunamadı.";
 
   return (
     <div className="space-y-4">
@@ -304,8 +311,10 @@ export default function ScannerPage() {
       )}
 
       {data && rows.length === 0 && (
-        <div className="card text-muted text-sm text-center py-6">
-          Bu periyotta güçlü aday bulunamadı.
+        <div className="card text-muted text-center py-6">
+          <span className={data.tickSkipped === true ? "text-xs" : "text-sm"}>
+            {emptyStateMessage}
+          </span>
         </div>
       )}
 

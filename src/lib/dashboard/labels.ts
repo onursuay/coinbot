@@ -134,3 +134,76 @@ export function distanceToThreshold(opts: {
   if (score <= 0) return null;
   return Math.max(0, SIGNAL_THRESHOLD - score);
 }
+
+export type TickSkipReasonCode =
+  | "bot_paused"
+  | "daily_target_hit"
+  | "daily_loss_limit"
+  | "strategy_health_blocked"
+  | "max_positions_reached"
+  | "worker_lock_not_owner"
+  | "unknown";
+
+export function normalizeTickSkipReason(skipReason?: string | null): TickSkipReasonCode {
+  if (!skipReason) return "unknown";
+  if (skipReason.startsWith("bot_not_running:")) return "bot_paused";
+  if (skipReason === "daily_target_hit") return "daily_target_hit";
+  if (skipReason === "daily_loss_limit" || skipReason === "daily_loss_limit_hit") return "daily_loss_limit";
+  if (skipReason.startsWith("strategy_health_blocked")) return "strategy_health_blocked";
+  if (skipReason === "max_positions_reached" || skipReason === "max_open_positions") return "max_positions_reached";
+  if (skipReason === "worker_lock_not_owner") return "worker_lock_not_owner";
+  return "unknown";
+}
+
+export function mapTickSkipReasonTr(skipReason?: string | null): string {
+  switch (normalizeTickSkipReason(skipReason)) {
+    case "bot_paused":
+      return "Bot duraklatıldı";
+    case "daily_target_hit":
+      return "Günlük hedef doldu";
+    case "daily_loss_limit":
+      return "Günlük zarar limiti doldu";
+    case "strategy_health_blocked":
+      return "Strateji sağlık kontrolü engelledi";
+    case "max_positions_reached":
+      return "Maksimum açık pozisyon dolu";
+    case "worker_lock_not_owner":
+      return "Worker lock sahibi değil";
+    case "unknown":
+    default:
+      return "Bilinmeyen sebep";
+  }
+}
+
+function shortTickError(tickError?: string | null): string | null {
+  if (!tickError) return null;
+  const compact = tickError.split("\n")[0]?.trim() ?? "";
+  if (!compact) return null;
+  return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
+}
+
+export interface TickRuntimeNotice {
+  tone: "warning" | "danger";
+  message: string;
+}
+
+export function buildTickRuntimeNotice(args: {
+  tickSkipped?: boolean | null;
+  skipReason?: string | null;
+  tickError?: string | null;
+}): TickRuntimeNotice | null {
+  const errorText = shortTickError(args.tickError);
+  if (errorText) {
+    return {
+      tone: "danger",
+      message: `Son tick hatası: ${errorText}`,
+    };
+  }
+  if (args.tickSkipped === true) {
+    return {
+      tone: "warning",
+      message: `Son tick atlandı: ${mapTickSkipReasonTr(args.skipReason)}`,
+    };
+  }
+  return null;
+}

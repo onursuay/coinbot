@@ -15,6 +15,8 @@ import {
   mapDecisionLabel,
   mapSourceLabel,
   buildReasonText,
+  mapTickSkipReasonTr,
+  buildTickRuntimeNotice,
   distanceToThreshold,
   SIGNAL_THRESHOLD,
 } from "@/lib/dashboard/labels";
@@ -51,6 +53,17 @@ describe("Phase 9 — Bot Durumu kartı operasyonel; mod/paper etiketi yok", () 
 
   it("ACİL DURDUR butonu korunmuş", () => {
     expect(CARDS).toMatch(/ACİL DURDUR/);
+  });
+
+  it("tick runtime helper'ını kullanıp kart içinde uyarı render eder", () => {
+    expect(CARDS).toMatch(/buildTickRuntimeNotice/);
+    expect(CARDS).toMatch(/tickRuntimeNotice\.message/);
+  });
+
+  it("HomePage diagnostics tick runtime alanlarını BotStatusCard'a geçirir", () => {
+    expect(PAGE).toMatch(/tickSkipped:\s*diagnostics\?\.tickSkipped/);
+    expect(PAGE).toMatch(/skipReason:\s*diagnostics\?\.skipReason/);
+    expect(PAGE).toMatch(/tickError:\s*diagnostics\?\.tickError/);
   });
 });
 
@@ -195,6 +208,37 @@ describe("Phase 9 — sebep metni Türkçeleştirilir", () => {
     const text = buildReasonText({ waitReasonCodes: ["MACD_CONFLICT", "VOLUME_WEAK"] });
     expect(text).toMatch(/MACD uyumsuz/);
     expect(text).toMatch(/Hacim zayıf/);
+  });
+});
+
+// ── 7b. Tick skip / error mapping ─────────────────────────────────────
+describe("Bugfix 1.2 — tick skip visibility mapping", () => {
+  it("raw skipReason değerleri Türkçe kısa etikete maplenir", () => {
+    expect(mapTickSkipReasonTr("bot_not_running:paused")).toBe("Bot duraklatıldı");
+    expect(mapTickSkipReasonTr("daily_target_hit")).toBe("Günlük hedef doldu");
+    expect(mapTickSkipReasonTr("daily_loss_limit_hit")).toBe("Günlük zarar limiti doldu");
+    expect(mapTickSkipReasonTr("strategy_health_blocked:score_low")).toBe("Strateji sağlık kontrolü engelledi");
+    expect(mapTickSkipReasonTr("max_open_positions")).toBe("Maksimum açık pozisyon dolu");
+    expect(mapTickSkipReasonTr("worker_lock_not_owner")).toBe("Worker lock sahibi değil");
+    expect(mapTickSkipReasonTr("something_else")).toBe("Bilinmeyen sebep");
+  });
+
+  it("dashboard notice builder tick error ve tick skipped durumlarını üretir", () => {
+    expect(buildTickRuntimeNotice({
+      tickSkipped: true,
+      skipReason: "daily_target_hit",
+    })).toEqual({
+      tone: "warning",
+      message: "Son tick atlandı: Günlük hedef doldu",
+    });
+
+    expect(buildTickRuntimeNotice({
+      tickSkipped: false,
+      tickError: "boom\nstack",
+    })).toEqual({
+      tone: "danger",
+      message: "Son tick hatası: boom",
+    });
   });
 });
 
