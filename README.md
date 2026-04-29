@@ -169,6 +169,14 @@ Bu altyapı sermaye koruması üzerine kuruludur. Live trading açık olsa bile:
 
 ---
 
+## Dokümantasyon
+
+- [docs/PROJECT_RULES.md](docs/PROJECT_RULES.md) — Projenin değişmez ana kuralları.
+- [docs/BINANCE_API_GUARDRAILS.md](docs/BINANCE_API_GUARDRAILS.md) — **Değişmez mimari kural**: Binance API rate limit, weight, cache, queue, circuit breaker ve yasak kullanım kuralları. Binance ile temas eden her PR bu dokümandaki faz kontrol listesini geçmeden merge edilmez.
+- [docs/WORKER_AUTO_DEPLOY.md](docs/WORKER_AUTO_DEPLOY.md) — Worker VPS otomatik deploy süreci.
+
+---
+
 ## Lisans
 
 MIT (özel kullanım için uyarlayın).
