@@ -868,3 +868,152 @@ function Gauge({ label, value, hint, tone }: {
 }
 
 export type { Tone };
+
+// ── Faz 22 — TRADE DENETİMİ VE RİSK KALİBRASYONU ────────────────────────────
+//
+// Altı bölüm: RİSK · STOP-LOSS · POZİSYON BÜYÜKLÜĞÜ · EŞİK · KAÇAN FIRSAT · KALDIRAÇ
+// Aksiyon butonları bu fazda gerçek ayar değiştirmez; sadece callback üretir.
+// appliedToTradeEngine daima false.
+
+export interface TradeAuditSectionData {
+  tag: string;
+  mainFinding: string;
+  recommendation: string;
+  severity: "info" | "warning" | "critical";
+}
+
+export interface TradeAuditCardInput {
+  status: "HEALTHY" | "WATCH" | "ATTENTION_NEEDED" | "DATA_INSUFFICIENT";
+  tradeMode: "paper" | "live";
+  actionType: string;
+  confidence: number;
+  requiresUserApproval: boolean;
+  observeDays: number;
+  riskSection: TradeAuditSectionData;
+  stopLossSection: TradeAuditSectionData;
+  positionSizingSection: TradeAuditSectionData;
+  thresholdSection: TradeAuditSectionData;
+  missedOpportunitySection: TradeAuditSectionData;
+  leverageSection: TradeAuditSectionData;
+}
+
+const AUDIT_STATUS_LABEL: Record<string, string> = {
+  HEALTHY: "SAĞLIKLI",
+  WATCH: "GÖZLEM",
+  ATTENTION_NEEDED: "DİKKAT",
+  DATA_INSUFFICIENT: "VERİ YETERSİZ",
+};
+
+const AUDIT_STATUS_TONE: Record<string, Tone> = {
+  HEALTHY: "success",
+  WATCH: "warning",
+  ATTENTION_NEEDED: "danger",
+  DATA_INSUFFICIENT: "muted",
+};
+
+const SEVERITY_TONE: Record<string, Tone> = {
+  info: "muted",
+  warning: "warning",
+  critical: "danger",
+};
+
+const SECTION_LABEL: Record<string, string> = {
+  risk: "RİSK",
+  stopLoss: "STOP-LOSS",
+  positionSizing: "POZİSYON BÜYÜKLÜĞÜ",
+  threshold: "EŞİK",
+  missedOpportunity: "KAÇAN FIRSAT",
+  leverage: "KALDIRAÇ",
+};
+
+function AuditSection({ id, data }: { id: string; data: TradeAuditSectionData }) {
+  const tone = SEVERITY_TONE[data.severity] ?? "muted";
+  return (
+    <div className="rounded-lg border border-border bg-bg-soft px-3 py-2">
+      <div className={`text-[10px] uppercase tracking-wider ${
+        tone === "warning" ? "text-warning" : tone === "danger" ? "text-danger" : "text-muted"
+      }`}>{SECTION_LABEL[id] ?? id}</div>
+      <div className="mt-0.5 text-xs font-medium text-slate-200 leading-snug">{data.mainFinding}</div>
+      <div className="mt-0.5 text-[10px] text-muted leading-snug">{data.recommendation}</div>
+      {data.tag && (
+        <span className={`mt-1 inline-block text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded ${
+          tone === "danger" ? "bg-danger/10 text-danger" :
+          tone === "warning" ? "bg-warning/10 text-warning" : "bg-bg-soft text-muted"
+        }`}>{data.tag}</span>
+      )}
+    </div>
+  );
+}
+
+export function TradeAuditCard({
+  data,
+  onAction,
+}: {
+  data: TradeAuditCardInput | null;
+  onAction?: (action: "APPROVE" | "REJECT" | "OBSERVE" | "PROMPT", actionId: string) => void;
+}) {
+  const empty = !data;
+  const status = data?.status ?? "DATA_INSUFFICIENT";
+  const statusTone = AUDIT_STATUS_TONE[status] ?? "muted";
+  const tradeModeLabel = data?.tradeMode === "live" ? "CANLI" : "PAPER";
+  const isActionable =
+    !empty &&
+    data!.actionType !== "NO_ACTION" &&
+    data!.actionType !== "DATA_INSUFFICIENT";
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <h2 className="font-semibold tracking-wide">TRADE DENETİMİ VE RİSK KALİBRASYONU</h2>
+        <div className="flex items-center gap-2">
+          <Pill tone="muted">MOD: {tradeModeLabel}</Pill>
+          <Pill tone={statusTone}>{AUDIT_STATUS_LABEL[status]}</Pill>
+          {!empty && data!.confidence > 0 && (
+            <Pill tone="accent">GÜVEN: %{Math.round(data!.confidence)}</Pill>
+          )}
+        </div>
+      </div>
+
+      {empty ? (
+        <p className="text-sm text-muted">
+          Yeterli işlem verisi oluşmadı. Gözlem devam ediyor.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          <AuditSection id="risk" data={data!.riskSection} />
+          <AuditSection id="stopLoss" data={data!.stopLossSection} />
+          <AuditSection id="positionSizing" data={data!.positionSizingSection} />
+          <AuditSection id="threshold" data={data!.thresholdSection} />
+          <AuditSection id="missedOpportunity" data={data!.missedOpportunitySection} />
+          <AuditSection id="leverage" data={data!.leverageSection} />
+        </div>
+      )}
+
+      {isActionable && (
+        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
+          {(["APPROVE", "REJECT", "OBSERVE", "PROMPT"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => onAction?.(k, `trade-audit-${data!.actionType}`)}
+              className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
+              data-action-kind={k}
+            >
+              {k === "APPROVE" ? "ONAYLA"
+                : k === "REJECT" ? "REDDET"
+                : k === "OBSERVE" ? `GÖZLEM (${data!.observeDays || 7}g)`
+                : "PROMPT"}
+            </button>
+          ))}
+          <span className="ml-auto text-[10px] uppercase tracking-wider text-muted self-center">
+            Butonlar yalnızca öneri kaydeder; ayar değiştirmez.
+          </span>
+        </div>
+      )}
+
+      <p className="mt-2 text-[10px] text-muted">
+        Bilgilendirme/karar destek — trade engine ayarı, sinyal eşiği veya risk ayarı bu kart tarafından değiştirilmez.
+      </p>
+    </div>
+  );
+}

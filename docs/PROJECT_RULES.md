@@ -1527,6 +1527,92 @@ Bu fazda bu aksiyon yalnızca öneri/metadata; gerçek emir yoktur.
 
 ---
 
+## Faz 22 — Trade Denetimi ve Risk Kalibrasyonu
+
+**Amaç:** Paper/live ortak trade lifecycle'ındaki açılan/kapanan işlemleri,
+kaçan fırsatları, SL/TP kalitesini, risk yüzdesini, pozisyon büyüklüğünü,
+max/min limitleri ve kaldıraç aralıklarını denetleyen analiz motoru.
+
+### Temel Kural (DEĞİŞMEZ)
+
+Bu faz analiz, sınıflandırma, kalibrasyon önerisi ve karar kartı verisi
+üretir. **Hiçbir ayarı otomatik değiştirmez.**
+
+### Modül Yapısı
+
+`src/lib/trade-audit/` — saf fonksiyonlar; external I/O yok.
+
+| Dosya | Açıklama |
+|---|---|
+| `types.ts` | Tüm tip tanımları (`TradeAuditInput`, `TradeAuditReport`, `TradeAuditSummary` + tüm tag tipleri) |
+| `trade-quality.ts` | İşlem kalite incelemesi: `GOOD_TRADE`, `ACCEPTABLE_LOSS`, `BAD_ENTRY`, `EARLY_STOP_SUSPECT`, `BAD_RR`, `EXIT_TOO_EARLY`, `MISSED_PROFIT_PROTECTION`, `DATA_INSUFFICIENT` |
+| `stop-loss-audit.ts` | SL denetimi: `NORMAL_STOP`, `EARLY_STOP_SUSPECT`, `SL_TOO_TIGHT`, `SL_TOO_WIDE`, `WICK_STOP_SUSPECT`, `SPREAD_SLIPPAGE_SUSPECT`, `DATA_INSUFFICIENT` |
+| `take-profit-audit.ts` | TP/çıkış denetimi: `NORMAL_TP`, `TP_TOO_CLOSE`, `TP_TOO_FAR`, `EXIT_TOO_EARLY`, `MISSED_TRAILING_STOP`, `MISSED_PARTIAL_TP`, `DATA_INSUFFICIENT` |
+| `risk-calibration.ts` | Risk % değerlendirmesi: `KEEP`, `OBSERVE`, `REDUCE_RISK`, `INCREASE_RISK`, `REVIEW_DAILY_LOSS`, `REVIEW_POSITION_SIZE`, `DATA_INSUFFICIENT` |
+| `position-sizing-audit.ts` | Pozisyon boyutu denetimi: `POSITION_SIZE_OK`, `POSITION_SIZE_TOO_LARGE`, `STOP_DISTANCE_INFLATED_NOTIONAL`, `CAPITAL_MISSING_FALLBACK_USED`, `DATA_INSUFFICIENT` |
+| `limit-calibration.ts` | Max pozisyon/günlük işlem limitleri: `KEEP_LIMITS`, `REVIEW_MAX_OPEN_POSITIONS`, `REVIEW_DYNAMIC_CAPACITY`, `REVIEW_MAX_DAILY_TRADES`, `OVERTRADE_RISK`, `DATA_INSUFFICIENT` |
+| `leverage-calibration.ts` | Kaldıraç aralığı değerlendirmesi: `KEEP_LEVERAGE_RANGE`, `REDUCE_MAX_LEVERAGE`, `OBSERVE_BEFORE_30X`, `BLOCK_30X`, `DATA_INSUFFICIENT` |
+| `missed-opportunity-audit.ts` | Kaçan fırsatlar: `MISSED_OPPORTUNITY_LOW/MODERATE/HIGH`, `THRESHOLD_TOO_STRICT_SUSPECT`, `FILTER_TOO_STRICT_SUSPECT`, `DATA_INSUFFICIENT` |
+| `threshold-calibration.ts` | 70 eşiği değerlendirmesi: `KEEP_70`, `OBSERVE_65_69`, `REVIEW_THRESHOLD_LATER`, `DO_NOT_LOWER`, `DATA_INSUFFICIENT` |
+| `summary.ts` | Genel karar kartı: `buildTradeAuditReport()` |
+| `index.ts` | Barrel export |
+
+### Read-only API endpoint
+
+`GET /api/trade-audit/summary?mode=paper|live|all`
+
+- Supabase `paper_trades` / `live_trades` + `bot_settings.last_tick_summary` okur.
+- **Binance API çağrısı YAPMAZ.** `/fapi/v1/order` ve `/fapi/v1/leverage` YOK.
+- Risk config'i `buildRiskExecutionConfig()` üzerinden okur; değiştirmez.
+- Veri yetersizse `DATA_INSUFFICIENT` ile güvenli fallback döner.
+
+### Dashboard kartı
+
+`TradeAuditCard` — 6 bölüm:
+- **RİSK** — risk % kalibrasyonu
+- **STOP-LOSS** — SL denetim özeti
+- **POZİSYON BÜYÜKLÜĞÜ** — position sizing denetimi
+- **EŞİK** — 70 eşiği performans değerlendirmesi
+- **KAÇAN FIRSAT** — filtre ve eşik kaynaklı kaçan fırsatlar
+- **KALDIRAÇ** — kaldıraç aralığı değerlendirmesi
+
+Aksiyon butonları (ONAYLA / REDDET / GÖZLEM / PROMPT) bu fazda gerçek
+ayar değiştirmez; yalnızca `onAction(kind, actionId)` callback üretir.
+
+### Temel İnvariantlar (Değişmez)
+
+- Trade Denetimi ve Risk Kalibrasyonu analiz/öneri üretir — ayarları otomatik değiştirmez.
+- SL/TP/risk/kaldıraç/threshold kararlarını yalnızca sınıflandırır.
+- `MIN_SIGNAL_CONFIDENCE=70` korunur; `liveThreshold` daima 70, `liveThresholdUnchanged` daima `true`.
+- 30x için yeterli performans verisi (`winRate ≥ 50`, `closedTrades ≥ 20`) gerekir.
+- Veri yoksa `DATA_INSUFFICIENT` döner — sahte sonuç üretmez.
+- `HARD_LIVE_TRADING_ALLOWED=false` korunur.
+- `DEFAULT_TRADING_MODE=paper` korunur.
+- `enable_live_trading=false` korunur.
+- `averageDownEnabled=false` invariantı korunur.
+- `openLiveOrder` hâlâ `LIVE_EXECUTION_NOT_IMPLEMENTED` döner.
+- Binance API Guardrails değişmez kuraldır.
+- `appliedToTradeEngine` daima `false`.
+
+### Bu fazda kesinlikle dokunulmadı
+
+- Canlı trading açılmadı.
+- Risk ayarları otomatik değiştirilmedi.
+- Stop-loss kuralı değiştirilmedi.
+- Trade signal threshold değiştirilmedi.
+- Kaldıraç execution eklenmedi.
+- Signal engine matematiği değiştirilmedi.
+- Worker lock korundu.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+İlgili dosyalar:
+- `src/lib/trade-audit/` — modül (11 dosya)
+- `src/app/api/trade-audit/summary/route.ts` — read-only endpoint
+- `src/components/dashboard/Cards.tsx` — `TradeAuditCard` eklendi
+- `src/__tests__/trade-audit-phase22.test.ts` — 48 test
+
+---
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
