@@ -1303,6 +1303,94 @@ adapter'dan gelecek.
 
 ---
 
+## Faz 19 — Risk Settings Execution Binding
+
+**Hedef:** Risk Yönetimi config'ini paper/live ortak risk lifecycle'a okunabilir
+hale getirmek. Bu faz canlı trading açmaz; kaldıraç execution yapmaz; zararda
+büyütme kilitli kalır.
+
+### Kalıcılık
+
+`bot_settings.risk_settings` JSONB kolonu (migration `0011_risk_settings_persistence.sql`).
+Store hâlâ in-memory'dir; `ensureHydrated()` ilk okumada Supabase'den
+rehydrate eder, `updateRiskSettings()` fire-and-forget persist eder. Supabase
+yoksa default'a düşer (mevcut davranış bozulmaz).
+
+### Modüller
+
+`src/lib/risk-settings/apply.ts`:
+- `getEffectiveRiskSettings()` — store snapshot
+- `buildRiskExecutionConfig()` — paper/live ortak risk execution config
+- `validateRiskExecutionConfig()` — invariant doğrulaması
+- `getRiskExecutionStatus()` — UI/diagnostics rozetleri
+
+API:
+- `GET /api/risk-settings/effective` — execution config + validation + status
+
+### RiskExecutionConfig alanları
+
+| Alan | Kaynak | Lifecycle'a bağlı mı? |
+|---|---|---|
+| `totalBotCapitalUsdt` | `capital.totalCapitalUsdt` | metadata (config-bound) |
+| `riskPerTradePercent` | `capital.riskPerTradePercent` | config-bound |
+| `dailyMaxLossPercent` | `capital.maxDailyLossPercent` | config-bound |
+| `defaultMaxOpenPositions` | `positions.defaultMaxOpenPositions` | config-bound |
+| `dynamicMaxOpenPositions` | `positions.dynamicMaxOpenPositionsCap` | metadata (default 3 uygulanır; dinamik üst sınır Opportunity Priority entegrasyonu beklenir) |
+| `maxDailyTrades` | `positions.maxDailyTrades` | config-bound |
+| `leverageRanges` | `leverage.{CC,GNMR,MNLST}` | **config-only — execution YOK** |
+| `longLeverageEnabled` / `shortLeverageEnabled` | `direction.*` | config-bound |
+| `stopLossMode` | `stopLoss.mode` | config-bound |
+| `progressiveManagementEnabled` | `tiered.scaleInProfitEnabled` | metadata |
+| `averageDownEnabled` | **DAİMA `false`** | **kilitli** |
+
+### Bağlama durumu (sabit)
+
+```
+riskConfigBound:        true
+liveExecutionBound:     false   // Faz 19 sabit
+leverageExecutionBound: false
+averageDownLocked:      true
+```
+
+### STANDART defaults (test invariant)
+
+- `riskPerTradePercent = 3`
+- `maxDailyLossPercent = 10`
+- `defaultMaxOpenPositions = 3`
+- `dynamicMaxOpenPositionsCap = 5`
+- `maxDailyTrades = 10`
+
+### UI
+
+`/risk` sayfasında küçük durum kartı (Faz 19): "CONFIG OKUNUYOR / CANLI EXECUTION
+KAPALI / KALDIRAÇ EXECUTION KAPALI / ZARARDA BÜYÜTME KİLİTLİ".
+
+### Bu fazda kesinlikle dokunulmadı
+
+- Canlı trading açılmadı (`HARD_LIVE_TRADING_ALLOWED=false` korundu).
+- `DEFAULT_TRADING_MODE=paper` korundu.
+- `enable_live_trading=false` korundu.
+- `MIN_SIGNAL_CONFIDENCE=70` korundu.
+- `/fapi/v1/order` çağrısı eklenmedi.
+- Kaldıraç execution eklenmedi (Binance position leverage set edilmiyor).
+- `openLiveOrder` hâlâ `LIVE_EXECUTION_NOT_IMPLEMENTED` döner.
+- Signal engine matematiği değişmedi.
+- Trade signal threshold değişmedi.
+- Worker lock korundu.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+İlgili dosyalar:
+- `src/lib/risk-settings/apply.ts`
+- `src/lib/risk-settings/store.ts` (hydrate + persist)
+- `src/lib/risk-settings/index.ts` (apply re-export)
+- `src/app/api/risk-settings/effective/route.ts`
+- `src/app/api/risk-settings/route.ts` (GET hidrate çağrısı eklendi)
+- `src/app/risk/page.tsx` (BindingStatus kartı)
+- `supabase/migrations/0011_risk_settings_persistence.sql`
+- `src/__tests__/risk-execution-binding-phase19.test.ts`
+
+---
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

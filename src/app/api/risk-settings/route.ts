@@ -4,6 +4,7 @@ import {
   getRiskSettings,
   updateRiskSettings,
   computeWarnings,
+  ensureHydrated,
 } from "@/lib/risk-settings";
 
 // Phase 10 — Risk Yönetimi config endpoint.
@@ -16,6 +17,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  await ensureHydrated();
   const settings = getRiskSettings();
   return ok({ settings, warnings: computeWarnings(settings) });
 }

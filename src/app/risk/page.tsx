@@ -132,6 +132,9 @@ export default function RiskPage() {
         </p>
       </div>
 
+      {/* Faz 19 — Risk execution binding status */}
+      <BindingStatus />
+
       {/* Kritik uyarılar — sayfanın üstünde özet */}
       {warnings.length > 0 && (
         <div className="card border border-danger/40 bg-danger/5">
@@ -560,6 +563,33 @@ function ToggleRow({ label, on, onToggle, hint, locked }: {
       >
         {locked ? "KİLİTLİ" : on ? "AKTİF" : "PASİF"}
       </button>
+    </div>
+  );
+}
+
+// Faz 19 — küçük durum göstergesi
+function BindingStatus() {
+  const [data, setData] = useState<any>(null);
+  useEffect(() => {
+    fetch("/api/risk-settings/effective", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => { if (j.ok) setData(j.data); })
+      .catch(() => undefined);
+  }, []);
+  if (!data) return null;
+  return (
+    <div className="card">
+      <div className="flex items-center gap-2 flex-wrap text-[11px]">
+        <span className="font-semibold uppercase tracking-wider text-muted">RİSK BAĞLAMA DURUMU</span>
+        <Chip tone="success">CONFIG OKUNUYOR</Chip>
+        <Chip tone="muted">CANLI EXECUTION KAPALI</Chip>
+        <Chip tone="muted">KALDIRAÇ EXECUTION KAPALI</Chip>
+        <Chip tone="danger">ZARARDA BÜYÜTME KİLİTLİ</Chip>
+      </div>
+      <div className="mt-2 text-[10px] text-muted">
+        Risk Yönetimi config&apos;i paper/live ortak risk lifecycle&apos;a okunabilir durumda.
+        Canlı emir, kaldıraç set ve zararda büyütme bu fazda kapalıdır.
+      </div>
     </div>
   );
 }

@@ -11,8 +11,63 @@ import {
   type RiskSettings,
 } from "./types";
 import { validateRiskSettings } from "./validation";
+import { supabaseAdmin, supabaseConfigured } from "@/lib/supabase/server";
+import { getCurrentUserId } from "@/lib/auth";
 
 let state: RiskSettings = clone(defaultRiskSettings());
+let hydrated = false;
+let hydrationPromise: Promise<void> | null = null;
+
+async function hydrateFromDb(): Promise<void> {
+  if (hydrated) return;
+  if (!supabaseConfigured()) { hydrated = true; return; }
+  try {
+    const userId = getCurrentUserId();
+    const { data } = await supabaseAdmin()
+      .from("bot_settings")
+      .select("risk_settings")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const stored = (data as any)?.risk_settings;
+    if (stored && typeof stored === "object") {
+      const merged: RiskSettings = {
+        ...defaultRiskSettings(),
+        ...stored,
+        capital: { ...defaultRiskSettings().capital, ...(stored.capital ?? {}) },
+        positions: { ...defaultRiskSettings().positions, ...(stored.positions ?? {}) },
+        leverage: {
+          CC:    { ...defaultRiskSettings().leverage.CC,    ...(stored.leverage?.CC    ?? {}) },
+          GNMR:  { ...defaultRiskSettings().leverage.GNMR,  ...(stored.leverage?.GNMR  ?? {}) },
+          MNLST: { ...defaultRiskSettings().leverage.MNLST, ...(stored.leverage?.MNLST ?? {}) },
+        },
+        direction: { ...defaultRiskSettings().direction, ...(stored.direction ?? {}) },
+        stopLoss:  { ...defaultRiskSettings().stopLoss,  ...(stored.stopLoss  ?? {}) },
+        tiered:    { ...defaultRiskSettings().tiered,    ...(stored.tiered    ?? {}), averageDownEnabled: false },
+        appliedToTradeEngine: false,
+      };
+      const v = validateRiskSettings(merged);
+      if (v.ok) state = clone(merged);
+    }
+  } catch { /* persistence is best-effort — fall back to in-memory defaults */ }
+  hydrated = true;
+}
+
+export function ensureHydrated(): Promise<void> {
+  if (hydrated) return Promise.resolve();
+  if (!hydrationPromise) hydrationPromise = hydrateFromDb();
+  return hydrationPromise;
+}
+
+async function persistToDb(s: RiskSettings): Promise<void> {
+  if (!supabaseConfigured()) return;
+  try {
+    const userId = getCurrentUserId();
+    await supabaseAdmin()
+      .from("bot_settings")
+      .update({ risk_settings: s })
+      .eq("user_id", userId);
+  } catch { /* non-fatal */ }
+}
 
 function clone(s: RiskSettings): RiskSettings {
   return {
@@ -99,10 +154,14 @@ export function updateRiskSettings(
   const v = validateRiskSettings(next);
   if (!v.ok) return { ok: false, errors: v.errors };
   state = next;
+  // Best-effort fire-and-forget persistence; never blocks the API path.
+  void persistToDb(state);
   return { ok: true, data: clone(state) };
 }
 
 /** Test-only helper. */
 export function __resetRiskSettingsStoreForTests(): void {
   state = clone(defaultRiskSettings());
+  hydrated = false;
+  hydrationPromise = null;
 }
