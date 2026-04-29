@@ -35,3 +35,9 @@ export {
   getDeepAnalysisCandidates,
   type DeepAnalysisOptions,
 } from "./deep-analysis";
+export {
+  getCachedAllTickers,
+  getBulkTickerFetchedAt,
+  __resetBulkTickerCacheForTests,
+  type GetCachedAllTickersOptions,
+} from "./bulk-ticker-cache";

@@ -192,6 +192,47 @@ korundu.
 - `src/app/scan-modes/page.tsx` — debounce'lu arama + sonuç listesi +
   "Seçili" rozet.
 
+## Birleşik Aday Havuz (Faz 5)
+
+`GMT`, `MT`, `MİL` **yalnızca coin kaynaklarıdır**. Pozisyon açma kararı
+değişmemiştir — tek trade engine (signal-engine + risk-engine) tarafından
+verilir; bu faz orada hiçbir şey değiştirmez.
+
+Birleşik aday havuz `buildUnifiedCandidatePool()` tarafından üretilir:
+
+- 3 kaynak da aktifse Faz 2 lightweight screener (`WIDE_MARKET`), Faz 3
+  momentum screener (`MOMENTUM`) ve Manuel İzleme Listesi (`MANUAL_LIST`)
+  sonuçları aynı havuzda birleştirilir.
+- Her kaynak bağımsız Aktif/Pasif anahtarına sahiptir; pasif kaynak hiçbir
+  aday katmaz. Manuel İzleme Listesi pasif yapılırsa **liste silinmez**;
+  sadece bu havuza dahil edilmez.
+- Manuel adaylar evrenle (Faz 2 cache'i) doğrulanır: evrende yoksa /
+  stablecoin tabanlıysa **filteredOutManualSymbols**'e düşer; evrende
+  ama o anda ticker'ı yoksa havuza degraded entry olarak girer ve
+  **missingMarketDataSymbols**'e listelenir.
+- Aynı coin birden fazla kaynaktan gelirse tek entry olur; `sources`
+  listesi birleştirilir ve ana gösterimde `MIXED → KRM` görünür. Tek
+  kaynaklı `MANUAL_LIST` `MİL` görünür.
+
+**Limitler:** `unifiedCandidatePool` ≤ **50**, `deepAnalysisCandidates` ≤
+**30**. Sabitler `DEFAULT_MARKET_UNIVERSE_CONFIG`'ten gelir.
+
+**Worker entegrasyonu:** Faz 5'te orchestrator worker tick'e
+**bağlanmadı**. Mevcut 10 core coin davranışı ve mevcut tarama akışı
+**aynen** çalışır. Tek API yüzeyi salt-okunur snapshot endpoint'i:
+`GET /api/candidate-pool/snapshot`. Bu endpoint dakikada **en fazla bir**
+toplu Binance çağrısı yapar (cache'li bulk-ticker, 60s TTL) ve evren
+çağrısını 6 saatte bir yapar — kline/order book çağrısı **yoktur**.
+[BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) kuralları
+korundu.
+
+İlgili dosyalar:
+- `src/lib/candidate-orchestrator/types.ts`
+- `src/lib/candidate-orchestrator/build-unified-candidates.ts`
+- `src/lib/candidate-orchestrator/index.ts`
+- `src/lib/market-universe/bulk-ticker-cache.ts` (60s TTL)
+- `src/app/api/candidate-pool/snapshot/route.ts` (read-only)
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
