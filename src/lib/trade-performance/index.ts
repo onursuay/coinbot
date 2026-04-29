@@ -19,6 +19,7 @@ export type {
   ExecutionType,
   NormalizedTrade,
   PaperTradeRowRaw,
+  LiveTradeRowRaw,
   ScanRowInput,
   ScoreBandKey,
   ScoreBandReport,
@@ -39,7 +40,7 @@ export type {
   DecisionSummary,
 } from "./types";
 
-export { paperTradeRowToNormalizedTrade } from "./types";
+export { paperTradeRowToNormalizedTrade, liveTradeRowToNormalizedTrade } from "./types";
 
 export { analyzeScoreBands } from "./score-bands";
 export type { ScoreBandInputs } from "./score-bands";

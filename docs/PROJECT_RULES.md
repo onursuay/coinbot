@@ -992,6 +992,100 @@ Yeni `canUseUnifiedCandidatePoolForMode()`:
 - `src/__tests__/unified-paper-rollout.test.ts` — güncellendi (yeni helper adı).
 - `src/__tests__/mode-safe-refactor-phase14.test.ts` — yeni Faz 14 test paketi.
 
+## Live Trades Analiz Altyapısı (Faz 15)
+
+Canlıya geçiş için veri/analiz altyapısı hazırlandı. **Bu fazda gerçek canlı
+emir gönderimi yoktur.** `live_trades` tablosu ve adaptörü, Trade Performance
+Engine'in paper/live ortak çalışma mimarisini tamamlar.
+
+### Ana mimari kural (değişmez)
+
+Paper ve live için **ayrı performans/karar motoru kurulmaz.** Tek
+`trade-performance` modülü, paper ve live işlemleri ortak `NormalizedTrade`
+modeli üzerinden işler. Paper/live farkı yalnızca `tradeMode`, `executionType`,
+data adapter ve live safety gate seviyesindedir.
+
+### live_trades şeması
+
+`supabase/migrations/0009_live_trades.sql` — analiz altyapısı tablosu.
+
+| Alan grubu | Alanlar |
+|---|---|
+| Kimlik | `id`, `user_id` |
+| Sembol / yön | `symbol`, `side` (LONG\|SHORT) |
+| Durum | `status` (open\|closed\|cancelled\|error) |
+| Fiyat | `entry_price`, `exit_price`, `quantity`, `leverage`, `stop_loss`, `take_profit` |
+| PnL | `pnl`, `pnl_percent` |
+| Zaman | `opened_at`, `closed_at`, `created_at`, `updated_at` |
+| Sebep | `close_reason`, `entry_reason`, `exit_reason` |
+| Skor | `trade_signal_score`, `setup_score`, `market_quality_score`, `source_display` |
+| Risk/oran | `rr_ratio`, `stop_distance_percent` |
+| Emir ID (audit) | `order_id`, `client_order_id`, `position_id` |
+| Meta | `exchange`, `execution_type` (real), `trade_mode` (live) |
+| Payload (log) | `raw_entry_payload`, `raw_exit_payload` |
+
+`execution_type` default `real`, `trade_mode` default `live`.
+Bu tablo **canlı emir açmaz/kapatmaz**; yalnızca analiz/görüntüleme içindir.
+
+### liveTradeRowToNormalizedTrade adaptörü
+
+`src/lib/trade-performance/types.ts` içinde yeni fonksiyon.
+
+- `tradeMode: "live"`, `executionType: "real"` döndürür.
+- `side` → `direction` eşlemesi (LONG/SHORT).
+- `trade_signal_score` → `signalScore`, `rr_ratio` → `riskRewardRatio`.
+- `close_reason` öncelikli; null ise `exit_reason`'a fallback.
+- `status` `cancelled`/`error` → `"closed"` güvenli fallback.
+- `entry_price` null → `0`; NaN/undefined üretmez.
+- `paperTradeRowToNormalizedTrade` davranışı bozulmaz.
+
+### /api/trade-performance/decision-summary — mode parametresi
+
+`GET /api/trade-performance/decision-summary?mode=paper|live|all`
+
+| mode | Davranış |
+|---|---|
+| `paper` | Yalnızca `paper_trades` okur. Default. |
+| `live` | Yalnızca `live_trades` okur. Veri yoksa güvenli fallback döner. |
+| `all` | paper_trades + live_trades birleşik analiz. |
+
+- `mode=live` veri yokken hata fırlatmaz: `"Canlı işlem verisi oluşmadı."` döner.
+- `meta.liveTradeSourceAvailable` → `boolean` (veri varsa `true`).
+- Binance API çağrısı yoktur.
+
+### /api/live-trades — read-only endpoint
+
+`GET /api/live-trades` (opsiyonel `?status=open|closed&limit=N`)
+
+- Yalnızca Supabase `live_trades` tablosunu okur.
+- Binance API/private endpoint çağrısı yapmaz.
+- Emir göndermez.
+- Veri yoksa boş liste döner (`hasData: false`).
+- `live_trades` tablosu henüz oluşturulmamışsa da hata fırlatmaz.
+
+### Bu fazda kesinlikle dokunulmadı
+
+- Canlı trading açılmadı (`HARD_LIVE_TRADING_ALLOWED=false` korundu).
+- `DEFAULT_TRADING_MODE=paper` korundu.
+- `enable_live_trading=false` korundu.
+- `MIN_SIGNAL_CONFIDENCE=70` korundu.
+- `openLiveOrder` / `closeLiveOrder` yazılmadı.
+- Binance private/order endpoint çağrısı eklenmedi.
+- Trade/signal/risk engine değiştirilmedi.
+- Risk settings execution'a bağlanmadı.
+- Kaldıraç execution eklenmedi.
+- Worker lock korundu.
+- Dashboard yeniden tasarlanmadı; Piyasa Tarayıcı değişmedi.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+İlgili dosyalar:
+- `supabase/migrations/0009_live_trades.sql` — live_trades şeması.
+- `src/lib/trade-performance/types.ts` — `LiveTradeRowRaw` + `liveTradeRowToNormalizedTrade`.
+- `src/lib/trade-performance/index.ts` — yeni barrel export'ları.
+- `src/app/api/trade-performance/decision-summary/route.ts` — mode=paper|live|all desteği.
+- `src/app/api/live-trades/route.ts` — read-only live trades endpoint.
+- `src/__tests__/trade-performance-phase15.test.ts` — Faz 15 test paketi.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

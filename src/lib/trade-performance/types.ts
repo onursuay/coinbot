@@ -261,8 +261,8 @@ export interface PaperTradeRowRaw {
  * Supabase paper_trades satırını NormalizedTrade'e çevirir.
  * tradeMode = "paper", executionType = "simulated".
  *
- * Live'a geçişte ayrı bir adaptör eklenecek (ör. liveTradeRowToNormalizedTrade);
- * bu fonksiyonun davranışı veya isim alanı değişmeyecek.
+ * Live'a geçişte ayrı bir adaptör eklendi (liveTradeRowToNormalizedTrade);
+ * bu fonksiyonun davranışı veya isim alanı değişmez.
  */
 export function paperTradeRowToNormalizedTrade(row: PaperTradeRowRaw): NormalizedTrade {
   return {
@@ -283,5 +283,81 @@ export function paperTradeRowToNormalizedTrade(row: PaperTradeRowRaw): Normalize
     openedAt: row.opened_at,
     closedAt: row.closed_at,
     status: row.status,
+  };
+}
+
+// ── Adaptör: Supabase live_trades satırı → NormalizedTrade ─────────────────
+
+/**
+ * Faz 15 — Supabase live_trades tablosunun analiz için gerekli alanlarının ham tipi.
+ *
+ * Bu tip canlı emir göndermek için değil, yalnızca DB kaydından okuma yapmak içindir.
+ * Trade Performance Engine aynı NormalizedTrade modeli üzerinden paper/live ortak çalışır.
+ */
+export interface LiveTradeRowRaw {
+  id: string;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  status: "open" | "closed" | "cancelled" | "error";
+  entry_price: number | null;
+  exit_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  pnl: number | null;
+  pnl_percent: number | null;
+  trade_signal_score: number | null;
+  rr_ratio: number | null;
+  close_reason: string | null;
+  exit_reason: string | null;
+  opened_at: string | null;
+  closed_at: string | null;
+  trade_mode: "live" | "paper";
+  execution_type: "real" | "simulated";
+}
+
+/**
+ * Faz 15 — Supabase live_trades satırını NormalizedTrade'e çevirir.
+ * tradeMode = "live", executionType = "real".
+ *
+ * Eksik/null veri için güvenli fallback uygulanır; NaN veya undefined üretmez.
+ * Bu fonksiyon Binance API çağrısı yapmaz; sadece DB satırını dönüştürür.
+ * paperTradeRowToNormalizedTrade davranışı ve arayüzü korunur.
+ */
+export function liveTradeRowToNormalizedTrade(row: LiveTradeRowRaw): NormalizedTrade {
+  const safeStatus: "open" | "closed" =
+    row.status === "open" ? "open" : "closed";
+
+  return {
+    id: row.id,
+    tradeMode: "live",
+    executionType: "real",
+    symbol: row.symbol,
+    direction: row.side,
+    entryPrice: typeof row.entry_price === "number" && isFinite(row.entry_price)
+      ? row.entry_price
+      : 0,
+    exitPrice: typeof row.exit_price === "number" && isFinite(row.exit_price)
+      ? row.exit_price
+      : null,
+    stopLoss: typeof row.stop_loss === "number" && isFinite(row.stop_loss)
+      ? row.stop_loss
+      : null,
+    takeProfit: typeof row.take_profit === "number" && isFinite(row.take_profit)
+      ? row.take_profit
+      : null,
+    pnl: typeof row.pnl === "number" && isFinite(row.pnl) ? row.pnl : null,
+    pnlPercent: typeof row.pnl_percent === "number" && isFinite(row.pnl_percent)
+      ? row.pnl_percent
+      : null,
+    signalScore: typeof row.trade_signal_score === "number" && isFinite(row.trade_signal_score)
+      ? row.trade_signal_score
+      : null,
+    riskRewardRatio: typeof row.rr_ratio === "number" && isFinite(row.rr_ratio)
+      ? row.rr_ratio
+      : null,
+    exitReason: row.close_reason ?? row.exit_reason ?? null,
+    openedAt: row.opened_at ?? new Date(0).toISOString(),
+    closedAt: row.closed_at ?? null,
+    status: safeStatus,
   };
 }
