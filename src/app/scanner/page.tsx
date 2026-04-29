@@ -4,6 +4,7 @@ import Link from "next/link";
 import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
 import { buildReasonColumns, REASON_COLUMNS } from "@/lib/wait-reason-badges";
+import ScanModesSummary from "@/components/ScanModesSummary";
 
 interface TickStats {
   universe: number;
@@ -252,6 +253,7 @@ export default function ScannerPage() {
 
   return (
     <div className="space-y-4">
+      <ScanModesSummary />
       {/* Stats bar */}
       {stats && (
         <div className="rounded-2xl border border-border bg-gradient-to-br from-bg-card via-bg-card to-bg-soft/40 shadow-lg shadow-black/20 overflow-hidden">

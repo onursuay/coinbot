@@ -32,6 +32,44 @@ Detay: ana dizindeki `CLAUDE.md`.
 
 ---
 
+## Tarama Modları (Faz 1 — iskelet)
+
+CoinBot coin seçim mimarisi 3 bağımsız moddan oluşur:
+
+| Mod | Kısa Etiket | Varsayılan |
+|---|---|---|
+| Geniş Market Taraması | `GMT` | aktif |
+| Momentum Taraması | `MT` | aktif |
+| Manuel İzleme Listesi | `MİL` | pasif |
+
+Bir coin birden fazla kaynaktan geldiğinde ana dashboard/tablo gösteriminde
+karma kaynak etiketi `KRM` (MIXED) kullanılır; tam kaynak listesi
+detay/debug görünümlerinde tutulabilir.
+
+**Faz 1 kapsamı:** sadece config/data model, API endpoint'leri, UI iskeleti
+ve mod özet göstergesi eklendi. Sinyal motoru, skor hesabı, risk engine,
+worker tick davranışı **değiştirilmedi**. Yeni periyodik Binance taraması
+**başlatılmadı**; bu fazın koruduğu kurallar:
+
+- `HARD_LIVE_TRADING_ALLOWED=false`
+- `DEFAULT_TRADING_MODE=paper`
+- `enable_live_trading=false`
+- `MIN_SIGNAL_CONFIDENCE=70` (signal-engine `if (score < 70)` kapısı)
+- BTC trend filtresi
+- SL/TP/R:R kontrolleri
+- Worker lock yapısı
+
+Bu faz [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) kurallarına
+**aykırı hiçbir API kullanımı eklemedi**: yeni endpoint çağrısı yok, yeni
+periyodik tarama yok, mevcut merkezi adapter dışı fetch yok.
+
+İlgili dosyalar:
+- `src/lib/scan-modes/` — types, sources, in-memory store.
+- `src/app/api/scan-modes/` — GET/PUT, manual-list POST/DELETE.
+- `src/app/scan-modes/page.tsx` — 3-kartlı modlar sayfası.
+- `src/components/ScanModesSummary.tsx` — Piyasa Tarayıcı'daki aktif mod
+  özeti.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

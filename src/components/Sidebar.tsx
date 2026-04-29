@@ -15,12 +15,14 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Bot,
+  Layers,
 } from 'lucide-react'
 import { useState, useEffect, useLayoutEffect } from 'react'
 
 const NAV = [
   { href: '/', label: 'Panel', icon: LayoutDashboard },
   { href: '/scanner', label: 'Piyasa Tarayıcı', icon: ScanLine },
+  { href: '/scan-modes', label: 'Tarama Modları', icon: Layers },
   { href: '/coins', label: 'Coin Detayı', icon: CircleDollarSign },
   { href: '/paper-trades', label: 'Sanal İşlemler', icon: ReceiptText },
   { href: '/risk', label: 'Risk Ayarları', icon: ShieldAlert },
