@@ -119,17 +119,38 @@ async function readFromDb(): Promise<{
         .maybeSingle();
       rowFound = rowProbe != null;
     } else {
-      // Fallback — RPC not deployed yet. Column-level select; this is
-      // exactly the path that hits PostgREST cache issues, but we keep
-      // it for environments without 0016.
+      // Fallback — get_risk_settings RPC not deployed (migration 0016 missing).
+      // Column-level select hits PostgREST schema cache; if the risk_settings
+      // column was added after PostgREST last reloaded its schema, it returns
+      // null even when the row has real data. We probe row existence first so
+      // we can surface this as a real error rather than silently using defaults.
+      const { data: rowCheck } = await sb
+        .from("bot_settings")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+      rowFound = rowCheck != null;
+
       const { data, error } = await sb
         .from("bot_settings")
         .select("risk_settings")
         .eq("user_id", userId)
         .maybeSingle();
       if (error) throw error;
-      rowFound = data != null;
       stored = (data as any)?.risk_settings ?? null;
+
+      // If the row exists but risk_settings came back null, the PostgREST schema
+      // cache is stale for this column — not "no data". Surface it as fallback
+      // so the UI shows an error instead of silently loading defaults.
+      if (rowFound && stored == null) {
+        setStatus({
+          state: "fallback",
+          errorSafe: "get_risk_settings RPC eksik (migration 0016 uygulanmadı) — PostgREST kolon önbelleği risk_settings sütununu göremedi",
+          lastHydratedAt: persistenceStatus.lastHydratedAt,
+          lastSavedAt: persistenceStatus.lastSavedAt,
+        });
+        return { rowFound, riskSettingsPresent: false };
+      }
     }
     const riskSettingsPresent = stored != null;
     if (stored) {
