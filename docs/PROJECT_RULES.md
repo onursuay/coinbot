@@ -602,6 +602,113 @@ bağlanmaz.
   Yönetimi".
 - `src/__tests__/risk-settings-phase10.test.ts` — 49 test.
 
+## Opportunity Priority Score / Fırsat Önceliklendirme (Faz 11)
+
+Bot birden fazla fırsat gördüğünde rastgele veya yalnızca tarama
+sırasına göre seçim yapmasın diye **Opportunity Priority Score**
+altyapısı kuruldu. Bu altyapı **trade açma kararını DEĞİŞTİRMEZ** —
+yalnızca metadata/sıralama/queue üretir.
+
+**Kurallar (değişmez):**
+- Trade açma eşiği `tradeSignalScore >= 70` korunur.
+- Opportunity Priority Score yalnızca **sıralama / queue / metadata**
+  içindir. Trade-açma kapısı değildir.
+- Birden fazla güçlü fırsat varsa kalanlar **çöpe atılmaz**;
+  `WATCH_QUEUE` ile izleme listesinde tutulur.
+
+**Skor bileşenleri (toplam 1.0 ağırlık):**
+- `tradeSignal` 0.30 — `tradeSignalScore` (≥70 = 100, 50-69 = 60-100,
+  altı = orantılı)
+- `setup` 0.18 — `setupScore` yapı kalitesi
+- `quality` 0.12 — `marketQualityScore` (yoksa `preScore`)
+- `riskReward` 0.07 — R:R (1:3+ = 100, 1:2 = 80, <1.5 penalty)
+- `liquidity` 0.08 — spread + depth + 24h hacim ortalaması
+- `btcAlignment` 0.07 — uyumlu = 100, veto = 0, bilinmiyor = 50
+- `volatility` 0.05 — ATR percentile + volume impulse sağlığı
+- `source` 0.07 — KRM 95 / MİL 90 / MT 75 / GMT 60
+- `momentumUrgency` 0.06 — volumeImpulse + MT bonusu
+- `correlationPenalty` — alan hazır, bu fazda 0 (gelecek faz)
+
+**Bucket sınıflandırma (default config):**
+| Sıra | Skor | Bucket |
+|---|---|---|
+| 1-3 | ≥60 | `PRIMARY` |
+| 1-5 | ≥50 | `WATCH_QUEUE` |
+| diğer | — | `REJECTED_OR_WEAK` |
+
+Hard penalty (sırasız): BTC veto, risk reddi, ya da `tradeSignal=0 ve
+setup=0` → otomatik `REJECTED_OR_WEAK`.
+
+Default config (`DEFAULT_PRIORITY_BUCKET_CONFIG`):
+`primaryCapacity=3, dynamicUpperCapacity=5, minPrimaryScore=60,
+minWatchScore=50`. Bu değerler **yalnızca priority preview** içindir;
+trade açma davranışını değiştirmez.
+
+**Sıralama (deterministic tiebreaker zinciri):**
+1. `opportunityPriorityScore` desc
+2. `tradeSignalScore` desc
+3. `setupScore` desc
+4. `marketQualityScore` desc
+5. `quoteVolume24h` desc
+6. `symbol` asc
+
+**Reasons / Penalties örnekleri:**
+- ✓ "İşlem skoru güçlü (≥70)"
+- ✓ "Fırsat yapısı çok güçlü"
+- ✓ "Likidite sağlıklı"
+- ✓ "MT momentum desteği var"
+- ✓ "KRM çoklu kaynak teyidi var"
+- ✓ "BTC yönü uyumlu"
+- ✓ "MİL kaynak önceliği (manuel izleme)"
+- ✗ "BTC yön uyumsuzluğu"
+- ✗ "Spread yüksek"
+- ✗ "R:R zayıf"
+- ✗ "Volatilite sağlıksız"
+- ✗ "Likidite zayıf"
+- ✗ "Sinyal eşiğe uzak"
+- ✗ "Risk reddi"
+
+**Decoupling (test ile garantili):**
+- `opportunity-priority/*` modülleri `signal-engine`,
+  `bot-orchestrator`, `risk-engine` import etmez.
+- `bot-orchestrator` `opportunity-priority` modülünü import etmez.
+- `risk-settings` store opportunity-priority import etmez.
+- Hiçbir Binance API çağrısı eklenmedi (no fapi/api/axios import).
+
+**Pozisyona En Yakın Coinler kartı**: ana sıralaması bu fazda
+**değiştirilmedi** — `tradeSignalScore desc → setupScore desc`
+korunur. Opportunity Priority ayrı metadata olarak kalır; ana
+sıralamayı değiştirmek gerekirse ayrı faza bırakılır.
+
+**Korelasyon riski**: alan ayrıldı (`correlationPenalty`), bu fazda
+hesap yok. Gelecekte ağır olmayan in-memory saldırı vektörü ile
+çalıştırılacak — Binance API çağrısı eklenmeyecektir.
+
+**Trading invariant'leri (bu fazda dokunulmadı):**
+- `HARD_LIVE_TRADING_ALLOWED=false`
+- `DEFAULT_TRADING_MODE=paper`
+- `enable_live_trading=false`
+- `MIN_SIGNAL_CONFIDENCE=70` (signal-engine `if (score < 70)` kapısı)
+- BTC trend filtresi, SL/TP/R:R, risk engine, kaldıraç execution,
+  worker lock, unified candidate provider mantığı, Risk Yönetimi
+  ayarlarının execution'a bağlanmaması
+
+İlgili dosyalar:
+- `src/lib/opportunity-priority/types.ts` — `OpportunityInput`,
+  `OpportunityPriorityResult`, `PriorityComponents`,
+  `PriorityWeights`, `PriorityBucketConfig` + defaultlar.
+- `src/lib/opportunity-priority/score.ts` —
+  `computeOpportunityPriorityScore`, `computeBatch`. 9 alt skor
+  fonksiyonu, NaN-safe.
+- `src/lib/opportunity-priority/rank.ts` — `rankOpportunities`,
+  `classifyOpportunityBucket`. Deterministic tiebreaker.
+- `src/lib/opportunity-priority/index.ts` — barrel.
+- `src/__tests__/opportunity-priority-phase11.test.ts` — 39 test.
+
+UI entegrasyonu bu fazda yalnızca lib seviyesinde; worker tick payload'ı
+priority metadata üretmeye başlayınca dashboard/scanner küçük badge ile
+besleyecek (ayrı faz).
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
