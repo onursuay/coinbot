@@ -69,6 +69,10 @@ interface CacheEntry {
 }
 
 const cache = new Map<ExchangeName, CacheEntry>();
+// Phase 7 — last-error sidecar. Cleared on every successful refresh; set
+// when the provider catches an internal failure. Diagnostic-only: callers
+// (bot-orchestrator) surface it into last_tick_summary.unifiedProviderError.
+const lastErrorByExchange = new Map<ExchangeName, string>();
 
 export interface GetUnifiedCandidatesOptions {
   exchange?: ExchangeName;
@@ -136,12 +140,15 @@ export async function getUnifiedCandidates(
 
     const bundle = toBundle(result, deepMax);
     cache.set(exchange, { bundle, fetchedAt: Date.now() });
+    lastErrorByExchange.delete(exchange);
     return { ...bundle, fromCache: false };
   } catch (e: any) {
     // Non-fatal — log and fall back to core. Returning null instead of
     // throwing keeps the worker tick alive (Phase 6 invariant).
+    const msg = e?.message ?? String(e);
+    lastErrorByExchange.set(exchange, msg);
     // eslint-disable-next-line no-console
-    console.error("[unified-candidate-provider] failed:", e?.message ?? e);
+    console.error("[unified-candidate-provider] failed:", msg);
     return null;
   }
 }
@@ -180,7 +187,19 @@ export function getUnifiedCandidatesFetchedAt(
   return cache.get(exchange)?.fetchedAt ?? null;
 }
 
+/**
+ * Returns the most recent provider error message, or null if the last call
+ * was successful (or no call has been made yet). Diagnostic-only — never
+ * gates anything.
+ */
+export function getUnifiedProviderLastError(
+  exchange: ExchangeName = "binance",
+): string | null {
+  return lastErrorByExchange.get(exchange) ?? null;
+}
+
 /** Test-only helper. */
 export function __resetUnifiedCandidateCacheForTests(): void {
   cache.clear();
+  lastErrorByExchange.clear();
 }

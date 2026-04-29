@@ -298,6 +298,81 @@ Bu faz [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md)
 kurallarını **değişmez** kabul eder; ek her tick fetch, per-symbol
 kline/order-book spam'i veya merkezi adapter dışı çağrı **yoktur**.
 
+## Paper-Mode Aktivasyonu (Faz 7)
+
+Faz 6'da feature flag ile bağlanan unified candidate pool, Faz 7'de
+**varsayılan açık** hale gelir — ancak yalnızca **paper modda** ve canlı
+trading kapısı kapalıyken çalışır.
+
+**Aktivasyon koşulları (üçü birden):**
+1. `env.hardLiveTradingAllowed === false`
+2. `bot_settings.trading_mode === "paper"`
+3. `bot_settings.enable_live_trading !== true`
+
+Bu üç koşuldan biri bile bozulursa worker `core-only fallback` moduna
+geçer: orchestrator çağrılmaz, unified candidate listesi üretilmez,
+mevcut 10 core coin (`tierWhitelist()`) ve legacy `selectDynamicCandidates`
+akışı kullanılır. Karar `isUnifiedPoolPaperSafe(settings)` saf
+fonksiyonu ile verilir; sebep `last_tick_summary.unifiedProviderError`
+alanına `paper-safety: trading_mode=live` gibi etiketle düşer.
+
+**Config değişiklikleri (Faz 7):**
+
+| Ayar | Eski | Yeni |
+|---|---|---|
+| `env.useUnifiedCandidatePool` default | `false` | `true` |
+| `worker/.env.example` `USE_UNIFIED_CANDIDATE_POOL` | `false` | `true` |
+
+**Live trading değişmedi:**
+- `HARD_LIVE_TRADING_ALLOWED=false` — değişmez.
+- `DEFAULT_TRADING_MODE=paper` — değişmez.
+- `enable_live_trading=false` — değişmez (hâlâ `settings/update` API'si
+  bunu kabul etmiyor).
+- `MIN_SIGNAL_CONFIDENCE=70` — değişmez.
+- BTC trend filtresi, SL/TP/R:R, leverage tavanı, daily loss limit,
+  worker lock — hepsi değişmedi.
+
+**`last_tick_summary` JSONB yeni alanlar (Faz 7):**
+
+- `unifiedCandidatePoolActive` — bu tick için unified candidate eklendi mi.
+- `unifiedPoolSize` — orchestrator pool size (≤ 50).
+- `unifiedDeepCandidatesCount` — deep-analysis subset size (≤ 30).
+- `unifiedPoolGeneratedAt` — snapshot timestamp.
+- `unifiedPoolFromCache` — TTL cache hit / miss.
+- `unifiedProviderError` — provider hata mesajı veya safe-gate sebebi
+  (`paper-safety: …`); başarılıysa `null`.
+- `analyzedSymbolsCount` — bu tick'te derin analiz yapılan toplam sembol.
+- `coreSymbolsCount` — analiz batch'indeki core (whitelist) sembol sayısı.
+- `unifiedSymbolsCount` — core üstüne unified pool'dan eklenen sembol
+  sayısı (dedupe sonrası).
+
+**`scan_details` source metadata:** Faz 6'daki gibi devam eder —
+`sourceDisplay` (GMT/MT/MİL/KRM), `candidateSources`, `candidateRank`,
+`marketQualityPreScore`, `momentumScore`, `candidatePoolGeneratedAt`.
+Bu alanlar trade kararını ve skor hesabını **etkilemez**.
+
+**Binance API yükü (değişmedi):**
+- Universe çağrısı 6 saatte bir (Faz 2 cache).
+- Bulk ticker çağrısı 60 saniyede bir (Faz 5 cache).
+- Unified pool TTL'i 120 saniye — bu süre dolmadan tick'ler in-memory
+  cache'ten okur.
+- Per-symbol kline / order-book çağrısı **yoktur**.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) kuralları
+  korundu.
+
+**Snapshot endpoint:** `GET /api/candidate-pool/snapshot` salt-okunur
+çıktısı (pool size, deep candidate count, source breakdown, generatedAt,
+fromCache) Faz 5/6 davranışıyla aynıdır. Bu fazda dashboard'a
+sık-polling ekleyen yeni UI **eklenmedi**.
+
+İlgili dosyalar:
+- `src/lib/env.ts` — flag default `true`.
+- `src/lib/engines/bot-orchestrator.ts` — `isUnifiedPoolPaperSafe()` +
+  flag + gate kontrolü, yeni diagnostics alanları.
+- `src/lib/engines/unified-candidate-provider.ts` — `lastError` sidecar.
+- `worker/.env.example` — `USE_UNIFIED_CANDIDATE_POOL=true` dökümante
+  edildi.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

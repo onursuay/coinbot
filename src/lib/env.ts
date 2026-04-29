@@ -118,17 +118,16 @@ export const env = {
   // ── Dynamic Universe v2 ──
   dynamicAnalysisLimit: num(process.env.DYNAMIC_ANALYSIS_LIMIT, 30),
 
-  // ── Phase 6: Unified Candidate Pool worker integration ──
-  // Feature flag — default false. When false, worker behavior is byte-identical
-  // to phase 5: only the legacy dynamic-universe pipeline feeds candidates and
-  // the unified orchestrator is not invoked from the worker hot path.
-  // When true, the orchestrator's deep-analysis subset is merged with the
-  // existing core whitelist (deduped). The unified pool is cached at the
-  // worker layer with `unifiedCandidateRefreshIntervalSec` TTL so the worker
-  // does NOT recompute the pool on every tick. Refresh just re-runs the pure
-  // orchestrator over already-cached universe (6h TTL) + bulk tickers
-  // (60s TTL) — no new Binance traffic per tick.
-  useUnifiedCandidatePool: bool(process.env.USE_UNIFIED_CANDIDATE_POOL, false),
+  // ── Phase 7: Unified Candidate Pool — paper-mode controlled rollout ──
+  // Feature flag default flipped to true in Phase 7. The flag alone is NOT
+  // sufficient to activate the unified pool: the worker also requires the
+  // paper-mode safety gate (HARD_LIVE_TRADING_ALLOWED=false + DB
+  // trading_mode='paper' + enable_live_trading=false). When the gate is
+  // open (any live indicator present), the worker silently falls back to
+  // the legacy core-only/dynamic-universe path — orchestrator is never
+  // invoked. See bot-orchestrator → isUnifiedPoolPaperSafe.
+  // Set to false to disable the unified path entirely (regression escape).
+  useUnifiedCandidatePool: bool(process.env.USE_UNIFIED_CANDIDATE_POOL, true),
   // Hard cap on candidates handed from the orchestrator to deep analysis per
   // tick. Mirrors DEFAULT_MARKET_UNIVERSE_CONFIG.deepAnalysisMax (30).
   unifiedDeepAnalysisMax: num(process.env.UNIFIED_DEEP_ANALYSIS_MAX, 30),

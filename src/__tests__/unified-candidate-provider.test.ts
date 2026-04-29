@@ -85,9 +85,9 @@ function modes(over: Partial<ScanModesConfig> = {}): ScanModesConfig {
   };
 }
 
-describe("Phase 6 — feature flag default", () => {
-  it("USE_UNIFIED_CANDIDATE_POOL defaults to false", () => {
-    expect(env.useUnifiedCandidatePool).toBe(false);
+describe("Phase 7 — feature flag default + paper-mode rollout", () => {
+  it("USE_UNIFIED_CANDIDATE_POOL defaults to true (paper-mode rollout)", () => {
+    expect(env.useUnifiedCandidatePool).toBe(true);
   });
 
   it("env exposes the unified worker config knobs", () => {
@@ -95,6 +95,11 @@ describe("Phase 6 — feature flag default", () => {
     expect(env.unifiedDeepAnalysisMax).toBeGreaterThan(0);
     expect(typeof env.unifiedCandidateRefreshIntervalSec).toBe("number");
     expect(env.unifiedCandidateRefreshIntervalSec).toBeGreaterThan(0);
+  });
+
+  it("hard live trading is still gated off (env default unchanged)", () => {
+    expect(env.hardLiveTradingAllowed).toBe(false);
+    expect(env.defaultTradingMode).toBe("paper");
   });
 });
 
@@ -310,9 +315,9 @@ describe("Phase 6 invariants — codebase hygiene + global guarantees", () => {
     expect(src).not.toMatch(/candidate-orchestrator/);
   });
 
-  it("env exposes USE_UNIFIED_CANDIDATE_POOL with default false", () => {
+  it("env exposes USE_UNIFIED_CANDIDATE_POOL with default true (Phase 7 paper-mode rollout)", () => {
     const src = read("src/lib/env.ts");
-    expect(src).toMatch(/useUnifiedCandidatePool:\s*bool\(process\.env\.USE_UNIFIED_CANDIDATE_POOL,\s*false\)/);
+    expect(src).toMatch(/useUnifiedCandidatePool:\s*bool\(process\.env\.USE_UNIFIED_CANDIDATE_POOL,\s*true\)/);
   });
 
   it("signal-engine still rejects trades below 70", () => {
