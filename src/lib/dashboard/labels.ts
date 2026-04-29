@@ -76,7 +76,7 @@ export function mapSourceLabel(row: SourceInput): string {
     if (s === "MOMENTUM") return "MT";
     if (s === "MANUAL_LIST") return "MİL";
   }
-  if (row.coinClass === "CORE") return "ÇEKİRDEK";
+  if (row.coinClass === "CORE") return "CORE";
   return "—";
 }
 

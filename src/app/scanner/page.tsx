@@ -103,8 +103,7 @@ function mapSourceLabel(row: ScanRow): string {
     if (s === "MOMENTUM") return "MT";
     if (s === "MANUAL_LIST") return "MİL";
   }
-  // Core coinler unified candidate havuzuna girmez — kaynak sütununu dolu göster.
-  if (row.coinClass === "CORE") return "ÇEKİRDEK";
+  if (row.coinClass === "CORE") return "CORE";
   return "—";
 }
 
@@ -212,6 +211,18 @@ const ADV_COLUMNS: { key: AdvKey; header: string }[] = [
 
 const ADV_KEY_SET: readonly AdvKey[] = ADV_COLUMNS.map((c) => c.key);
 const STORAGE_KEY = "scanner:advancedColumns:v8";
+const DISMISS_STORAGE_KEY = "scanner:dismissedCandidates:v1";
+const DISMISS_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+interface DismissEntry {
+  symbol: string;
+  direction: string;
+  sourceDisplay: string;
+  tradeSignalScore: number;
+  setupScore: number;
+  dismissedAt: number;
+  dismissedUntil: number;
+}
 
 function fmtNumOrDash(n: unknown, digits = 2): string {
   return typeof n === "number" && Number.isFinite(n) ? n.toFixed(digits) : "—";
@@ -246,6 +257,7 @@ function getAdvValue(row: ScanRow, key: AdvKey): React.ReactNode {
 export default function ScannerPage() {
   const [data, setData] = useState<DiagData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dismissals, setDismissals] = useState<Record<string, DismissEntry>>({});
 
   // Gelişmiş kolon görünürlüğü — kullanıcı tercihi localStorage'a yazılır.
   // Yalnızca presentation; backend ile alışverişi yok.
@@ -276,6 +288,53 @@ export default function ScannerPage() {
   };
   const isAdvVisible = (k: AdvKey) => visibleAdv.has(k);
 
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(DISMISS_STORAGE_KEY);
+      if (!raw) return;
+      setDismissals(JSON.parse(raw) as Record<string, DismissEntry>);
+    } catch { /* corrupt storage — ignore */ }
+  }, []);
+
+  const persistDismissals = (next: Record<string, DismissEntry>) => {
+    setDismissals(next);
+    try { window.localStorage.setItem(DISMISS_STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  };
+
+  const dismissRow = (row: ScanRow) => {
+    const now = Date.now();
+    const entry: DismissEntry = {
+      symbol: row.symbol,
+      direction: row.signalType ?? "WAIT",
+      sourceDisplay: mapSourceLabel(row),
+      tradeSignalScore: row.tradeSignalScore ?? row.signalScore ?? 0,
+      setupScore: row.setupScore ?? 0,
+      dismissedAt: now,
+      dismissedUntil: now + DISMISS_TTL_MS,
+    };
+    persistDismissals({ ...dismissals, [row.symbol]: entry });
+    console.log("scanner_candidate_dismissed", {
+      ...entry,
+      reason: "user_dismissed_candidate",
+      mode: "paper",
+    });
+  };
+
+  const clearDismissals = () => {
+    persistDismissals({});
+    try { window.localStorage.removeItem(DISMISS_STORAGE_KEY); } catch { /* ignore */ }
+    console.log("scanner_dismissals_cleared");
+  };
+
+  const handleDismiss = (e: React.MouseEvent, row: ScanRow) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const confirmed = window.confirm(
+      `Bu adayı şimdilik geçmek istiyor musun?\n\nCoin kalıcı olarak tarama dışına alınmaz; ileride tekrar güçlü fırsat oluşursa yeniden görünür.`
+    );
+    if (confirmed) dismissRow(row);
+  };
+
   const refresh = async () => {
     setLoading(true);
     try {
@@ -287,19 +346,35 @@ export default function ScannerPage() {
   };
   useAutoRefresh(refresh);
 
-  // Prefer all_analyzed_scan_details (includes display-filter-eliminated rows with annotations)
-  // Fall back to scan_details for backward compat with older worker versions.
-  const rawRows = data?.all_analyzed_scan_details ?? data?.scan_details ?? [];
+  // Prefer all_analyzed_scan_details (raw with display-filter annotations),
+  // fall back to scan_details for backward compat with older worker versions.
+  // Dismiss filter: hide rows temporarily dismissed by the user unless a strong
+  // signal (score>=70 / LONG / SHORT / opened) overrides the dismissal.
   const rows = useMemo(() => {
-    if (rawRows.length === 0) return rawRows;
-    return [...rawRows].sort((a, b) => {
+    const now = Date.now();
+    const raw = data?.all_analyzed_scan_details ?? data?.scan_details ?? [];
+    if (raw.length === 0) return raw;
+    const filtered = raw.filter((r) => {
+      const entry = dismissals[r.symbol];
+      if (!entry || now > entry.dismissedUntil) return true;
+      if ((r.tradeSignalScore ?? r.signalScore ?? 0) >= 70) return true;
+      if (r.signalType === "LONG" || r.signalType === "SHORT") return true;
+      if (r.opened === true) return true;
+      return false;
+    });
+    return filtered.sort((a, b) => {
       if (a.opened !== b.opened) return a.opened ? -1 : 1;
       const sa = a.tradeSignalScore ?? a.signalScore ?? 0;
       const sb = b.tradeSignalScore ?? b.signalScore ?? 0;
       if (sb !== sa) return sb - sa;
       return (b.setupScore ?? 0) - (a.setupScore ?? 0);
     });
-  }, [rawRows]);
+  }, [data, dismissals]);
+
+  const dismissedCount = useMemo(() => {
+    const now = Date.now();
+    return Object.values(dismissals).filter((e) => now <= e.dismissedUntil).length;
+  }, [dismissals]);
   const exchange = data?.active_exchange ?? "binance";
   const advColumns = ADV_COLUMNS.filter((c) => isAdvVisible(c.key));
   const isStale = data?.diagnosticsStale === true;
@@ -309,6 +384,20 @@ export default function ScannerPage() {
 
   return (
     <div className="space-y-4">
+      {/* Geçici dismiss bildirimi */}
+      {dismissedCount > 0 && (
+        <div className="flex items-center gap-2 rounded-md border border-border bg-bg-soft px-3 py-2 text-xs text-muted">
+          <span>Geçilen aday: <strong className="text-slate-300">{dismissedCount}</strong></span>
+          <button
+            type="button"
+            onClick={clearDismissals}
+            className="ml-auto text-xs text-accent hover:underline"
+          >
+            Geçilenleri sıfırla
+          </button>
+        </div>
+      )}
+
       {/* Stale data uyarısı */}
       {isStale && (
         <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -401,6 +490,7 @@ export default function ScannerPage() {
                 {advColumns.map((c) => (
                   <th key={c.key}>{c.header}</th>
                 ))}
+                <th className="w-8" aria-label="Aksiyon"></th>
               </tr>
             </thead>
             <tbody>
@@ -418,7 +508,7 @@ export default function ScannerPage() {
                 const trade = r.tradeSignalScore ?? r.signalScore ?? 0;
 
                 return (
-                  <tr key={r.symbol} className={rowClass}>
+                  <tr key={r.symbol} className={`group${rowClass ? ` ${rowClass}` : ""}`}>
                     <td className={opened ? "font-bold" : "font-medium"}>
                       <Link className="text-accent" href={`/coins/${encodeURIComponent(r.symbol)}?exchange=${exchange}`}>
                         {r.symbol}
@@ -490,6 +580,21 @@ export default function ScannerPage() {
                         {getAdvValue(r, c.key)}
                       </td>
                     ))}
+                    <td className="w-8 text-center">
+                      {!opened && (
+                        <button
+                          type="button"
+                          aria-label={`${r.symbol} adayını geç`}
+                          title="Bu adayı şimdilik geç"
+                          onClick={(e) => handleDismiss(e, r)}
+                          className="inline-flex items-center justify-center rounded p-1 text-slate-600 opacity-0 transition-opacity group-hover:opacity-100 hover:text-slate-300 hover:bg-slate-700/50 focus:opacity-100 focus:outline-none"
+                        >
+                          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden>
+                            <path d="M6.5 1.75a.25.25 0 0 1 .25-.25h2.5a.25.25 0 0 1 .25.25V3h-3V1.75zm4.5 0V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15H5.405a1.748 1.748 0 0 1-1.741-1.576l-.66-6.6a.75.75 0 1 1 1.492-.149z"/>
+                          </svg>
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
