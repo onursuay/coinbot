@@ -23,37 +23,75 @@ import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
 
 /**
- * Phase 7 — paper-mode safety gate for the unified candidate pool.
+ * Phase 14 — mode-safe gate for the unified candidate pool.
  *
- * The unified pool is only allowed to feed worker analysis when ALL three
- * live-trading indicators are negative:
- *  - env.hardLiveTradingAllowed === false  (HARD_LIVE_TRADING_ALLOWED env)
- *  - settings.trading_mode !== "live"      (DB row, paper required)
- *  - settings.enable_live_trading !== true (DB row, must be off)
+ * Candidate selection is mode-independent. The unified pool feeds analysis
+ * for both paper and live modes. Execution safety is handled separately by
+ * the triple gate in live-trading-guard.ts.
  *
- * Any positive indicator flips the worker into "core-only fallback" — the
- * orchestrator is NOT called, no metadata is attached, and the legacy
- * core+dynamic-universe path runs as in Phase 5. This is independent from
- * the existing per-symbol "Dynamic: live modda işlem yok" guard, which is
- * the trade-side block; this gate is the analysis-side block.
+ * Allowed when:
+ *  - trading_mode is "paper" (or unset) — always allowed.
+ *  - trading_mode is "live" — allowed only when the full triple live gate
+ *    passes: env.hardLiveTradingAllowed=true + enable_live_trading=true.
+ *    When gate is not open, live EXECUTION is what stays blocked, not the
+ *    candidate pool analysis layer.
  *
- * Note: this never opens live trading. It only decides whether the unified
- * pool is allowed to widen the analysis universe.
+ * This never opens live trading. It only decides whether the unified pool
+ * is allowed to widen the analysis universe.
+ */
+export interface UnifiedPoolModeCheck {
+  allowed: boolean;
+  /** null when allowed; gate reason when blocked. */
+  blockedReason: string | null;
+  /** "paper" | "live" */
+  tradeMode: string;
+  /** "simulated" | "real" | "live_gate_closed" */
+  executionMode: string;
+}
+
+export function canUseUnifiedCandidatePoolForMode(settings: {
+  trading_mode?: string | null;
+  enable_live_trading?: boolean | null;
+}): UnifiedPoolModeCheck {
+  const isLiveMode = settings.trading_mode === "live";
+
+  if (!isLiveMode) {
+    return {
+      allowed: true,
+      blockedReason: null,
+      tradeMode: settings.trading_mode ?? "paper",
+      executionMode: "simulated",
+    };
+  }
+
+  // Live mode: unified pool allowed only when triple live gate fully passes.
+  const hardAllowed = env.hardLiveTradingAllowed;
+  const enableLive = settings.enable_live_trading === true;
+  if (hardAllowed && enableLive) {
+    return { allowed: true, blockedReason: null, tradeMode: "live", executionMode: "real" };
+  }
+
+  const missing: string[] = [];
+  if (!hardAllowed) missing.push("HARD_LIVE_TRADING_ALLOWED=false");
+  if (!enableLive) missing.push("enable_live_trading=false");
+  return {
+    allowed: false,
+    blockedReason: `live_execution_gate_blocked: ${missing.join(", ")}`,
+    tradeMode: "live",
+    executionMode: "live_gate_closed",
+  };
+}
+
+/**
+ * @deprecated Use canUseUnifiedCandidatePoolForMode instead.
+ * Kept for backwards compatibility with existing callers.
  */
 export function isUnifiedPoolPaperSafe(settings: {
   trading_mode?: string | null;
   enable_live_trading?: boolean | null;
 }): { safe: boolean; reason: string | null } {
-  if (env.hardLiveTradingAllowed) {
-    return { safe: false, reason: "HARD_LIVE_TRADING_ALLOWED=true" };
-  }
-  if (settings.trading_mode === "live") {
-    return { safe: false, reason: "trading_mode=live" };
-  }
-  if (settings.enable_live_trading === true) {
-    return { safe: false, reason: "enable_live_trading=true" };
-  }
-  return { safe: true, reason: null };
+  const check = canUseUnifiedCandidatePoolForMode(settings);
+  return { safe: check.allowed, reason: check.blockedReason };
 }
 
 // Subset of signal-engine raw indicator features promoted to scan_details so the
@@ -269,6 +307,15 @@ export interface TickResult {
   totalUniverseSymbols?: number;
   prefilteredSymbols?: number;
   deeplyAnalyzedSymbols?: number;
+  // Phase 14 — mode-safe diagnostics (display/debug only, never gate trades).
+  /** True when unified candidate pool was allowed for this mode. */
+  unifiedCandidatePoolModeAllowed?: boolean;
+  /** Gate reason when pool was blocked; null when allowed. */
+  unifiedCandidatePoolBlockedReason?: string | null;
+  /** "paper" | "live" — resolved trade mode for this tick. */
+  tradeMode?: string;
+  /** "simulated" | "real" | "live_gate_closed" — resolved execution mode. */
+  executionMode?: string;
   // Coins removed before deep analysis because 24h volume < 5M USDT (signal-engine hard floor).
   // Counted but never added to scanDetails — keeps the table clean.
   lowVolumePrefilterRejected?: number;
@@ -521,10 +568,10 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   // Symbols routed in via the unified pool (treated as DYNAMIC for tier/risk
   // gates — never auto-traded in live mode, just like legacy dynamics).
   const unifiedSymbolSet = new Set<string>();
-  // Phase 7 — paper-mode safety gate (analysis-side, not trade-side).
+  // Phase 14 — mode-safe check: candidate selection is mode-independent.
   // Hoisted here so the diagnostic-population block below has it in scope
   // even when symbols come from opts.symbols (the test/manual path).
-  const paperSafety = isUnifiedPoolPaperSafe(settings);
+  const poolModeCheck = canUseUnifiedCandidatePoolForMode(settings);
 
   if (opts?.symbols && opts.symbols.length > 0) {
     symbols = opts.symbols;
@@ -561,17 +608,15 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         minMomentumPct: 1.0,   // |24h change| must be >= 1% — dead/flat markets excluded
       });
 
-      // ── Phase 6 / 7: optional unified candidate pool ──
-      // Activates only when the feature flag is on AND the paper-mode safety
-      // gate is closed (HARD_LIVE_TRADING_ALLOWED=false +
-      // trading_mode='paper' + enable_live_trading=false). On any positive
-      // live indicator, the worker silently falls back to the legacy
-      // dynamic-candidate list — orchestrator is never invoked. Core
-      // coins are always preserved. On provider failure (universe/ticker/
-      // orchestrator), the bundle is null and we transparently fall
+      // ── Phase 6 / 7 / 14: optional unified candidate pool ──
+      // Activates when the feature flag is on AND the mode-safe check passes.
+      // Candidate selection is mode-independent (Phase 14): pool runs for
+      // paper mode and, when triple live gate is fully open, for live mode.
+      // On mode gate blocked, execution is what stays off — not the pool.
+      // On provider failure the bundle is null and we transparently fall
       // through to the legacy dynamic candidates.
       let unifiedSymbols: string[] = [];
-      if (env.useUnifiedCandidatePool && paperSafety.safe) {
+      if (env.useUnifiedCandidatePool && poolModeCheck.allowed) {
         try {
           unifiedBundle = await getUnifiedCandidates({ exchange });
         } catch {
@@ -589,10 +634,10 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
             unifiedSymbolSet.add(c.symbol);
           }
         }
-      } else if (env.useUnifiedCandidatePool && !paperSafety.safe) {
-        // Flag on but live indicator positive — surface the reason in
-        // diagnostics so dashboards can see why core-only mode is active.
-        result.unifiedProviderError = `paper-safety: ${paperSafety.reason}`;
+      } else if (env.useUnifiedCandidatePool && !poolModeCheck.allowed) {
+        // Flag on but mode/execution gate blocked — surface the reason so
+        // dashboards can see why core-only mode is active.
+        result.unifiedProviderError = poolModeCheck.blockedReason;
       }
 
       // Batch = core coins + (unified deep candidates IF flag on AND non-empty,
@@ -624,14 +669,20 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   // never gate trade decisions. When the flag is off or the safety gate is
   // closed, the bundle stays null and only the (optional) provider error is
   // surfaced — existing dashboards see no behavioural change.
+  // Phase 14 — populate mode-safe diagnostics (display-only).
+  result.unifiedCandidatePoolModeAllowed = poolModeCheck.allowed;
+  result.unifiedCandidatePoolBlockedReason = poolModeCheck.blockedReason;
+  result.tradeMode = poolModeCheck.tradeMode;
+  result.executionMode = poolModeCheck.executionMode;
+
   if (unifiedBundle) {
     result.unifiedCandidatePoolActive = unifiedSymbolSet.size > 0;
     result.unifiedPoolSize = unifiedBundle.poolSize;
     result.unifiedDeepCandidatesCount = unifiedBundle.deepCandidates.length;
     result.unifiedPoolGeneratedAt = unifiedBundle.generatedAt;
     result.unifiedPoolFromCache = unifiedBundle.fromCache;
-  } else if (env.useUnifiedCandidatePool && paperSafety.safe) {
-    // Flag on, gate open, but provider returned null → real error.
+  } else if (env.useUnifiedCandidatePool && poolModeCheck.allowed) {
+    // Flag on, mode gate open, but provider returned null → real error.
     result.unifiedCandidatePoolActive = false;
     if (!result.unifiedProviderError) {
       result.unifiedProviderError = getUnifiedProviderLastError(exchange) ?? "provider returned null";
@@ -1131,6 +1182,11 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     analyzedSymbolsCount: result.analyzedSymbolsCount ?? symbolsToAnalyze.length,
     coreSymbolsCount: result.coreSymbolsCount ?? 0,
     unifiedSymbolsCount: result.unifiedSymbolsCount ?? 0,
+    // Phase 14 — mode-safe diagnostics
+    unifiedCandidatePoolModeAllowed: result.unifiedCandidatePoolModeAllowed ?? true,
+    unifiedCandidatePoolBlockedReason: result.unifiedCandidatePoolBlockedReason ?? null,
+    tradeMode: result.tradeMode ?? poolModeCheck.tradeMode,
+    executionMode: result.executionMode ?? poolModeCheck.executionMode,
     lastOpenedTrade: result.openedPaperTrades[0] ?? null,
     topRejectReasons: result.rejectedSignals.slice(0, 10).map((r) => `${r.symbol}: ${r.reason}`),
     topNearMiss: result.nearMissSignals.slice(0, 5).map((n) => `${n.direction} ${n.symbol} skor=${n.score}`),

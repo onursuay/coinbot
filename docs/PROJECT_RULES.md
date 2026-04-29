@@ -920,6 +920,78 @@ yazılmayacak**, UI sözleşmesi değişmeyecek.
 - `src/app/page.tsx` — kart KPI satırının üstüne yerleştirildi.
 - `src/__tests__/trade-performance-phase13.test.ts` — 34 test.
 
+## Mode-Safe Refactor / Paper-Live Kilidini Kaldırma (Faz 14)
+
+Faz 13.5 audit sonucunda tespit edilen paper/live mimari uyumsuzluğu
+düzeltildi. **Bu faz canlı trading açmaz; gerçek emir gönderimi,
+live execution adapter, live_trades tablosu veya Binance private
+order çağrısı eklenmedi.**
+
+### Ana mimari kural (değişmez)
+
+Paper ve live için ayrı iş mantığı kurulmaz. Tek aday havuz, tek
+signal engine, tek risk lifecycle, tek SL/TP/R:R, tek performans
+analiz modeli. Paper/live farkı yalnızca execution adapter,
+tradeMode, executionType ve live safety gate seviyesindedir.
+
+### Değişiklikler
+
+**`canUseUnifiedCandidatePoolForMode()` — yeni mode-safe helper:**
+
+| Mod | Sonuç |
+|---|---|
+| `trading_mode="paper"` | `allowed=true, executionMode="simulated"` |
+| `trading_mode="live"` + triple gate açık | `allowed=true, executionMode="real"` |
+| `trading_mode="live"` + triple gate kapalı | `allowed=false, executionMode="live_gate_closed"` |
+
+Önceki `isUnifiedPoolPaperSafe()`:
+- `trading_mode="live"` → `safe=false, reason="trading_mode=live"` (paper-locked)
+
+Yeni `canUseUnifiedCandidatePoolForMode()`:
+- `trading_mode="live"` + gate kapalı → `allowed=false, reason="live_execution_gate_blocked: ..."` (execution-gated)
+- `trading_mode="live"` + gate açık → `allowed=true` (mode-independent pool)
+
+**Ayrım:**
+- `isUnifiedPoolPaperSafe()` deprecated wrapper olarak korundu (geriye uyumluluk).
+- Tüm iç kullanım `poolModeCheck` değişkeni ile yeni helper'a geçirildi.
+
+**`last_tick_summary` yeni alanlar (Faz 14):**
+
+| Alan | Anlam |
+|---|---|
+| `unifiedCandidatePoolModeAllowed` | Bu tick için pool mode gate izni |
+| `unifiedCandidatePoolBlockedReason` | Gate kapalıysa sebep; açıksa null |
+| `tradeMode` | `"paper"` veya `"live"` — bu tick'in trade modu |
+| `executionMode` | `"simulated"` / `"real"` / `"live_gate_closed"` |
+
+### Candidate selection vs execution safety ayrımı
+
+- **Candidate pool (aday havuzu):** mode-independent, `canUseUnifiedCandidatePoolForMode()` ile kontrol edilir.
+- **Execution (emir gönderimi):** `live-trading-guard.ts → tripleGate()` ile kontrol edilir.
+- Bu iki katman birbirinden bağımsızdır; aday havuzu paper'a kilitli değildir.
+
+### Bu fazda dokunulmadı
+
+- Canlı trading açılmadı.
+- `HARD_LIVE_TRADING_ALLOWED=false` korundu.
+- `DEFAULT_TRADING_MODE=paper` korundu.
+- `enable_live_trading=false` korundu.
+- `MIN_SIGNAL_CONFIDENCE=70` korundu.
+- `openLiveOrder` / `closeLiveOrder` yazılmadı.
+- `live_trades` tablosu / migration eklenmedi.
+- Binance private/order endpoint çağrısı eklenmedi.
+- Risk settings execution'a bağlanmadı.
+- Trade/signal/risk engine değiştirilmedi.
+- Worker lock mekanizması bozulmadı.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+İlgili dosyalar:
+- `src/lib/engines/bot-orchestrator.ts` — `canUseUnifiedCandidatePoolForMode`,
+  `UnifiedPoolModeCheck` interface, `isUnifiedPoolPaperSafe` deprecated alias,
+  `tickBot` mode-safe refactor, yeni `last_tick_summary` alanları.
+- `src/__tests__/unified-paper-rollout.test.ts` — güncellendi (yeni helper adı).
+- `src/__tests__/mode-safe-refactor-phase14.test.ts` — yeni Faz 14 test paketi.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

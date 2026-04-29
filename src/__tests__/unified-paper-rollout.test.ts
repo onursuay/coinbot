@@ -1,13 +1,13 @@
-// Phase 7 — Unified Candidate Pool, paper-mode rollout tests.
+// Phase 7 / Phase 14 — Unified Candidate Pool, mode-safe rollout tests.
 //
 // Verifies:
-//  - Pure helper isUnifiedPoolPaperSafe() returns the expected verdict for
-//    every combination of (env.hardLiveTradingAllowed × trading_mode ×
-//    enable_live_trading).
+//  - canUseUnifiedCandidatePoolForMode() (Phase 14 — mode-safe helper) returns
+//    the expected verdict for every combination of (trading_mode ×
+//    enable_live_trading × env.hardLiveTradingAllowed).
 //  - Provider exposes the lastError sidecar (set on failure, cleared on
 //    successful refresh).
 //  - Provider returns fromCache flag correctly across calls.
-//  - Codebase invariants: env default true, safety helper present and
+//  - Codebase invariants: env default true, mode-safe helper present and
 //    referenced inside bot-orchestrator hot path, live-trading values
 //    untouched, no scattered Binance fetch.
 
@@ -17,7 +17,7 @@ import path from "node:path";
 import type { Ticker } from "@/lib/exchanges/types";
 import type { MarketSymbolInfo } from "@/lib/market-universe/types";
 import type { ScanModesConfig } from "@/lib/scan-modes/types";
-import { isUnifiedPoolPaperSafe } from "@/lib/engines/bot-orchestrator";
+import { canUseUnifiedCandidatePoolForMode } from "@/lib/engines/bot-orchestrator";
 import {
   getUnifiedCandidates,
   getUnifiedProviderLastError,
@@ -62,38 +62,54 @@ const TICKERS: Record<string, Ticker> = {
   "AVAX/USDT": ticker("AVAX/USDT", { quoteVolume24h: 80_000_000, changePercent24h: 3 }),
 };
 
-describe("isUnifiedPoolPaperSafe — paper-mode safety gate", () => {
-  it("paper + paper-mode + live trading off → SAFE (unified pool may run)", () => {
+describe("canUseUnifiedCandidatePoolForMode — mode-safe gate (Phase 14)", () => {
+  it("paper mode + live trading off → allowed (unified pool may run)", () => {
     expect(env.hardLiveTradingAllowed).toBe(false);
-    const verdict = isUnifiedPoolPaperSafe({
+    const check = canUseUnifiedCandidatePoolForMode({
       trading_mode: "paper",
       enable_live_trading: false,
     });
-    expect(verdict.safe).toBe(true);
-    expect(verdict.reason).toBeNull();
+    expect(check.allowed).toBe(true);
+    expect(check.blockedReason).toBeNull();
+    expect(check.tradeMode).toBe("paper");
+    expect(check.executionMode).toBe("simulated");
   });
 
-  it("trading_mode='live' → NOT safe (orchestrator must NOT run)", () => {
-    const verdict = isUnifiedPoolPaperSafe({
+  it("trading_mode='live' + gate closed → blocked (live execution gate, not paper-lock)", () => {
+    // HARD_LIVE_TRADING_ALLOWED=false in test env — gate cannot fully pass.
+    const check = canUseUnifiedCandidatePoolForMode({
       trading_mode: "live",
       enable_live_trading: false,
     });
-    expect(verdict.safe).toBe(false);
-    expect(verdict.reason).toBe("trading_mode=live");
+    expect(check.allowed).toBe(false);
+    expect(check.blockedReason).toMatch(/live_execution_gate_blocked/);
+    // Reason must NOT say "trading_mode=live" — that was the paper-lock anti-pattern.
+    expect(check.blockedReason).not.toBe("trading_mode=live");
+    expect(check.tradeMode).toBe("live");
+    expect(check.executionMode).toBe("live_gate_closed");
   });
 
-  it("enable_live_trading=true → NOT safe", () => {
-    const verdict = isUnifiedPoolPaperSafe({
-      trading_mode: "paper",
+  it("trading_mode='live' + enable_live_trading=true but hard gate off → still blocked", () => {
+    // env.hardLiveTradingAllowed is false — triple gate cannot pass.
+    const check = canUseUnifiedCandidatePoolForMode({
+      trading_mode: "live",
       enable_live_trading: true,
     });
-    expect(verdict.safe).toBe(false);
-    expect(verdict.reason).toBe("enable_live_trading=true");
+    expect(check.allowed).toBe(false);
+    expect(check.blockedReason).toMatch(/HARD_LIVE_TRADING_ALLOWED=false/);
+    expect(check.executionMode).toBe("live_gate_closed");
   });
 
-  it("missing/unknown values default to SAFE only when no live indicator present", () => {
-    const verdict = isUnifiedPoolPaperSafe({});
-    expect(verdict.safe).toBe(true);
+  it("missing/unknown values default to allowed (paper mode assumed)", () => {
+    const check = canUseUnifiedCandidatePoolForMode({});
+    expect(check.allowed).toBe(true);
+    expect(check.executionMode).toBe("simulated");
+  });
+
+  it("candidate pool is NOT paper-locked: live mode result has tradeMode='live'", () => {
+    const check = canUseUnifiedCandidatePoolForMode({ trading_mode: "live" });
+    // Even when blocked, the tradeMode reflects the actual mode — not 'paper'.
+    expect(check.tradeMode).toBe("live");
   });
 });
 
@@ -174,33 +190,47 @@ describe("provider — fromCache flag", () => {
   });
 });
 
-describe("Phase 7 invariants — codebase", () => {
+describe("Phase 7 / Phase 14 invariants — codebase", () => {
   it("env default for USE_UNIFIED_CANDIDATE_POOL is true", () => {
     const src = read("src/lib/env.ts");
     expect(src).toMatch(/useUnifiedCandidatePool:\s*bool\(process\.env\.USE_UNIFIED_CANDIDATE_POOL,\s*true\)/);
   });
 
-  it("isUnifiedPoolPaperSafe is exported from bot-orchestrator and gates the unified call", () => {
+  it("canUseUnifiedCandidatePoolForMode is exported from bot-orchestrator (Phase 14 name)", () => {
     const src = read("src/lib/engines/bot-orchestrator.ts");
+    expect(src).toMatch(/export function canUseUnifiedCandidatePoolForMode/);
+    // Deprecated alias must also still be exported for backwards compat.
     expect(src).toMatch(/export function isUnifiedPoolPaperSafe/);
-    // Gate is checked alongside the feature flag.
-    expect(src).toMatch(/env\.useUnifiedCandidatePool\s*&&\s*paperSafety\.safe/);
   });
 
-  it("safety gate references all three live-trading indicators", () => {
+  it("internal tickBot usage uses poolModeCheck (mode-safe, not paper-safe)", () => {
+    const src = read("src/lib/engines/bot-orchestrator.ts");
+    expect(src).toMatch(/env\.useUnifiedCandidatePool\s*&&\s*poolModeCheck\.allowed/);
+    // Must NOT reference old paper-safety variable in hot path.
+    expect(src).not.toMatch(/paperSafety\.safe/);
+  });
+
+  it("live gate references env.hardLiveTradingAllowed and enable_live_trading", () => {
     const src = read("src/lib/engines/bot-orchestrator.ts");
     expect(src).toMatch(/hardLiveTradingAllowed/);
-    expect(src).toMatch(/trading_mode\s*===\s*["']live["']/);
     expect(src).toMatch(/enable_live_trading\s*===\s*true/);
   });
 
-  it("last_tick_summary surfaces the new Phase 7 fields", () => {
+  it("last_tick_summary surfaces Phase 7 fields", () => {
     const src = read("src/lib/engines/bot-orchestrator.ts");
     expect(src).toMatch(/unifiedPoolFromCache:/);
     expect(src).toMatch(/unifiedProviderError:/);
     expect(src).toMatch(/analyzedSymbolsCount:/);
     expect(src).toMatch(/coreSymbolsCount:/);
     expect(src).toMatch(/unifiedSymbolsCount:/);
+  });
+
+  it("last_tick_summary surfaces Phase 14 mode-safe fields", () => {
+    const src = read("src/lib/engines/bot-orchestrator.ts");
+    expect(src).toMatch(/unifiedCandidatePoolModeAllowed:/);
+    expect(src).toMatch(/unifiedCandidatePoolBlockedReason:/);
+    expect(src).toMatch(/tradeMode:/);
+    expect(src).toMatch(/executionMode:/);
   });
 
   it("worker .env.example documents USE_UNIFIED_CANDIDATE_POOL=true", () => {
