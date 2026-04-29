@@ -23,8 +23,6 @@ export default function PaperTradesPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Sanal İşlemler</h1>
-
       <section className="card overflow-x-auto">
         <h2 className="font-semibold mb-2">Açık Pozisyonlar</h2>
         <table className="t">
