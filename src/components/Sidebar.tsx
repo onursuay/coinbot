@@ -25,7 +25,7 @@ const NAV = [
   { href: '/scan-modes', label: 'Tarama Modları', icon: Layers },
   { href: '/coins', label: 'Coin Detayı', icon: CircleDollarSign },
   { href: '/paper-trades', label: 'Sanal İşlemler', icon: ReceiptText },
-  { href: '/risk', label: 'Risk Ayarları', icon: ShieldAlert },
+  { href: '/risk', label: 'Risk Yönetimi', icon: ShieldAlert },
   { href: '/api-settings', label: 'API Ayarları', icon: KeyRound },
   { href: '/strategy', label: 'Strateji', icon: Zap },
   { href: '/performance', label: 'Performans', icon: BarChart3 },

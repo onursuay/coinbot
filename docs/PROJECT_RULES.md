@@ -513,6 +513,95 @@ unsurları yer alır. Mod / paper-validation bilgisi ayrı
 - `src/app/page.tsx` — yeni grid'li kart kompozisyonu.
 - `src/__tests__/dashboard-phase9.test.ts` — 48 test.
 
+## Risk Yönetimi ve Güvenli Config Altyapısı (Faz 10)
+
+Risk Yönetimi sayfası **canlı mimariye uygun** bir config altyapısıdır;
+**paper mode güvenli test katmanıdır**. Bu fazda risk ayarları
+**execution path'ine bağlanmaz** — `appliedToTradeEngine` daima
+`false`'dur. Trade engine, signal engine, risk engine execution
+ve canlı trading gate davranışı bu sayfadan etkilenmez.
+
+**Profiller:**
+- `LOW` (DÜŞÜK) — küçük pozisyon, az işlem (%2 / %6 / 2 / 3 / 6).
+- `STANDARD` (STANDART) — varsayılan; küçük sermaye için kontrollü
+  agresif (%3 / %10 / 3 / 5 / 10).
+- `AGGRESSIVE` (AGRESİF) — daha çok pozisyon (%5 / %15 / 4 / 6 / 15).
+- `CUSTOM` (ÖZEL) — kullanıcı tüm alanları elle ayarlar; tek profil
+  30x'e izin verir.
+
+Varsayılan aktif profil: **STANDART**.
+
+**Kaldıraç teknik field kodları:**
+| Bucket | Min | Max |
+|---|---|---|
+| Core Coin | `CCMNKL` | `CCMXKL` |
+| Genel Market | `GNMRMNKL` | `GNMRMXKL` |
+| Manuel Liste | `MNLSTMNKL` | `MNLSTMXKL` |
+
+Varsayılan: `CC 3-20`, `GNMR 10-20`, `MNLST 10-20`. Maks tavan
+`30x`; varsayılan üst limit `20x`. **30x yalnızca ÖZEL profilde**
+kabul edilir ve seçilirse **kırmızı kritik uyarı** üretilir. 30x
+seçilse bile bu fazda trade engine'e uygulanmaz.
+
+**Stop-loss modu:** UI seçimleri `SİSTEM BELİRLESİN / SIKI / STANDART
+/ GENİŞ`. Varsayılan `SİSTEM BELİRLESİN` — bot stop seviyesini kendi
+kuralına göre koymaya devam eder; bu fazda signal/risk engine'e
+bağlanmaz.
+
+**Kademeli yönetim:**
+- `Kârda Kademeli Yönetim`: aktif/pasif (UI/config).
+- `Zararda Pozisyon Artırma`: **DAİMA kapalı**, UI'da `KİLİTLİ`
+  rozetiyle gösterilir, type sisteminde `averageDownEnabled: false`
+  literal'i ile sabittir, store + zod schema seviyesinde reddedilir.
+  Bu kural değişmez.
+
+**Kırmızı risk uyarı eşikleri** (UI + `computeWarnings`):
+- İşlem başı risk > %3 → `RISK_PER_TRADE_HIGH`
+- Günlük max zarar > %10 → `MAX_DAILY_LOSS_HIGH`
+- Dinamik üst sınır > 5 → `DYNAMIC_CAP_HIGH`
+- Max günlük işlem > 10 → `MAX_DAILY_TRADES_HIGH`
+- Herhangi bir bucket max > 20 → `LEVERAGE_MAX_HIGH`
+- Herhangi bir bucket max ≥ 30 → `LEVERAGE_MAX_CRITICAL`
+- Zararda pozisyon büyütme açma denemesi → `AVERAGE_DOWN_BLOCKED`
+
+**Validation kuralları (server + store):**
+- Min kaldıraç max kaldıraçtan büyük olamaz.
+- Kaldıraç 1-30 aralığında olmalı.
+- Risk yüzdeleri negatif olamaz; günlük max zarar 0'dan büyük olmalı.
+- Dinamik üst sınır varsayılan açık pozisyondan düşük olamaz.
+- Max günlük işlem ≥ 1.
+- Toplam sermaye ≥ 0.
+- 30x sadece ÖZEL profilde.
+- `averageDownEnabled = true` her zaman reddedilir.
+- `appliedToTradeEngine !== false` reddedilir.
+
+**API:**
+- `GET /api/risk-settings` → `{ settings, warnings }`.
+- `PUT /api/risk-settings` → patch-style; validation hatasında
+  `400 + errors[]`.
+- Endpoint hiçbir Binance API çağrısı yapmaz.
+
+**Trading invariant'leri (bu fazda değişmedi):**
+- `HARD_LIVE_TRADING_ALLOWED=false`
+- `DEFAULT_TRADING_MODE=paper`
+- `enable_live_trading=false`
+- `MIN_SIGNAL_CONFIDENCE=70` (signal-engine `if (score < 70)` kapısı)
+- BTC trend filtresi, SL/TP/R:R, risk engine, kaldıraç execution,
+  worker lock, unified candidate provider mantığı
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu —
+  yeni Binance fetch/axios eklenmedi.
+
+İlgili dosyalar:
+- `src/lib/risk-settings/types.ts` — profil/policy/defaults/types.
+- `src/lib/risk-settings/validation.ts` — `validateRiskSettings`,
+  `computeWarnings`, `isExtremeLeverageAllowed`.
+- `src/lib/risk-settings/store.ts` — in-memory store + patch.
+- `src/app/api/risk-settings/route.ts` — GET + PUT.
+- `src/app/risk/page.tsx` — kart bazlı UI (6 grup).
+- `src/components/Sidebar.tsx` — etiket "Risk Ayarları" → "Risk
+  Yönetimi".
+- `src/__tests__/risk-settings-phase10.test.ts` — 49 test.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
