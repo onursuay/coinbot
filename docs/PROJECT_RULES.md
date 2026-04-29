@@ -427,6 +427,92 @@ ayrılır (bold + hafif background tint).
   features içinde hesaplanıyordu; trade kararını etkilemez).
 - `src/__tests__/scanner-ui-phase8.test.ts` — yeni test paketi.
 
+## Dashboard / Panel Kart Mimarisi (Faz 9)
+
+Dashboard ana sayfası **kart bazlıdır**. Düz yazı / defter / uzun
+rapor formatı kullanılmaz. Bilgiler kompakt kutular, gauge/bar,
+tablo-kart ve kısa özet metinler ile sunulur.
+
+**Sayfa rolleri (değişmez):**
+- **Dashboard** (`/`) — özet ve karar destek kartlarını gösterir.
+- **Piyasa Tarayıcı** (`/scanner`) — yalnızca coin operasyon
+  tablosudur (Faz 8). Dashboard kartı eklenmez.
+- **Tarama Modları** (`/scan-modes`) — yalnızca aktif/pasif kontrolü.
+  Dashboard kartı eklenmez.
+
+**Bot Durumu kartı dili (ürün kuralı):**
+Ana Bot Durumu kartı **operasyonel** dil kullanır. Bu kartta
+`MOD: SANAL`, `PAPER MODE`, `YAKINDA CANLI`, `SANAL İŞLEM MODU`
+ifadeleri **gösterilmez**. Bunun yerine `BOT: ÇALIŞIYOR / DURDU`,
+`BORSA: BINANCE FUTURES`, `PİYASA VERİSİ: CANLI`,
+`SUNUCU: ÇEVRİMİÇİ / ÇEVRİMDIŞI`, `SON GÜNCELLEME` ve `ACİL DURDUR`
+unsurları yer alır. Mod / paper-validation bilgisi ayrı
+**Paper İşlem Doğrulaması** kartında gösterilir.
+
+**Karar destek kartları:**
+- **Piyasa Nabzı** — `RİSK İŞTAHI`, `FOMO DÜZEYİ`, `PİYASA RİSKİ`
+  yüzde + bar olarak; kısa Türkçe yorum (örn. "Piyasa seçici
+  şekilde güçlü; FOMO riski artıyor."). Trade kararını
+  **etkilemez**, observation-only.
+- **Fırsat Radarı** — `GÜÇLÜ FIRSAT`, `EŞİĞE YAKIN`, `YÖN BEKLEYEN`,
+  `RİSKTEN ELENEN` sayımları + zarif radar sweep. Animasyon hafif
+  ve performans dostudur.
+- **Pozisyon Karar Merkezi** — Faz 8 ile bire bir aynı kolon seti:
+  `COIN · KAYNAK · YÖN · KALİTE · FIRSAT · İŞLEM SKORU · KARAR ·
+  SEBEP`. Tüm başlıklar büyük harf. Kaynak kısa: `GMT/MT/MİL/KRM`.
+  WAIT/NO_TRADE ham etiketleri ana UI'da görünmez.
+- **Pozisyona En Yakın Coinler** — en fazla 5 coin, sıralama
+  `tradeSignalScore` desc → `setupScore` desc. Her satır
+  yön etiketi, `İŞLEM/70`, `EŞİĞE Np` farkı ve "Eksik:"
+  metnini içerir. Güçlü aday yoksa "Bu periyotta güçlü fırsat yok."
+- **Açık Pozisyonlar** — paper açık satırlar **bold + bg-success/5**
+  ile aday satırlardan ayrışır.
+- **En Çok Engelleyen Sebepler** — son tick'in reject sebepleri
+  `BTC FİLTRESİ`, `HACİM ZAYIF`, `MACD UYUMSUZ`, `R:R GEÇERSİZ`
+  gibi sınıflara indirgenir; veri yoksa "Yeterli karar verisi
+  oluşmadı."
+- **Bugünkü Özet** — kompakt 6 kutu (analiz / aday havuzu /
+  eşiğe yakın / açılan / kapanan / toplam PnL).
+- **Paper İşlem Doğrulaması** — henüz paper trade açılmamışsa
+  kırmızı hata değil **gri "BEKLENİYOR"** durumu gösterir;
+  `first_trade_opened` ham hatası kullanıcıya kırmızı yansıtılmaz.
+
+**Aksiyon kart altyapısı (`ActionFooter`):**
+- Sadece **aksiyon gerektiren** kartlarda manuel olarak monte
+  edilir; her kartın altında otomatik görünmez.
+- Butonlar: `ONAYLA`, `REDDET`, `GÖZLEM` (≈1 hafta), `PROMPT`
+  (gelecekte Claude Code / Codex talimatı üretmek için).
+- Bu fazda hiçbir kritik ayar değiştirilmez; component sadece
+  parent'a `onAction(kind, actionId)` callback'i iletir.
+- ActionFooter doğrudan trade engine, risk engine veya canlı
+  trading gate fonksiyonu çağırmaz.
+
+**Veri kaynağı:**
+- `/api/bot/status`, `/api/bot/heartbeat`, `/api/bot/diagnostics`,
+  `/api/paper-trades*`, `/api/system/env-check`. Hiçbiri yeni
+  Binance API çağrısı eklemez; mevcut DB/diagnostics okunur.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+**Trading invariant'leri (bu fazda dokunulmadı):**
+- `HARD_LIVE_TRADING_ALLOWED=false`
+- `DEFAULT_TRADING_MODE=paper`
+- `enable_live_trading=false`
+- `MIN_SIGNAL_CONFIDENCE=70`
+- BTC trend filtresi, SL/TP/R:R, risk engine, kaldıraç, worker lock
+- Unified candidate provider mantığı
+
+İlgili dosyalar:
+- `src/lib/dashboard/labels.ts` — ortak yön/karar/kaynak mapping +
+  threshold sabit (paylaşımlı saf yardımcılar).
+- `src/lib/dashboard/market-pulse.ts` — Piyasa Nabzı hesabı.
+- `src/lib/dashboard/opportunity-radar.ts` — radar sayımları.
+- `src/lib/dashboard/blocking-reasons.ts` — engelleyici sebepler
+  aggregator'ı.
+- `src/components/dashboard/Cards.tsx` — kart bileşenleri.
+- `src/components/dashboard/ActionFooter.tsx` — aksiyon altyapısı.
+- `src/app/page.tsx` — yeni grid'li kart kompozisyonu.
+- `src/__tests__/dashboard-phase9.test.ts` — 48 test.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
