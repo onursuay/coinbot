@@ -102,6 +102,50 @@ describe("Risk Settings Persistence Bugfix", () => {
     expect(mig).toMatch(/ON CONFLICT \(user_id\) DO NOTHING/i);
   });
 
+  it("GET path force-reloads from DB so warm Vercel lambdas don't serve stale defaults", () => {
+    const store = read("src/lib/risk-settings/store.ts");
+    const route = read("src/app/api/risk-settings/route.ts");
+    // Store exposes a force-reload helper that bypasses the per-process
+    // hydrated flag. This is the runtime fix: without it, instance B can
+    // serve stale defaults after instance A persisted new values.
+    expect(store).toMatch(/export async function forceReloadFromDb/);
+    // GET API uses the force-reload helper, not just ensureHydrated().
+    expect(route).toMatch(/forceReloadFromDb\(\)/);
+  });
+
+  it("PUT path verifies the DB write actually landed (no phantom success)", () => {
+    const store = read("src/lib/risk-settings/store.ts");
+    // After upsert/update we read back the row to confirm risk_settings
+    // is non-null. If the verify read returns empty, persist reports
+    // failure rather than success.
+    expect(store).toMatch(/DB write verified empty/);
+    // Fallback path — if upsert errors, do explicit select-then-update/insert.
+    expect(store).toMatch(/select-then-update\/insert|select\("user_id"\)/);
+  });
+
+  it("GET ?debug=1 exposes safe persistence diagnostics", () => {
+    const route = read("src/app/api/risk-settings/route.ts");
+    const store = read("src/lib/risk-settings/store.ts");
+    expect(route).toMatch(/debug.*=\s*url\.searchParams\.get\("debug"\)/);
+    expect(store).toMatch(/getDebugSnapshot/);
+    // Debug snapshot must include the diagnostic fields the spec requires.
+    expect(store).toMatch(/dbRowFound/);
+    expect(store).toMatch(/dbRiskSettingsPresent/);
+    expect(store).toMatch(/dbRiskSettingsProfile/);
+    expect(store).toMatch(/dbRiskSettingsCapital/);
+    expect(store).toMatch(/hasSupabaseConfigured/);
+    expect(store).toMatch(/selectedUserId/);
+    // Debug snapshot must NOT leak secrets like service role keys.
+    expect(store).not.toMatch(/service_role|SERVICE_ROLE|apiKey|api_key/i);
+  });
+
+  it("Save events are logged to bot_logs (clicked / success / failed)", () => {
+    const route = read("src/app/api/risk-settings/route.ts");
+    expect(route).toMatch(/risk_settings_save_clicked/);
+    expect(route).toMatch(/risk_settings_save_success/);
+    expect(route).toMatch(/risk_settings_save_failed/);
+  });
+
   it("Trade engine + live gate invariants remain untouched", () => {
     const env = read("src/lib/env.ts");
     expect(env).toMatch(/HARD_LIVE_TRADING_ALLOWED/);

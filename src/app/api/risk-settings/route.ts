@@ -4,9 +4,12 @@ import {
   getRiskSettings,
   updateAndPersistRiskSettings,
   computeWarnings,
-  ensureHydrated,
+  forceReloadFromDb,
   getPersistenceStatus,
+  getDebugSnapshot,
 } from "@/lib/risk-settings";
+import { botLog } from "@/lib/logger";
+import { getCurrentUserId } from "@/lib/auth";
 
 // Phase 10 — Risk Yönetimi config endpoint.
 //
@@ -17,19 +20,30 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  await ensureHydrated();
+export async function GET(req: Request) {
+  // Persistence Runtime Fix — always re-read from DB so a warm Vercel
+  // lambda never serves stale defaults after another instance persisted
+  // new values. Risk settings is a low-traffic config endpoint; aggressive
+  // in-memory caching is the wrong trade-off here.
+  await forceReloadFromDb();
   const settings = getRiskSettings();
   const status = getPersistenceStatus();
   const persistenceStatus = status.state === "ok" ? "ok" : "fallback";
-  return ok({
+
+  const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
+
+  const base = {
     settings,
     warnings: computeWarnings(settings),
     persistenceStatus,
     persistenceErrorSafe: status.errorSafe,
     lastSavedAt: status.lastSavedAt,
     lastHydratedAt: status.lastHydratedAt,
-  });
+  };
+  if (!debug) return ok(base);
+  const snapshot = await getDebugSnapshot();
+  return ok({ ...base, debug: snapshot });
 }
 
 const Body = z.object({
@@ -65,22 +79,41 @@ const Body = z.object({
 });
 
 export async function PUT(req: Request) {
-  // Hydrate first so persist isn't writing on top of a stale-empty state.
-  await ensureHydrated();
+  // Re-read from DB so the patch is applied on top of the latest persisted
+  // state, not a stale per-instance in-memory copy. This also makes the
+  // PUT path coherent across Vercel lambda instances.
+  await forceReloadFromDb();
   const parsed = await parseBody(req, Body);
   if (isResponse(parsed)) return parsed;
+  const userId = getCurrentUserId();
+  await botLog({
+    userId, level: "info", eventType: "risk_settings_save_clicked",
+    message: `Risk Yönetimi save isteği — profile=${parsed.profile ?? "(no-change)"} capital=${parsed.capital?.totalCapitalUsdt ?? "(no-change)"}`,
+  });
   const result = await updateAndPersistRiskSettings(parsed);
   if (!result.ok) {
     if (result.stage === "validation") {
+      await botLog({
+        userId, level: "warn", eventType: "risk_settings_save_failed",
+        message: `Risk Yönetimi validation reddi: ${result.errors.join(" | ").slice(0, 200)}`,
+      });
       return fail("Geçersiz risk ayarı", 400, { errors: result.errors });
     }
     // Persistence failure must NOT silently report success.
+    await botLog({
+      userId, level: "error", eventType: "risk_settings_save_failed",
+      message: `Risk Yönetimi DB yazılamadı: ${result.errorSafe.slice(0, 200)}`,
+    });
     return fail("Risk ayarları kalıcı olarak kaydedilemedi", 500, {
       persistenceStatus: "error",
       persistenceErrorSafe: result.errorSafe,
       settings: result.data,
     });
   }
+  await botLog({
+    userId, level: "info", eventType: "risk_settings_save_success",
+    message: `Risk Yönetimi kaydedildi — profile=${result.data.profile} capital=${result.data.capital.totalCapitalUsdt}`,
+  });
   return ok({
     settings: result.data,
     warnings: computeWarnings(result.data),

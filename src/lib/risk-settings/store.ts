@@ -1,9 +1,15 @@
 // Phase 10 — Risk Yönetimi in-memory store.
 //
-// Scan-modes ile aynı pattern: serverless cold-start'ta in-memory state
-// kaybolur, ensureHydrated() çağrısı Supabase'den geri yükler. Hiçbir trade
-// engine veya canlı trading gate fonksiyonu bu store'a bağlı değildir.
-// Patch'ler validation'dan geçer.
+// Vercel serverless: birden fazla lambda instance paralel koşar. Bu yüzden
+// API GET path her çağrıda DB'den yeniden okur (forceReloadFromDb). Aksi
+// halde A instance'ı PUT'la DB'yi günceller ama B instance'ı kendi
+// hydrated=true cache'iyle eski default değerleri döner — kullanıcı hard
+// refresh sonrası ayarların kaybolduğunu görür.
+//
+// Trade engine sync getRiskSettings() çağırır; bu da en son hydrate edilmiş
+// state'i döner. Worker tick'leri ensureHydrated() çağırarak cold start'tan
+// sonra ilk tick'te DB'den yükler. Hiçbir live trading gate fonksiyonu bu
+// store'a bağlı değildir.
 
 import {
   defaultRiskSettings,
@@ -73,12 +79,20 @@ function mergeStored(stored: unknown): RiskSettings | null {
   return v.ok ? merged : null;
 }
 
-async function hydrateFromDb(): Promise<void> {
-  if (hydrated) return;
+/**
+ * Reads the persisted row from Supabase. Captures both whether the row
+ * exists and whether the JSONB column is populated — both are needed for
+ * accurate diagnostics. State is replaced atomically when validation
+ * passes; on validation failure the in-memory defaults are kept and
+ * persistenceStatus moves to "fallback".
+ */
+async function readFromDb(): Promise<{
+  rowFound: boolean;
+  riskSettingsPresent: boolean;
+}> {
   if (!supabaseConfigured()) {
-    hydrated = true;
     setStatus({ state: "unconfigured" });
-    return;
+    return { rowFound: false, riskSettingsPresent: false };
   }
   try {
     const userId = getCurrentUserId();
@@ -88,30 +102,71 @@ async function hydrateFromDb(): Promise<void> {
       .eq("user_id", userId)
       .maybeSingle();
     if (error) throw error;
+    const rowFound = data != null;
     const stored = (data as any)?.risk_settings ?? null;
+    const riskSettingsPresent = stored != null;
     if (stored) {
       const merged = mergeStored(stored);
       if (merged) {
         state = clone(merged);
-        setStatus({ state: "ok", lastHydratedAt: Date.now() });
+        setStatus({
+          state: "ok",
+          lastHydratedAt: Date.now(),
+          lastSavedAt: persistenceStatus.lastSavedAt,
+        });
       } else {
-        setStatus({ state: "fallback", errorSafe: "stored risk_settings failed validation", lastHydratedAt: Date.now() });
+        setStatus({
+          state: "fallback",
+          errorSafe: "stored risk_settings failed validation",
+          lastHydratedAt: Date.now(),
+          lastSavedAt: persistenceStatus.lastSavedAt,
+        });
       }
     } else {
-      // No stored row yet — defaults are fine. This is not a failure.
-      setStatus({ state: "ok", lastHydratedAt: Date.now() });
+      // No stored payload yet — defaults are correct, not a failure.
+      setStatus({
+        state: "ok",
+        lastHydratedAt: Date.now(),
+        lastSavedAt: persistenceStatus.lastSavedAt,
+      });
     }
+    return { rowFound, riskSettingsPresent };
   } catch (e) {
-    setStatus({ state: "fallback", errorSafe: safeErr(e) });
-  } finally {
-    hydrated = true;
+    setStatus({
+      state: "fallback",
+      errorSafe: safeErr(e),
+      lastHydratedAt: persistenceStatus.lastHydratedAt,
+      lastSavedAt: persistenceStatus.lastSavedAt,
+    });
+    return { rowFound: false, riskSettingsPresent: false };
   }
+}
+
+async function hydrateFromDb(): Promise<void> {
+  if (hydrated) return;
+  await readFromDb();
+  hydrated = true;
 }
 
 export function ensureHydrated(): Promise<void> {
   if (hydrated) return Promise.resolve();
   if (!hydrationPromise) hydrationPromise = hydrateFromDb();
   return hydrationPromise;
+}
+
+/**
+ * Force a fresh read from the DB regardless of the per-process hydrated
+ * flag. Used by the GET API path so reads are coherent across Vercel
+ * lambda instances (a warm instance must not serve stale defaults after
+ * another instance persisted new values).
+ */
+export async function forceReloadFromDb(): Promise<{
+  rowFound: boolean;
+  riskSettingsPresent: boolean;
+}> {
+  const r = await readFromDb();
+  hydrated = true;
+  return r;
 }
 
 /**
@@ -122,15 +177,47 @@ async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number
   if (!supabaseConfigured()) {
     return { ok: false, errorSafe: "Supabase not configured" };
   }
+  const sb = supabaseAdmin();
+  const userId = getCurrentUserId();
+  const payload = { user_id: userId, risk_settings: s };
   try {
-    const userId = getCurrentUserId();
-    const { error } = await supabaseAdmin()
+    // Primary path — upsert on the unique user_id constraint.
+    const { error: upsertErr } = await sb
       .from("bot_settings")
-      .upsert(
-        { user_id: userId, risk_settings: s },
-        { onConflict: "user_id" },
-      );
-    if (error) throw error;
+      .upsert(payload, { onConflict: "user_id" });
+    if (upsertErr) {
+      // Fallback — if the unique constraint isn't honored as expected,
+      // explicitly select-then-update/insert so we never silently no-op.
+      const { data: existing, error: selErr } = await sb
+        .from("bot_settings")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (selErr) throw selErr;
+      if (existing) {
+        const { error: updErr } = await sb
+          .from("bot_settings")
+          .update({ risk_settings: s })
+          .eq("user_id", userId);
+        if (updErr) throw updErr;
+      } else {
+        const { error: insErr } = await sb
+          .from("bot_settings")
+          .insert(payload);
+        if (insErr) throw insErr;
+      }
+    }
+    // Verify by reading back — confirms the write actually landed and
+    // that the row is keyed where we expect.
+    const { data: verify, error: verifyErr } = await sb
+      .from("bot_settings")
+      .select("risk_settings")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (verifyErr) throw verifyErr;
+    if (!verify || (verify as any).risk_settings == null) {
+      throw new Error("DB write verified empty — risk_settings did not persist");
+    }
     const savedAt = Date.now();
     setStatus({
       state: "ok",
@@ -174,6 +261,77 @@ export function getRiskSettings(): RiskSettings {
 
 export function getPersistenceStatus(): PersistenceStatus {
   return { ...persistenceStatus };
+}
+
+/**
+ * Safe debug snapshot for the GET ?debug=1 endpoint. Reads the DB row
+ * directly so the response reflects current persisted state, not the
+ * per-instance in-memory cache. Returns no secrets.
+ */
+export interface RiskSettingsDebugSnapshot {
+  hasSupabaseConfigured: boolean;
+  selectedUserId: string;
+  persistenceStatus: PersistenceState;
+  persistenceErrorSafe?: string;
+  lastSavedAt?: number;
+  lastHydratedAt?: number;
+  dbRowFound: boolean;
+  dbRiskSettingsPresent: boolean;
+  dbRiskSettingsProfile: RiskProfileKey | null;
+  dbRiskSettingsCapital: number | null;
+  inMemoryProfile: RiskProfileKey;
+  inMemoryCapital: number;
+  hydratedFlag: boolean;
+}
+
+export async function getDebugSnapshot(): Promise<RiskSettingsDebugSnapshot> {
+  const hasSupabaseConfigured = supabaseConfigured();
+  const selectedUserId = getCurrentUserId();
+  let dbRowFound = false;
+  let dbRiskSettingsPresent = false;
+  let dbRiskSettingsProfile: RiskProfileKey | null = null;
+  let dbRiskSettingsCapital: number | null = null;
+  if (hasSupabaseConfigured) {
+    try {
+      const { data, error } = await supabaseAdmin()
+        .from("bot_settings")
+        .select("risk_settings")
+        .eq("user_id", selectedUserId)
+        .maybeSingle();
+      if (!error) {
+        dbRowFound = data != null;
+        const stored = (data as any)?.risk_settings ?? null;
+        dbRiskSettingsPresent = stored != null;
+        if (stored && typeof stored === "object") {
+          const p = (stored as any).profile;
+          if (p === "LOW" || p === "STANDARD" || p === "AGGRESSIVE" || p === "CUSTOM") {
+            dbRiskSettingsProfile = p;
+          }
+          const cap = (stored as any).capital?.totalCapitalUsdt;
+          if (typeof cap === "number" && Number.isFinite(cap)) {
+            dbRiskSettingsCapital = cap;
+          }
+        }
+      }
+    } catch {
+      // Diagnostics-only — surface DB read errors via persistenceStatus already.
+    }
+  }
+  return {
+    hasSupabaseConfigured,
+    selectedUserId,
+    persistenceStatus: persistenceStatus.state,
+    persistenceErrorSafe: persistenceStatus.errorSafe,
+    lastSavedAt: persistenceStatus.lastSavedAt,
+    lastHydratedAt: persistenceStatus.lastHydratedAt,
+    dbRowFound,
+    dbRiskSettingsPresent,
+    dbRiskSettingsProfile,
+    dbRiskSettingsCapital,
+    inMemoryProfile: state.profile,
+    inMemoryCapital: state.capital.totalCapitalUsdt,
+    hydratedFlag: hydrated,
+  };
 }
 
 export interface RiskSettingsPatch {
