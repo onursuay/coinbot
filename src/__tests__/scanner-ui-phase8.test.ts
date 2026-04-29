@@ -664,3 +664,92 @@ describe("Trade Score Column Simplification Patch", () => {
     expect(SCANNER_PAGE).not.toMatch(/api\.binance\.com/);
   });
 });
+
+// ── 25. Scanner Reason Cleanup + Hover Marquee Patch ────────────────
+describe("Scanner Reason Cleanup + Hover Marquee Patch", () => {
+  const GLOBALS_CSS = read("src/app/globals.css");
+
+  it("SEBEP metninde 'Filtrelendi:' prefix'i kaldırıldı (DISPLAY_FILTER_TR)", () => {
+    // DISPLAY_FILTER_TR mapping artık prefix içermemeli.
+    expect(SCANNER_PAGE).not.toMatch(/"Filtrelendi: piyasa kalitesi düşük"/);
+    expect(SCANNER_PAGE).not.toMatch(/"Filtrelendi: setup eşiği düşük"/);
+    expect(SCANNER_PAGE).not.toMatch(/"Filtrelendi: işlem skoru düşük"/);
+  });
+
+  it("DISPLAY_FILTER_TR'de capitalized değerler mevcut", () => {
+    expect(SCANNER_PAGE).toMatch(/"Piyasa kalitesi düşük"/);
+    expect(SCANNER_PAGE).toMatch(/"Setup eşiği düşük"/);
+    expect(SCANNER_PAGE).toMatch(/"İşlem skoru düşük"/);
+  });
+
+  it("cleanReasonText fonksiyonu tanımlı", () => {
+    expect(SCANNER_PAGE).toMatch(/function cleanReasonText/);
+  });
+
+  it("cleanReasonText 'Filtrelendi: ' prefixini strip ediyor", () => {
+    expect(SCANNER_PAGE).toMatch(/Filtrelendi: /);
+    expect(SCANNER_PAGE).toMatch(/REASON_STRIP_PREFIXES/);
+  });
+
+  it("cleanReasonText 'Aday elendi: ' prefixini strip ediyor", () => {
+    expect(SCANNER_PAGE).toMatch(/Aday elendi: /);
+  });
+
+  it("buildReasonText sonucu cleanReasonText'ten geçiriliyor", () => {
+    expect(SCANNER_PAGE).toMatch(/cleanReasonText\(buildReasonText\(r\)\)/);
+  });
+
+  it("SEBEP hücresi reason-cell class'ını taşıyor", () => {
+    expect(SCANNER_PAGE).toMatch(/reason-cell/);
+  });
+
+  it("SEBEP içindeki span reason-text class'ını taşıyor", () => {
+    expect(SCANNER_PAGE).toMatch(/reason-text/);
+  });
+
+  it("SEBEP hücresi title ile tam sebep metnini içeriyor (tooltip korundu)", () => {
+    expect(SCANNER_PAGE).toMatch(/title=\{reasonText\}/);
+  });
+
+  it("globals.css'de reason-scroll keyframe tanımlı", () => {
+    expect(GLOBALS_CSS).toMatch(/@keyframes reason-scroll/);
+    expect(GLOBALS_CSS).toMatch(/translateX/);
+  });
+
+  it("globals.css'de tr:hover .reason-text animasyonu tanımlı", () => {
+    expect(GLOBALS_CSS).toMatch(/tr:hover .reason-text/);
+    expect(GLOBALS_CSS).toMatch(/reason-scroll/);
+  });
+
+  it("globals.css'de reason-cell overflow:hidden ve max-width tanımlı", () => {
+    expect(GLOBALS_CSS).toMatch(/\.reason-cell/);
+    expect(GLOBALS_CSS).toMatch(/overflow:\s*hidden/);
+    expect(GLOBALS_CSS).toMatch(/max-width:\s*240px/);
+  });
+
+  it("body/html overflow-x:hidden korunuyor (sayfa yatay kaymaz)", () => {
+    expect(GLOBALS_CSS).toMatch(/overflow-x:\s*hidden/);
+  });
+
+  it("KARAR sütunu değişmedi — decisionLabel render korunuyor", () => {
+    expect(SCANNER_PAGE).toMatch(/decisionLabel/);
+    expect(SCANNER_PAGE).toMatch(/mapDecisionLabel/);
+  });
+
+  it("Trade logic değişmedi — MIN_SIGNAL_CONFIDENCE=70", () => {
+    const eng = read("src/lib/engines/signal-engine.ts");
+    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+  });
+
+  it("Live gate değişmedi — HARD_LIVE_TRADING_ALLOWED=false", () => {
+    const env = read("src/lib/env.ts");
+    expect(env).toMatch(/HARD_LIVE_TRADING_ALLOWED.*false/);
+  });
+
+  it("Binance order/leverage endpoint yok", () => {
+    expect(SCANNER_PAGE).not.toMatch(/fapi\/v1\/order/);
+    expect(SCANNER_PAGE).not.toMatch(/fapi\/v1\/leverage/);
+    expect(SCANNER_PAGE).not.toMatch(/fapi\.binance\.com/);
+    expect(SCANNER_PAGE).not.toMatch(/api\.binance\.com/);
+  });
+});

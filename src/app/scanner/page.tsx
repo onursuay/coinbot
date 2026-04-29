@@ -173,14 +173,36 @@ const WAIT_CODE_TR: Record<string, string> = {
 // Display filter reason text mapping — mirrors backend buildDisplayFilterReasonText.
 // Used as fallback when worker did not populate displayFilterReasonText (older versions).
 const DISPLAY_FILTER_TR: Record<string, string> = {
-  quality_below_threshold: "Filtrelendi: piyasa kalitesi düşük",
-  setup_below_threshold: "Filtrelendi: setup eşiği düşük",
-  signal_below_threshold: "Filtrelendi: işlem skoru düşük",
+  quality_below_threshold: "Piyasa kalitesi düşük",
+  setup_below_threshold: "Setup eşiği düşük",
+  signal_below_threshold: "İşlem skoru düşük",
   low_volume: "Hacim zayıf",
   weak_momentum: "Yön teyidi bekleniyor: hacim zayıf",
   btc_conflict: "BTC yönü ters",
   no_confirmed_direction: "Yön teyidi yok",
 };
+
+// Strips redundant status prefixes from reason text that is already communicated
+// by the KARAR column (e.g. "Filtrelendi:" when KARAR already shows FİLTRELENDİ).
+const REASON_STRIP_PREFIXES = [
+  "Filtrelendi: ",
+  "Aday elendi: ",
+  "İşlem yok: ",
+  "Beklemede: ",
+];
+
+function cleanReasonText(text: string): string {
+  if (!text || text === "—") return text;
+  let s = text;
+  for (const p of REASON_STRIP_PREFIXES) {
+    if (s.toLowerCase().startsWith(p.toLowerCase())) {
+      s = s.slice(p.length);
+      break;
+    }
+  }
+  if (!s) return text;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 function buildReasonText(row: ScanRow): string {
   // Display-filtered dynamic rows: explain WHY they didn't make the strict scanner gate.
@@ -558,7 +580,7 @@ export default function ScannerPage() {
               {rows.map((r) => {
                 const directionLabel = mapDirectionLabel(r);
                 const decisionLabel = mapDecisionLabel(r);
-                const reasonText = buildReasonText(r);
+                const reasonText = cleanReasonText(buildReasonText(r));
                 const opened = r.opened === true;
                 const rowClass = opened
                   ? "font-semibold bg-success/5"
@@ -616,8 +638,8 @@ export default function ScannerPage() {
                         {decisionLabel}
                       </span>
                     </td>
-                    <td className="pr-12 text-left max-w-[240px]" title={reasonText}>
-                      <span className="text-xs text-slate-400 truncate inline-block max-w-[240px] align-middle">
+                    <td className="pr-12 text-left reason-cell" title={reasonText}>
+                      <span className="text-xs text-slate-400 reason-text align-middle">
                         {reasonText}
                       </span>
                     </td>

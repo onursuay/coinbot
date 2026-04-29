@@ -59,3 +59,22 @@ table.t-centered td { @apply text-center; }
 @keyframes snake-spin {
   to { --snake-angle: 360deg; }
 }
+
+/* Scanner SEBEP sütunu — hover'da uzun metinleri yatay kaydırarak göster */
+@keyframes reason-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-200px); }
+}
+.reason-cell {
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 240px;
+  position: relative;
+}
+.reason-text {
+  display: inline-block;
+  white-space: nowrap;
+}
+tr:hover .reason-text {
+  animation: reason-scroll 7s ease-in-out infinite alternate;
+}
