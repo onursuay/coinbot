@@ -537,7 +537,38 @@ describe("Bugfix 1.2 — Scanner tickSkipped boş tablo mesajı", () => {
   });
 });
 
-// ── 22. Bugfix 1.2 — invariantler değişmedi ─────────────────────────
+// ── 22.5 Scanner Coin Column Alignment Patch ────────────────────────
+describe("Scanner Coin Column Alignment Patch", () => {
+  it("COIN <th> sola yaslı (!text-left)", () => {
+    expect(SCANNER_PAGE).toMatch(/<th className="!text-left">COIN<\/th>/);
+  });
+
+  it("COIN <td> sola yaslı (!text-left)", () => {
+    // Coin hücresi className içinde !text-left taşımalı.
+    expect(SCANNER_PAGE).toMatch(/!text-left[^"]*\$\{opened\s*\?\s*"font-bold"\s*:\s*"font-medium"\}/);
+  });
+
+  it("Coin sütunundan ADAY rozeti kaldırıldı", () => {
+    // Coin hücresinde "ADAY" metni veya display filter badge bloğu yok.
+    expect(SCANNER_PAGE).not.toMatch(/>\s*ADAY\s*</);
+    expect(SCANNER_PAGE).not.toMatch(/display filtresi/);
+  });
+
+  it("YÖN sütunundaki LONG ADAY / SHORT ADAY etiketleri korunur", () => {
+    expect(SCANNER_PAGE).toMatch(/"LONG ADAY"/);
+    expect(SCANNER_PAGE).toMatch(/"SHORT ADAY"/);
+    expect(SCANNER_PAGE).toMatch(/"YÖN BEKLİYOR"/);
+  });
+
+  it("Diğer kolon başlıklarına !text-left eklenmedi (yalnız COIN)", () => {
+    // !text-left scanner sayfasında yalnız COIN kolonu için kullanılmalı.
+    const matches = SCANNER_PAGE.match(/!text-left/g) ?? [];
+    // 1 header (th) + 1 cell (td) = toplam 2 kullanım.
+    expect(matches.length).toBe(2);
+  });
+});
+
+// ── 23. Bugfix 1.2 — invariantler değişmedi ─────────────────────────
 describe("Bugfix 1.2 — trade & live gate invariantleri", () => {
   it("MIN_SIGNAL_CONFIDENCE=70 korunmuş", () => {
     const eng = read("src/lib/engines/signal-engine.ts");

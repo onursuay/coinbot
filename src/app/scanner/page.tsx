@@ -566,7 +566,7 @@ export default function ScannerPage() {
           <table className="t t-centered">
             <thead>
               <tr>
-                <th>COIN</th>
+                <th className="!text-left">COIN</th>
                 <th>KAYNAK</th>
                 <th>YÖN</th>
                 <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">KALİTE</th>
@@ -597,20 +597,12 @@ export default function ScannerPage() {
 
                 return (
                   <tr key={r.symbol} className={`group${rowClass ? ` ${rowClass}` : ""}`}>
-                    <td className={opened ? "font-bold" : "font-medium"}>
+                    <td className={`!text-left ${opened ? "font-bold" : "font-medium"}`}>
                       <Link className="text-accent" href={`/coins/${encodeURIComponent(r.symbol)}?exchange=${exchange}`}>
                         {r.symbol}
                       </Link>
                       {isStale && (
                         <span className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium bg-warning/15 text-warning align-middle">GÜNCEL DEĞİL</span>
-                      )}
-                      {r.displayFilterPassed === false && r.coinClass === "DYNAMIC" && (
-                        <span
-                          className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium bg-slate-700/60 text-slate-400 align-middle"
-                          title={r.displayFilterReason ?? "display filtresi"}
-                        >
-                          ADAY
-                        </span>
                       )}
                     </td>
                     <td title={(r.candidateSources ?? []).join(", ") || undefined}>
