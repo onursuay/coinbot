@@ -80,11 +80,14 @@ function mergeStored(stored: unknown): RiskSettings | null {
 }
 
 /**
- * Reads the persisted row from Supabase. Captures both whether the row
- * exists and whether the JSONB column is populated — both are needed for
- * accurate diagnostics. State is replaced atomically when validation
- * passes; on validation failure the in-memory defaults are kept and
- * persistenceStatus moves to "fallback".
+ * Reads the persisted row from Supabase. Goes through the get_risk_settings
+ * RPC so PostgREST's per-column schema cache for the freshly-added JSONB
+ * column never enters the picture. Falls back to a column-level SELECT
+ * only if the RPC isn't deployed yet.
+ *
+ * State is replaced atomically when validation passes; on validation
+ * failure the in-memory defaults are kept and persistenceStatus moves to
+ * "fallback".
  */
 async function readFromDb(): Promise<{
   rowFound: boolean;
@@ -96,14 +99,38 @@ async function readFromDb(): Promise<{
   }
   try {
     const userId = getCurrentUserId();
-    const { data, error } = await supabaseAdmin()
-      .from("bot_settings")
-      .select("risk_settings")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (error) throw error;
-    const rowFound = data != null;
-    const stored = (data as any)?.risk_settings ?? null;
+    const sb = supabaseAdmin();
+
+    // Primary path — RPC. Returns the JSONB payload directly via raw SQL,
+    // so PostgREST never has to resolve the risk_settings column.
+    let stored: unknown = null;
+    let rowFound = false;
+    const rpcRead = await sb.rpc("get_risk_settings", { p_user_id: userId });
+    if (!rpcRead.error) {
+      stored = rpcRead.data ?? null;
+      // RPC returns NULL only when the row exists with a NULL column or
+      // the row doesn't exist at all. Either way the in-memory defaults
+      // are correct; row presence is checked through a tiny REST select
+      // so diagnostics can distinguish the two cases.
+      const { data: rowProbe } = await sb
+        .from("bot_settings")
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+      rowFound = rowProbe != null;
+    } else {
+      // Fallback — RPC not deployed yet. Column-level select; this is
+      // exactly the path that hits PostgREST cache issues, but we keep
+      // it for environments without 0016.
+      const { data, error } = await sb
+        .from("bot_settings")
+        .select("risk_settings")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (error) throw error;
+      rowFound = data != null;
+      stored = (data as any)?.risk_settings ?? null;
+    }
     const riskSettingsPresent = stored != null;
     if (stored) {
       const merged = mergeStored(stored);
@@ -181,58 +208,71 @@ async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number
   const userId = getCurrentUserId();
   try {
     // Primary path — RPC bypasses PostgREST column resolution for writes.
-    // In production we observed supabase-js upserts returning 200 OK while
-    // the JSONB column stayed NULL, even after NOTIFY pgrst, 'reload schema'.
-    // Raw-SQL UPDATEs on the same row worked, so the issue is at the REST
-    // layer's cached prepared statements for the freshly-added column.
-    // The plpgsql function executes the UPDATE/INSERT in raw SQL and
-    // RETURNING surfaces the stored value — no silent no-op possible.
+    // The plpgsql function executes UPDATE/INSERT in raw SQL and surfaces
+    // the stored value via RETURNING. The non-null return value IS the
+    // proof of persistence — we don't follow up with a column-level
+    // SELECT because that path hits PostgREST's stale schema cache for
+    // the JSONB column and returns null even when the row is correct.
     const rpcRes = await sb.rpc("set_risk_settings", {
       p_user_id: userId,
       p_settings: s as unknown as Record<string, unknown>,
     });
-    let rpcOk = !rpcRes.error && rpcRes.data != null;
+    if (!rpcRes.error && rpcRes.data != null) {
+      const savedAt = Date.now();
+      setStatus({
+        state: "ok",
+        lastSavedAt: savedAt,
+        lastHydratedAt: persistenceStatus.lastHydratedAt,
+      });
+      return { ok: true, savedAt };
+    }
     let lastErr: string | null = rpcRes.error ? safeErr(rpcRes.error) : null;
 
-    if (!rpcOk) {
-      // Fallback — RPC not deployed yet (migration 0015 missing) or other
-      // PostgREST function-cache issue. Try the upsert path so an older
-      // environment still saves.
-      const { error: upsertErr } = await sb
+    // Fallback — RPC not deployed yet (migration 0015 missing) or other
+    // PostgREST function-cache issue. Try upsert + select-then-update/insert
+    // so an older environment still saves.
+    const { error: upsertErr } = await sb
+      .from("bot_settings")
+      .upsert({ user_id: userId, risk_settings: s }, { onConflict: "user_id" });
+    if (upsertErr) {
+      lastErr = safeErr(upsertErr);
+      const { data: existing, error: selErr } = await sb
         .from("bot_settings")
-        .upsert({ user_id: userId, risk_settings: s }, { onConflict: "user_id" });
-      if (upsertErr) {
-        lastErr = safeErr(upsertErr);
-        // Last-ditch — explicit select-then-update/insert.
-        const { data: existing, error: selErr } = await sb
+        .select("user_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (selErr) throw selErr;
+      if (existing) {
+        const { error: updErr } = await sb
           .from("bot_settings")
-          .select("user_id")
-          .eq("user_id", userId)
-          .maybeSingle();
-        if (selErr) throw selErr;
-        if (existing) {
-          const { error: updErr } = await sb
-            .from("bot_settings")
-            .update({ risk_settings: s })
-            .eq("user_id", userId);
-          if (updErr) throw updErr;
-        } else {
-          const { error: insErr } = await sb
-            .from("bot_settings")
-            .insert({ user_id: userId, risk_settings: s });
-          if (insErr) throw insErr;
-        }
+          .update({ risk_settings: s })
+          .eq("user_id", userId);
+        if (updErr) throw updErr;
+      } else {
+        const { error: insErr } = await sb
+          .from("bot_settings")
+          .insert({ user_id: userId, risk_settings: s });
+        if (insErr) throw insErr;
       }
     }
 
-    // Verify by reading back — confirms the write actually landed.
-    const { data: verify, error: verifyErr } = await sb
-      .from("bot_settings")
-      .select("risk_settings")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (verifyErr) throw verifyErr;
-    if (!verify || (verify as any).risk_settings == null) {
+    // Verify only on the fallback path — RPC's RETURNING is already
+    // authoritative when it succeeds. Use the same get_risk_settings RPC
+    // for the read so PostgREST column cache stays out of the way.
+    const verifyRpc = await sb.rpc("get_risk_settings", { p_user_id: userId });
+    let storedAfter: unknown = null;
+    if (!verifyRpc.error) {
+      storedAfter = verifyRpc.data ?? null;
+    } else {
+      const { data: verify, error: verifyErr } = await sb
+        .from("bot_settings")
+        .select("risk_settings")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (verifyErr) throw verifyErr;
+      storedAfter = (verify as any)?.risk_settings ?? null;
+    }
+    if (storedAfter == null) {
       const hint = lastErr ? ` (last write error: ${lastErr})` : "";
       throw new Error(`DB write verified empty — risk_settings did not persist${hint}`);
     }
@@ -311,24 +351,37 @@ export async function getDebugSnapshot(): Promise<RiskSettingsDebugSnapshot> {
   let dbRiskSettingsCapital: number | null = null;
   if (hasSupabaseConfigured) {
     try {
-      const { data, error } = await supabaseAdmin()
+      const sb = supabaseAdmin();
+      // Row presence — small select that doesn't depend on JSONB column cache.
+      const { data: rowProbe } = await sb
         .from("bot_settings")
-        .select("risk_settings")
+        .select("user_id")
         .eq("user_id", selectedUserId)
         .maybeSingle();
-      if (!error) {
-        dbRowFound = data != null;
-        const stored = (data as any)?.risk_settings ?? null;
-        dbRiskSettingsPresent = stored != null;
-        if (stored && typeof stored === "object") {
-          const p = (stored as any).profile;
-          if (p === "LOW" || p === "STANDARD" || p === "AGGRESSIVE" || p === "CUSTOM") {
-            dbRiskSettingsProfile = p;
-          }
-          const cap = (stored as any).capital?.totalCapitalUsdt;
-          if (typeof cap === "number" && Number.isFinite(cap)) {
-            dbRiskSettingsCapital = cap;
-          }
+      dbRowFound = rowProbe != null;
+
+      // JSONB payload — through RPC so PostgREST column cache stays out.
+      const rpcRead = await sb.rpc("get_risk_settings", { p_user_id: selectedUserId });
+      let stored: unknown = null;
+      if (!rpcRead.error) {
+        stored = rpcRead.data ?? null;
+      } else {
+        const { data: legacy } = await sb
+          .from("bot_settings")
+          .select("risk_settings")
+          .eq("user_id", selectedUserId)
+          .maybeSingle();
+        stored = (legacy as any)?.risk_settings ?? null;
+      }
+      dbRiskSettingsPresent = stored != null;
+      if (stored && typeof stored === "object") {
+        const p = (stored as any).profile;
+        if (p === "LOW" || p === "STANDARD" || p === "AGGRESSIVE" || p === "CUSTOM") {
+          dbRiskSettingsProfile = p;
+        }
+        const cap = (stored as any).capital?.totalCapitalUsdt;
+        if (typeof cap === "number" && Number.isFinite(cap)) {
+          dbRiskSettingsCapital = cap;
         }
       }
     } catch {
