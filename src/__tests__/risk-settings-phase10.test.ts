@@ -341,9 +341,11 @@ describe("Phase 10 — trading invariant'leri korunur", () => {
     expect(RISK_VALIDATION).not.toMatch(/bot-orchestrator|signal-engine|risk-engine/);
   });
 
-  it("bot-orchestrator risk-settings store import etmez (execution decoupling)", () => {
-    expect(ENG_BOT).not.toMatch(/from\s+["']@\/lib\/risk-settings/);
-    expect(ENG_BOT).not.toMatch(/from\s+["']@\/lib\/risk-settings\//);
+  it("Risk-settings lib bot-orchestrator'a bağlandı (Faz 20 bilerek yapılmış)", () => {
+    // Faz 10: execution decoupled. Faz 20: buildRiskExecutionConfig/ensureHydrated
+    // bilerek import edildi — position sizing + daily loss + max positions lifecycle
+    // bağlantısı. Bu test Faz 20'de güncellendi; eski "import etmez" guard kalktı.
+    expect(ENG_BOT).toMatch(/from\s+["']@\/lib\/risk-settings/);
   });
 
   it("Risk Yönetimi sayfası yeni Binance API çağrısı eklemiyor", () => {

@@ -6,6 +6,10 @@
 //  - Risk per trade ≤ 1% of balance.
 //  - Daily loss limit, weekly loss limit, max open positions enforced.
 //  - Liquidation price must be safely beyond stop-loss.
+//
+// Faz 20: risk config fields (maxOpenPositions, dailyMaxLossPercent,
+// riskPerTradePercent, totalCapitalUsdt) are now accepted from RiskExecutionConfig
+// via optional input fields. Env values remain as fallback.
 
 import { SYSTEM_HARD_LEVERAGE_CAP, env } from "@/lib/env";
 import type { MarginMode, PositionDirection } from "@/lib/exchanges/types";
@@ -40,6 +44,15 @@ export interface RiskCheckInput {
   tierMaxLeverage?: number;
   tierMinRiskRewardRatio?: number;
   tierMaxRiskPerTradePercent?: number;
+
+  // Faz 20 — Risk settings execution config overrides.
+  // When provided, these supersede the env defaults for lifecycle calculations.
+  riskConfigMaxOpenPositions?: number;
+  riskConfigDailyMaxLossPercent?: number;
+  riskConfigRiskPerTradePercent?: number;
+  riskConfigTotalCapitalUsdt?: number;
+  // Diagnostic: whether capital came from risk settings or fallback
+  riskConfigCapitalSource?: "risk_settings" | "env_fallback" | "capital_missing_fallback";
 }
 
 export interface RiskCheckResult {
@@ -57,6 +70,10 @@ export interface RiskCheckResult {
   liquidationWarning: boolean;
   riskRewardRatio: number;
   ruleViolations: string[];
+  // Faz 20 diagnostics
+  riskConfigSource: "risk_settings" | "env_fallback" | "capital_missing_fallback";
+  maxOpenPositionsFromRiskSettings: number;
+  dynamicMaxOpenPositions?: number;
 }
 
 function leverageCapForScore(score: number): number {
@@ -85,6 +102,11 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   const violations: string[] = [];
   const marginMode: MarginMode = input.marginMode ?? (env.defaultMarginMode as MarginMode) ?? "isolated";
 
+  // Faz 20: use risk config values when provided, else fall back to env defaults.
+  const effectiveMaxOpenPositions = input.riskConfigMaxOpenPositions ?? env.maxOpenPositions;
+  const effectiveDailyMaxLossPct = input.riskConfigDailyMaxLossPercent ?? env.maxDailyLossPercent;
+  const riskConfigSource = input.riskConfigCapitalSource ?? "env_fallback";
+
   const stopDist = Math.abs(input.entryPrice - input.stopLoss);
   const tpDist = Math.abs(input.takeProfit - input.entryPrice);
   const rr = stopDist > 0 ? tpDist / stopDist : 0;
@@ -94,11 +116,11 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   if (!input.dataFresh) violations.push("Veri güncel değil");
   if (!input.apiHealthy) violations.push("API sağlıklı değil");
   if (!input.webSocketHealthy) violations.push("WebSocket sağlıksız");
-  if (input.openPositionCount >= env.maxOpenPositions) {
-    violations.push(`Maksimum açık pozisyon (${env.maxOpenPositions}) doldu`);
+  if (input.openPositionCount >= effectiveMaxOpenPositions) {
+    violations.push(`Maksimum açık pozisyon (${effectiveMaxOpenPositions}) doldu`);
   }
   if (input.recentLossStreak >= 3) violations.push("Art arda 3 zarar — bot otomatik duraklatılmalı");
-  const dailyLossLimitUsd = -(input.accountBalanceUsd * env.maxDailyLossPercent) / 100;
+  const dailyLossLimitUsd = -(input.accountBalanceUsd * effectiveDailyMaxLossPct) / 100;
   const weeklyLossLimitUsd = -(input.accountBalanceUsd * env.maxWeeklyLossPercent) / 100;
   if (input.dailyRealizedPnlUsd <= dailyLossLimitUsd) violations.push("Günlük zarar limiti doldu");
   if (input.weeklyRealizedPnlUsd <= weeklyLossLimitUsd) violations.push("Haftalık zarar limiti doldu");
@@ -128,8 +150,10 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   const effectiveMaxAllowed = Math.min(env.maxAllowedLeverage, tierCap);
   const leverage = clampLeverage(desiredLev, input.signalScore, effectiveMaxAllowed, input.exchangeMaxLeverage);
 
-  // Risk-based position sizing — tier may impose stricter risk-per-trade
-  const effectiveRiskPct = Math.min(env.maxRiskPerTradePercent, input.tierMaxRiskPerTradePercent ?? 999);
+  // Faz 20: risk-per-trade comes from risk settings config when provided,
+  // else falls back to env cap. Tier may impose a stricter upper bound on top.
+  const baseRiskPct = input.riskConfigRiskPerTradePercent ?? env.maxRiskPerTradePercent;
+  const effectiveRiskPct = Math.min(baseRiskPct, input.tierMaxRiskPerTradePercent ?? 999);
   const riskAmount = (input.accountBalanceUsd * effectiveRiskPct) / 100;
   let positionSize = stopDist > 0 ? riskAmount / stopDist : 0;
   if (input.exchangeStepSize) positionSize = roundDown(positionSize, input.exchangeStepSize);
@@ -174,5 +198,8 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
     liquidationWarning,
     riskRewardRatio: rr,
     ruleViolations: violations,
+    // Faz 20 diagnostics
+    riskConfigSource,
+    maxOpenPositionsFromRiskSettings: effectiveMaxOpenPositions,
   };
 }

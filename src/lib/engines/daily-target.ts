@@ -13,9 +13,20 @@ export interface DailyStatus {
   lossLimitHit: boolean;
 }
 
-export async function getDailyStatus(userId: string, accountBalanceUsd: number): Promise<DailyStatus> {
+export interface DailyStatusOptions {
+  /** Override daily max loss percent from risk settings (falls back to env when undefined). */
+  dailyMaxLossPercent?: number;
+}
+
+export async function getDailyStatus(
+  userId: string,
+  accountBalanceUsd: number,
+  opts?: DailyStatusOptions,
+): Promise<DailyStatus> {
   const dailyTargetUsd = env.dailyProfitTargetUsd;
-  const dailyLossLimitUsd = -(accountBalanceUsd * env.maxDailyLossPercent) / 100;
+  // Faz 20: use risk settings dailyMaxLossPercent when provided; env is fallback.
+  const effectiveDailyMaxLossPct = opts?.dailyMaxLossPercent ?? env.maxDailyLossPercent;
+  const dailyLossLimitUsd = -(accountBalanceUsd * effectiveDailyMaxLossPct) / 100;
   let realized = 0;
   if (supabaseConfigured()) {
     const start = new Date(); start.setUTCHours(0, 0, 0, 0);

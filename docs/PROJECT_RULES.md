@@ -1391,6 +1391,77 @@ KAPALI / KALDIRAÇ EXECUTION KAPALI / ZARARDA BÜYÜTME KİLİTLİ".
 
 ---
 
+## Faz 20 — Risk Engine Binding / Position Sizing
+
+**Amaç:** Risk Yönetimi sayfasındaki kalıcı risk ayarlarını gerçek risk
+lifecycle hesaplarına (pozisyon büyüklüğü, günlük zarar limiti, max açık
+pozisyon, max günlük işlem) kontrollü şekilde bağlamak.
+
+### Pozisyon Büyüklüğü Formülü
+
+```
+riskAmountUsdt       = totalBotCapitalUsdt × riskPerTradePercent / 100
+stopDistancePercent  = |entryPrice − stopLoss| / entryPrice × 100
+positionNotionalUsdt = riskAmountUsdt / (stopDistancePercent / 100)
+quantity             = positionNotionalUsdt / entryPrice
+```
+
+- **Kaldıraç pozisyon büyüklüğünü artırmaz.** Kaldıraç bu fazda yalnızca
+  config metadata olarak taşınır; position sizing hesabına girmez.
+- **Kaldıraç execution bu fazda yoktur.** `/fapi/v1/leverage` çağrısı yok.
+- `totalBotCapitalUsdt = 0` ise `capital_missing` reason üretilir; güvenli
+  fallback (PAPER_BALANCE = 1000 USDT) devreye girer.
+
+### Risk Settings → Lifecycle Bağlantıları
+
+| Risk Settings Alanı | Lifecycle Kullanımı |
+|---|---|
+| `capital.totalCapitalUsdt` | `accountBalanceUsd` (position sizing + daily loss limit) |
+| `capital.riskPerTradePercent` | `effectiveRiskPct` (risk engine + position sizing) |
+| `capital.maxDailyLossPercent` | `dailyLossLimitUsd` (risk engine + daily-target) |
+| `positions.defaultMaxOpenPositions` | Max açık pozisyon guard (risk engine + orchestrator) |
+| `positions.dynamicMaxOpenPositionsCap` | Diagnostics metadata |
+| `positions.maxDailyTrades` | Günlük max işlem guard (orchestrator tick) |
+
+### Korunan Güvenlik Sabiitleri (Değişmez)
+- `HARD_LIVE_TRADING_ALLOWED=false` — canlı trading kapalı.
+- `DEFAULT_TRADING_MODE=paper` — varsayılan mod paper.
+- `enable_live_trading=false` — DB gati kapalı.
+- `MIN_SIGNAL_CONFIDENCE=70` — sinyal eşiği değişmedi.
+- `averageDownEnabled=false` — zararda pozisyon büyütme kilitli.
+- `liveExecutionBound=false` — canlı execution bağlı değil.
+- `leverageExecutionBound=false` — kaldıraç execution yok.
+- `openLiveOrder` hâlâ `LIVE_EXECUTION_NOT_IMPLEMENTED` döner.
+- Binance API Guardrails değişmez kuraldır.
+- Worker lock mekanizması korunuyor.
+- Signal engine matematiği ve trade signal threshold değişmedi.
+
+### Paper Trade Risk Metadata
+
+Açılan paper trade kayıtlarına `risk_metadata` JSONB alanı eklendi:
+```json
+{
+  "risk_amount_usdt": 30,
+  "risk_per_trade_percent": 3,
+  "position_notional_usdt": 600,
+  "stop_distance_percent": 5,
+  "risk_config_source": "risk_settings",
+  "risk_config_bound": true
+}
+```
+
+İlgili dosyalar:
+- `src/lib/engines/position-sizing.ts` (yeni — calculatePositionSizeByRisk)
+- `src/lib/engines/risk-engine.ts` (riskConfigMaxOpenPositions, riskConfigDailyMaxLossPercent, riskConfigRiskPerTradePercent eklendi)
+- `src/lib/engines/daily-target.ts` (DailyStatusOptions.dailyMaxLossPercent eklendi)
+- `src/lib/engines/paper-trading-engine.ts` (riskMetadata alanı eklendi)
+- `src/lib/engines/bot-orchestrator.ts` (buildRiskExecutionConfig bağlantısı, maxDailyTrades guard)
+- `src/app/api/paper-trades/open/route.ts` (risk config kullanımı)
+- `supabase/migrations/0012_paper_trades_risk_metadata.sql`
+- `src/__tests__/risk-engine-binding-phase20.test.ts`
+
+---
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

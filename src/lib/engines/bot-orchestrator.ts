@@ -18,6 +18,7 @@ import {
 } from "@/lib/engines/unified-candidate-provider";
 import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist, getTierPolicy } from "@/lib/risk-tiers";
 import { calculateStrategyHealth } from "./strategy-health";
+import { buildRiskExecutionConfig, ensureHydrated } from "@/lib/risk-settings";
 import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
 
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
@@ -363,6 +364,13 @@ export interface TickResult {
   coreSymbolsCount?: number;
   /** Unified-pool symbols added on top of core (after dedupe). */
   unifiedSymbolsCount?: number;
+  // Faz 20 — risk config binding diagnostics (display-only)
+  riskConfigBound?: boolean;
+  maxOpenPositionsFromRiskSettings?: number;
+  dynamicMaxOpenPositions?: number;
+  maxDailyTradesFromRiskSettings?: number;
+  effectiveCapitalUsdt?: number;
+  riskCapitalSource?: string;
 }
 
 const PAPER_BALANCE = 1000;
@@ -561,6 +569,16 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     await botLog({ userId, level: "error", eventType: "tick_failed", message: result.reason });
     return result;
   }
+
+  // Faz 20 — load risk execution config (hydrates from DB on first call).
+  await ensureHydrated();
+  const riskCfg = buildRiskExecutionConfig();
+
+  // Effective capital: risk settings value if > 0, else PAPER_BALANCE fallback.
+  const riskCapitalSource: "risk_settings" | "capital_missing_fallback" =
+    riskCfg.totalBotCapitalUsdt > 0 ? "risk_settings" : "capital_missing_fallback";
+  const effectiveCapitalUsdt =
+    riskCfg.totalBotCapitalUsdt > 0 ? riskCfg.totalBotCapitalUsdt : PAPER_BALANCE;
   const isRunning = ["running", "running_paper", "running_live"].includes(settings.bot_status ?? "");
   if (!isRunning) {
     result.reason = `Bot durumu: ${settings.bot_status}`;
@@ -722,7 +740,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     }
   }
 
-  const daily = await getDailyStatus(userId, PAPER_BALANCE);
+  const daily = await getDailyStatus(userId, effectiveCapitalUsdt, {
+    dailyMaxLossPercent: riskCfg.dailyMaxLossPercent,
+  });
   if (daily.targetHit) {
     result.ok = true;
     result.reason = "daily_target_hit";
@@ -758,12 +778,41 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   const { data: openPos } = await sb.from("paper_trades").select("id").eq("user_id", userId).eq("status", "open");
   let openCount = openPos?.length ?? 0;
 
-  if (openCount >= settings.max_open_positions) {
+  // Faz 20: use defaultMaxOpenPositions from risk settings, falling back to DB setting.
+  const effectiveMaxOpenPositions = riskCfg.defaultMaxOpenPositions ?? settings.max_open_positions;
+
+  // Populate risk config diagnostics into result
+  result.riskConfigBound = true;
+  result.maxOpenPositionsFromRiskSettings = riskCfg.defaultMaxOpenPositions;
+  result.dynamicMaxOpenPositions = riskCfg.dynamicMaxOpenPositions;
+  result.maxDailyTradesFromRiskSettings = riskCfg.maxDailyTrades;
+  result.effectiveCapitalUsdt = effectiveCapitalUsdt;
+  result.riskCapitalSource = riskCapitalSource;
+
+  if (openCount >= effectiveMaxOpenPositions) {
     result.ok = true;
     result.reason = "max_open_positions";
     result.durationMs = Date.now() - start;
-    await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}) doldu` });
+    await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}/${effectiveMaxOpenPositions}) doldu` });
     await writeSkipSummary(userId, opts?.workerContext, "max_open_positions", tickStartedAt);
+    return result;
+  }
+
+  // Faz 20: daily trade count guard from risk settings.
+  const maxDailyTrades = riskCfg.maxDailyTrades;
+  const startOfDay = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
+  const { data: todayTrades } = await sb
+    .from("paper_trades")
+    .select("id")
+    .eq("user_id", userId)
+    .gte("opened_at", startOfDay.toISOString());
+  const todayTradeCount = todayTrades?.length ?? 0;
+  if (todayTradeCount >= maxDailyTrades) {
+    result.ok = true;
+    result.reason = "max_daily_trades";
+    result.durationMs = Date.now() - start;
+    await botLog({ userId, eventType: "tick_completed", message: `Tick — günlük maksimum işlem sayısı (${todayTradeCount}/${maxDailyTrades}) doldu` });
+    await writeSkipSummary(userId, opts?.workerContext, "max_daily_trades", tickStartedAt);
     return result;
   }
 
@@ -1061,7 +1110,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       });
 
       const risk = evaluateRisk({
-        accountBalanceUsd: PAPER_BALANCE,
+        accountBalanceUsd: effectiveCapitalUsdt,
         symbol, direction: sig.signalType,
         entryPrice: sig.entryPrice, stopLoss: sig.stopLoss, takeProfit: sig.takeProfit,
         signalScore: sig.score, marketSpread: ticker.spread,
@@ -1080,6 +1129,12 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         exchangeStepSize: info?.stepSize,
         exchangeTickSize: info?.tickSize,
         marginMode: "isolated",
+        // Faz 20 — risk settings config overrides
+        riskConfigMaxOpenPositions: riskCfg.defaultMaxOpenPositions,
+        riskConfigDailyMaxLossPercent: riskCfg.dailyMaxLossPercent,
+        riskConfigRiskPerTradePercent: riskCfg.riskPerTradePercent,
+        riskConfigTotalCapitalUsdt: effectiveCapitalUsdt,
+        riskConfigCapitalSource: riskCapitalSource,
       });
 
       detail.riskAllowed = risk.allowed;
@@ -1098,6 +1153,12 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         continue;
       }
 
+      // Faz 20: compute position notional and stop distance for metadata.
+      const stopDistPct = sig.entryPrice > 0
+        ? (Math.abs(sig.entryPrice - sig.stopLoss) / sig.entryPrice) * 100
+        : 0;
+      const positionNotionalUsdt = sig.entryPrice > 0 ? risk.positionSize * sig.entryPrice : 0;
+
       const trade = await openPaperTrade({
         userId, exchange, symbol, direction: sig.signalType,
         entryPrice: sig.entryPrice, stopLoss: sig.stopLoss, takeProfit: sig.takeProfit,
@@ -1110,7 +1171,15 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         atrPercent: detail.atrPercent,
         fundingRate: funding?.rate ?? undefined,
         signalConfidence: sig.score,
-        riskPercent: env.maxRiskPerTradePercent,
+        riskPercent: riskCfg.riskPerTradePercent,
+        riskMetadata: {
+          risk_amount_usdt: risk.riskAmount,
+          risk_per_trade_percent: riskCfg.riskPerTradePercent,
+          position_notional_usdt: positionNotionalUsdt,
+          stop_distance_percent: stopDistPct,
+          risk_config_source: riskCapitalSource,
+          risk_config_bound: true,
+        },
       });
 
       detail.opened = true;
@@ -1124,7 +1193,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       });
       result.scanDetails.push(detail);
       openCount++;
-      if (openCount >= settings.max_open_positions) break;
+      if (openCount >= effectiveMaxOpenPositions) break;
     } catch (e: any) {
       const msg = e?.message ?? String(e);
       detail.rejectReason = `Hata: ${msg}`;

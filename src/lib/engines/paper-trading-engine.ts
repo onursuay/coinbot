@@ -29,6 +29,15 @@ export interface OpenPaperTradeInput {
   fundingRate?: number;
   signalConfidence?: number;
   riskPercent?: number;
+  // Faz 20 — risk lifecycle metadata
+  riskMetadata?: {
+    risk_amount_usdt?: number;
+    risk_per_trade_percent?: number;
+    position_notional_usdt?: number;
+    stop_distance_percent?: number;
+    risk_config_source?: string;
+    risk_config_bound?: boolean;
+  };
 }
 
 const FEE_RATE = 0.0004;       // 4 bps per side (taker)
@@ -66,6 +75,7 @@ export async function openPaperTrade(input: OpenPaperTradeInput) {
       is_paper: true,
       signal_confidence: input.signalConfidence ?? null,
       risk_percent: input.riskPercent ?? null,
+      risk_metadata: input.riskMetadata ?? null,
       fees_estimated: input.entryPrice * input.positionSize * FEE_RATE,
       slippage_estimated: input.entryPrice * input.positionSize * SLIPPAGE_RATE,
       status: "open",
