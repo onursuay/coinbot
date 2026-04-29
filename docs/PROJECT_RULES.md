@@ -1086,6 +1086,58 @@ Bu tablo **canlı emir açmaz/kapatmaz**; yalnızca analiz/görüntüleme içind
 - `src/app/api/live-trades/route.ts` — read-only live trades endpoint.
 - `src/__tests__/trade-performance-phase15.test.ts` — Faz 15 test paketi.
 
+## Faz 16 — Live Execution Adapter Skeleton
+
+**Hedef:** Gerçek canlı emir altyapısının iskeletini oluştur; bu fazda Binance'e
+hiçbir özel emir gönderilmez. Tüm kapılar kapalı tutulur ve execution her zaman
+`LIVE_EXECUTION_NOT_IMPLEMENTED` döner.
+
+### Mimari
+
+Triple-gate, fail-closed guard:
+1. `HARD_LIVE_TRADING_ALLOWED=true` (env — değiştirilemez)
+2. `trading_mode='live'` (DB)
+3. `enable_live_trading=true` (DB)
+
+Üç kapı da açık olsa bile `openLiveOrder()` bu fazda `LIVE_EXECUTION_NOT_IMPLEMENTED`
+döndürür. Gerçek Binance çağrısı gelecek bir fazda eklenecek.
+
+### Dosyalar
+
+| Dosya | Açıklama |
+|---|---|
+| `src/lib/live-execution/types.ts` | `LiveOrderRequest`, `LiveCloseRequest`, `LiveOrderResult`, `LiveExecutionGuardResult`, `LiveExecutionMode` |
+| `src/lib/live-execution/guard.ts` | Triple-gate, fail-closed; `checkLiveExecutionGuard()` |
+| `src/lib/live-execution/adapter.ts` | `openLiveOrder()` — guard sonrası `LIVE_EXECUTION_NOT_IMPLEMENTED` döner |
+| `src/lib/live-execution/mock-adapter.ts` | Test mock; `mockOpenLiveOrder()`, `buildMockMode()` |
+| `src/lib/live-execution/index.ts` | Barrel export |
+| `src/__tests__/live-execution-phase16.test.ts` | 38 test — guard, mock, invariant sentinels |
+
+### Guard parametreleri
+
+| Kontrol | Değer |
+|---|---|
+| `MIN_SIGNAL_SCORE` | 70 |
+| `MIN_RR_RATIO` | 2 |
+| stopLoss, takeProfit | > 0 olmalı |
+| quantity | > 0 olmalı |
+| clientOrderId | boş olamaz |
+| tradeMode | `"live"` olmalı |
+| executionType | `"real"` olmalı |
+
+### Bu fazda kesinlikle dokunulmadı
+
+- Canlı trading açılmadı (`HARD_LIVE_TRADING_ALLOWED=false` korundu).
+- `DEFAULT_TRADING_MODE=paper` korundu.
+- `enable_live_trading=false` korundu.
+- `MIN_SIGNAL_CONFIDENCE=70` korundu.
+- Binance private/order endpoint (`/fapi/v1/order` vb.) çağrısı eklenmedi.
+- Worker lock korundu.
+- Risk/signal/trade engine değiştirilmedi.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu.
+
+---
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API
