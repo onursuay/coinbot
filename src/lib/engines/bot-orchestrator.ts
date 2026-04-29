@@ -127,6 +127,8 @@ export interface ScanDetail {
   directionCandidate?: "LONG_CANDIDATE" | "SHORT_CANDIDATE" | "MIXED" | "NONE";
   directionConfidence?: number;
   waitReasonCodes?: string[];
+  /** Faz 12 — kısa Türkçe sebep özeti (display only). */
+  waitReasonSummary?: string;
   scoreType: "signal" | "setup" | "none";  // which score is meaningful to display
   scoreReason: string;          // brief label for the scanner UI
   rejectReason: string | null;
@@ -725,6 +727,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       directionCandidate: "NONE",
       directionConfidence: 0,
       waitReasonCodes: [],
+      waitReasonSummary: "",
       scoreType: "none",
       scoreReason: "",
       rejectReason: null,
@@ -780,6 +783,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       detail.directionCandidate = sig.directionCandidate;
       detail.directionConfidence = sig.directionConfidence;
       detail.waitReasonCodes = sig.waitReasonCodes;
+      detail.waitReasonSummary = sig.waitReasonSummary;
       detail.scoreType = sig.score > 0 ? "signal" : sig.setupScore > 0 ? "setup" : "none";
       detail.scoreReason = sig.score > 0
         ? `İşlem skoru (${sig.score}/100)`

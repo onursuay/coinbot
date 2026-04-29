@@ -709,6 +709,91 @@ UI entegrasyonu bu fazda yalnızca lib seviyesinde; worker tick payload'ı
 priority metadata üretmeye başlayınca dashboard/scanner küçük badge ile
 besleyecek (ayrı faz).
 
+## WAIT / Direction Candidate Açıklanabilirliği (Faz 12)
+
+Botun neden WAIT / İŞLEM YOK kaldığını kullanıcıya net açıklayan
+**direction explainability** modülü ayrı bir lib altına taşındı:
+`src/lib/direction-explainability/`. "Trend/momentum belirsiz" gibi
+tek başına yetersiz mesajlar yerine, kullanıcı coin'in hangi yöne
+yakın olduğunu ve hangi şartların eksik olduğunu doğrudan görür.
+
+**Üretilen alanlar (display/debug only):**
+- `longSetupScore` — 0–100 LONG hipotez gücü
+- `shortSetupScore` — 0–100 SHORT hipotez gücü
+- `directionCandidate` — `LONG_CANDIDATE | SHORT_CANDIDATE | MIXED | NONE`
+- `directionConfidence` — 0–100 normalize edilmiş lead farkı
+- `waitReasonCodes` — sabit kelime dağarcığı: `EMA_ALIGNMENT_MISSING`,
+  `MA_FAST_SLOW_CONFLICT`, `MACD_CONFLICT`, `RSI_NEUTRAL`, `ADX_FLAT`,
+  `VWAP_NOT_CONFIRMED`, `VOLUME_WEAK`, `BOLLINGER_NO_CONFIRMATION`,
+  `ATR_REGIME_UNCLEAR`, `BTC_DIRECTION_CONFLICT`
+- `waitReasonSummary` — en fazla 2–3 sebepli kısa Türkçe özet
+
+**Türkçe sebep mapping** (`WAIT_REASON_TR`):
+`EMA dizilimi eksik` · `hızlı/yavaş ortalama uyumsuz` · `MACD uyumsuz` ·
+`RSI nötr` · `trend gücü zayıf` · `VWAP teyidi yok` · `hacim zayıf` ·
+`Bollinger teyidi yok` · `volatilite rejimi belirsiz` · `BTC yönü ters`.
+
+**Özet örnekleri:**
+- `"LONG adayı ama EMA dizilimi eksik, hacim zayıf"`
+- `"SHORT adayı ama BTC yönü ters"`
+- `"Yön karışık: MACD uyumsuz, RSI nötr"`
+- `"Yön net değil: RSI nötr, trend gücü zayıf"`
+- `"Yön teyidi bekleniyor"` (hiç sebep yoksa)
+
+**Kesin invariantlar:**
+- `directionCandidate` **gerçek `signalType` (LONG/SHORT) yerine geçmez**.
+- `longSetupScore` / `shortSetupScore` **`tradeSignalScore` yerine geçmez**.
+- Trade açma kapısı hâlâ aynıdır:
+  `signalType=LONG/SHORT` + `tradeSignalScore >= 70` + BTC trend filter +
+  risk gate + SL/TP + R:R + paper mode.
+- "Trend/momentum belirsiz" fallback'ı tek başına ana sebep olarak
+  gösterilmez: `waitReasonCodes` doluysa onlardan üretilen kısa özet
+  kullanılır, yalnızca hiç sebep yoksa güvenli fallback metni döner.
+- Dashboard / Piyasa Tarayıcı `WAIT` / `NO_TRADE` ham etiketlerini
+  ana UI'da göstermez (Faz 8/9 ürün kuralı korunur).
+
+**UI mapping (değişmez):**
+- Açılan LONG/SHORT işlem → `LONG AÇILDI` / `SHORT AÇILDI`
+- `directionCandidate=LONG_CANDIDATE` ve işlem yok → `LONG ADAY`
+- `directionCandidate=SHORT_CANDIDATE` ve işlem yok → `SHORT ADAY`
+- `directionCandidate=NONE` veya `MIXED` → `YÖN BEKLİYOR`
+- BTC veto → `BTC FİLTRESİ`
+- Risk reddi → `RİSK REDDİ`
+- `signalType=NO_TRADE` → `İŞLEM YOK`
+
+**Trading invariant'leri (bu fazda dokunulmadı):**
+- `HARD_LIVE_TRADING_ALLOWED=false`
+- `DEFAULT_TRADING_MODE=paper`
+- `enable_live_trading=false`
+- `MIN_SIGNAL_CONFIDENCE=70`
+- BTC trend filtresi, SL/TP/R:R, risk engine, kaldıraç execution,
+  worker lock, unified candidate provider mantığı, Risk Yönetimi
+  ayarlarının execution'a bağlanmaması, Opportunity Priority'nin
+  trade engine'e bağlanmaması.
+- [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) korundu —
+  yeni Binance fetch/axios eklenmedi.
+
+İlgili dosyalar:
+- `src/lib/direction-explainability/types.ts` — kanonik tipler.
+- `src/lib/direction-explainability/score-direction.ts` — 0–100
+  long/short skor + `directionCandidate` üretimi.
+- `src/lib/direction-explainability/wait-reasons.ts` — sebep kodu
+  üretimi + sabit vocab.
+- `src/lib/direction-explainability/summary.ts` — Türkçe etiket
+  mapping + kısa özet.
+- `src/lib/direction-explainability/index.ts` — barrel +
+  `computeDirectionExplainability`.
+- `src/lib/engines/signal-engine.ts` — eski inline implementasyon
+  kaldırıldı; tek modüle delege ediyor. `SignalResult` yeni
+  `waitReasonSummary` alanı içerir.
+- `src/lib/engines/bot-orchestrator.ts` — `ScanDetail` üzerinden
+  `waitReasonSummary` UI'ya akıyor.
+- `src/lib/dashboard/labels.ts` ve `src/app/scanner/page.tsx` —
+  `buildReasonText` artık `waitReasonSummary` varsa onu öncelikli
+  gösterir.
+- `src/__tests__/direction-explainability-module.test.ts` —
+  modül seviyesi birim testler.
+
 ## Dokümantasyon İndeksi
 
 - [BINANCE_API_GUARDRAILS.md](./BINANCE_API_GUARDRAILS.md) — Binance API

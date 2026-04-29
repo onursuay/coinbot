@@ -99,6 +99,8 @@ export const WAIT_CODE_TR: Record<string, string> = {
 export function buildReasonText(row: {
   signalType?: string;
   waitReasonCodes?: string[];
+  /** Faz 12 — backend tarafından üretilen kısa Türkçe özet (varsa öncelikli). */
+  waitReasonSummary?: string;
   scoreReason?: string;
   rejectReason?: string | null;
   riskRejectReason?: string | null;
@@ -106,6 +108,9 @@ export function buildReasonText(row: {
 }): string {
   if (row.btcTrendRejected) return "BTC trend filtresi";
   if (row.riskRejectReason) return row.riskRejectReason;
+  if (row.signalType === "WAIT" && row.waitReasonSummary && row.waitReasonSummary.length > 0) {
+    return row.waitReasonSummary;
+  }
   const codes = row.waitReasonCodes ?? [];
   if (codes.length > 0) {
     return codes.slice(0, 3).map((c) => WAIT_CODE_TR[c] ?? c).join(" · ");

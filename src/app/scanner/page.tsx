@@ -50,6 +50,8 @@ interface ScanRow {
   directionCandidate?: DirectionCandidate;
   directionConfidence?: number;
   waitReasonCodes?: string[];
+  /** Faz 12 — kısa Türkçe sebep özeti, varsa öncelikli olarak gösterilir. */
+  waitReasonSummary?: string;
   scoreType?: "signal" | "setup" | "none";
   scoreReason?: string;
   rejectReason: string | null;
@@ -160,6 +162,11 @@ const WAIT_CODE_TR: Record<string, string> = {
 function buildReasonText(row: ScanRow): string {
   if (row.btcTrendRejected) return "BTC trend filtresi";
   if (row.riskRejectReason) return row.riskRejectReason;
+  // Faz 12 — backend tarafı zaten 2–3 sebebi içeren kısa Türkçe özet üretiyor.
+  // Varsa onu tercih et; yoksa kod listesini etiketlere çevirerek göster.
+  if (row.signalType === "WAIT" && row.waitReasonSummary && row.waitReasonSummary.length > 0) {
+    return row.waitReasonSummary;
+  }
   const codes = row.waitReasonCodes ?? [];
   if (codes.length > 0) {
     return codes.slice(0, 3).map((c) => WAIT_CODE_TR[c] ?? c).join(" · ");
