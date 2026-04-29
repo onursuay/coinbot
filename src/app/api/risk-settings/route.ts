@@ -2,9 +2,10 @@ import { z } from "zod";
 import { ok, fail, parseBody, isResponse } from "@/lib/api-helpers";
 import {
   getRiskSettings,
-  updateRiskSettings,
+  updateAndPersistRiskSettings,
   computeWarnings,
   ensureHydrated,
+  getPersistenceStatus,
 } from "@/lib/risk-settings";
 
 // Phase 10 — Risk Yönetimi config endpoint.
@@ -19,7 +20,16 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   await ensureHydrated();
   const settings = getRiskSettings();
-  return ok({ settings, warnings: computeWarnings(settings) });
+  const status = getPersistenceStatus();
+  const persistenceStatus = status.state === "ok" ? "ok" : "fallback";
+  return ok({
+    settings,
+    warnings: computeWarnings(settings),
+    persistenceStatus,
+    persistenceErrorSafe: status.errorSafe,
+    lastSavedAt: status.lastSavedAt,
+    lastHydratedAt: status.lastHydratedAt,
+  });
 }
 
 const Body = z.object({
@@ -55,9 +65,26 @@ const Body = z.object({
 });
 
 export async function PUT(req: Request) {
+  // Hydrate first so persist isn't writing on top of a stale-empty state.
+  await ensureHydrated();
   const parsed = await parseBody(req, Body);
   if (isResponse(parsed)) return parsed;
-  const result = updateRiskSettings(parsed);
-  if (!result.ok) return fail("Geçersiz risk ayarı", 400, { errors: result.errors });
-  return ok({ settings: result.data, warnings: computeWarnings(result.data) });
+  const result = await updateAndPersistRiskSettings(parsed);
+  if (!result.ok) {
+    if (result.stage === "validation") {
+      return fail("Geçersiz risk ayarı", 400, { errors: result.errors });
+    }
+    // Persistence failure must NOT silently report success.
+    return fail("Risk ayarları kalıcı olarak kaydedilemedi", 500, {
+      persistenceStatus: "error",
+      persistenceErrorSafe: result.errorSafe,
+      settings: result.data,
+    });
+  }
+  return ok({
+    settings: result.data,
+    warnings: computeWarnings(result.data),
+    persistenceStatus: "saved",
+    savedAt: result.savedAt,
+  });
 }

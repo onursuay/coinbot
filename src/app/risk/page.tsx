@@ -25,15 +25,25 @@ const STOP_LOSS_OPTIONS: { value: StopLossMode; label: string }[] = [
   { value: "WIDE",     label: "GENİŞ" },
 ];
 
+type SaveState = "idle" | "saving" | "saved" | "error";
+
 export default function RiskPage() {
   const [settings, setSettings] = useState<RiskSettings | null>(null);
-  const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [persistenceStatus, setPersistenceStatus] = useState<"ok" | "fallback" | null>(null);
+  const [persistenceErrorSafe, setPersistenceErrorSafe] = useState<string | undefined>(undefined);
+
+  const busy = saveState === "saving";
 
   const load = async () => {
     const res = await fetch("/api/risk-settings", { cache: "no-store" }).then((r) => r.json());
-    if (res.ok) setSettings(res.data.settings);
+    if (res.ok) {
+      setSettings(res.data.settings);
+      setPersistenceStatus(res.data.persistenceStatus === "ok" ? "ok" : "fallback");
+      setPersistenceErrorSafe(res.data.persistenceErrorSafe);
+    }
   };
   useEffect(() => { load(); }, []);
 
@@ -42,7 +52,7 @@ export default function RiskPage() {
   }, [settings]);
 
   const persist = async (next: RiskSettings) => {
-    setBusy(true);
+    setSaveState("saving");
     setErrors([]);
     try {
       const res = await fetch("/api/risk-settings", {
@@ -51,13 +61,19 @@ export default function RiskPage() {
         body: JSON.stringify(next),
       }).then((r) => r.json());
       if (!res.ok) {
-        setErrors(res.errors ?? [res.error ?? "Kaydedilemedi."]);
+        const detail = res.persistenceErrorSafe ? ` (${res.persistenceErrorSafe})` : "";
+        setErrors(res.errors ?? [(res.error ?? "Kaydedilemedi.") + detail]);
+        setSaveState("error");
         return;
       }
       setSettings(res.data.settings);
       setSavedAt(new Date());
-    } finally {
-      setBusy(false);
+      setSaveState("saved");
+      setPersistenceStatus("ok");
+      setPersistenceErrorSafe(undefined);
+    } catch (e) {
+      setErrors([e instanceof Error ? e.message : "Ağ hatası"]);
+      setSaveState("error");
     }
   };
 
@@ -131,6 +147,17 @@ export default function RiskPage() {
           güvenli test katmanıdır.
         </p>
       </div>
+
+      {/* Persistence fallback uyarısı — DB okunamadıysa kullanıcı bilsin */}
+      {persistenceStatus === "fallback" && (
+        <div className="card border border-warning/40 bg-warning/10 text-warning">
+          <div className="text-xs font-semibold uppercase tracking-wider mb-1">RİSK AYARLARI KALICI KAYITTAN OKUNAMADI</div>
+          <div className="text-xs">
+            Varsayılan değerler gösteriliyor; kaydetme yine denenecek.
+            {persistenceErrorSafe && <span className="ml-1 opacity-80">({persistenceErrorSafe})</span>}
+          </div>
+        </div>
+      )}
 
       {/* Faz 19 — Risk execution binding status */}
       <BindingStatus />
@@ -403,7 +430,10 @@ export default function RiskPage() {
             onClick={() => persist(settings)}
             disabled={busy}
           >
-            {busy ? "Kaydediliyor…" : "Kaydet"}
+            {saveState === "saving" ? "Kaydediliyor…"
+              : saveState === "saved"  ? "Kaydedildi"
+              : saveState === "error"  ? "Kaydetme başarısız"
+              : "Kaydet"}
           </button>
         </div>
       </div>
