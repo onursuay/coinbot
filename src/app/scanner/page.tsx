@@ -152,6 +152,16 @@ function mapDecisionLabel(row: ScanRow): DecisionLabel {
   return sharedMapDecisionLabel(row);
 }
 
+function mapDirectionDisplay(label: DirectionLabel): string {
+  switch (label) {
+    case "LONG ADAY": return "LONG";
+    case "SHORT ADAY": return "SHORT";
+    case "YÖN KARIŞIK": return "BELİRSİZ";
+    case "YÖN BEKLİYOR": return "BEKLİYOR";
+    default: return label;
+  }
+}
+
 function decisionClass(label: DirectionLabel | DecisionLabel, opened: boolean): string {
   return sharedDecisionClass(label, opened);
 }
@@ -475,19 +485,6 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* Compact source mix summary — shows the user the scanner actually swept the market */}
-      {summary && (summary.rawAnalyzedCount ?? 0) > 0 && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
-          <span>Analiz edilen: <strong className="text-slate-300">{summary.rawAnalyzedCount}</strong></span>
-          {(summary.coreCount ?? 0) > 0 && <span>· CORE: <strong className="text-slate-300">{summary.coreCount}</strong></span>}
-          {(summary.gmtCount ?? 0) > 0 && <span>· GMT: <strong className="text-slate-300">{summary.gmtCount}</strong></span>}
-          {(summary.mtCount ?? 0) > 0 && <span>· MT: <strong className="text-slate-300">{summary.mtCount}</strong></span>}
-          {(summary.milCount ?? 0) > 0 && <span>· MİL: <strong className="text-slate-300">{summary.milCount}</strong></span>}
-          {(summary.krmCount ?? 0) > 0 && <span>· KRM: <strong className="text-slate-300">{summary.krmCount}</strong></span>}
-          {(summary.dynamicFilteredCount ?? 0) > 0 && <span>· Filtrelenen: <strong className="text-slate-300">{summary.dynamicFilteredCount}</strong></span>}
-        </div>
-      )}
-
       {/* Candidate pool empty / provider error notice */}
       {poolEmpty && poolEmptyMessage && (
         <div className="rounded-md border border-border bg-bg-soft px-3 py-2 text-xs text-slate-400">
@@ -563,22 +560,23 @@ export default function ScannerPage() {
             <thead>
               <tr>
                 <th className="!text-left">COIN</th>
-                <th>KAYNAK</th>
-                <th>YÖN</th>
-                <th title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">KALİTE</th>
-                <th title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu">FIRSAT</th>
-                <th title="Final işlem skoru. İşlem açma eşiği: 70.">TRADE SKORU</th>
-                <th>KARAR</th>
-                <th className="pr-12">SEBEP</th>
+                <th className="font-semibold">KAYNAK</th>
+                <th className="font-semibold">YÖN</th>
+                <th className="font-semibold" title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">KALİTE</th>
+                <th className="font-semibold" title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu">FIRSAT</th>
+                <th className="font-semibold" title="Final işlem skoru. İşlem açma eşiği: 70.">SKOR</th>
+                <th className="font-semibold">KARAR</th>
+                <th className="font-semibold">SEBEP</th>
                 {advColumns.map((c) => (
                   <th key={c.key}>{c.header}</th>
                 ))}
-                <th className="w-8" aria-label="Aksiyon"></th>
+                <th className="w-10" aria-label="Aksiyon"></th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => {
                 const directionLabel = mapDirectionLabel(r);
+                const directionDisplay = mapDirectionDisplay(directionLabel);
                 const decisionLabel = mapDecisionLabel(r);
                 const reasonText = cleanReasonText(buildReasonText(r));
                 const opened = r.opened === true;
@@ -589,7 +587,7 @@ export default function ScannerPage() {
                 const setup = r.setupScore ?? 0;
 
                 return (
-                  <tr key={r.symbol} className={`group${rowClass ? ` ${rowClass}` : ""}`}>
+                  <tr key={r.symbol} className={rowClass || undefined}>
                     <td className={`!text-left ${opened ? "font-bold" : "font-medium"}`}>
                       <Link className="text-accent" href={`/coins/${encodeURIComponent(r.symbol)}?exchange=${exchange}`}>
                         {r.symbol}
@@ -603,7 +601,7 @@ export default function ScannerPage() {
                     </td>
                     <td>
                       <span className={`text-xs font-medium ${decisionClass(directionLabel, opened)}`}>
-                        {directionLabel}
+                        {directionDisplay}
                       </span>
                     </td>
                     <td>
@@ -638,7 +636,7 @@ export default function ScannerPage() {
                         {decisionLabel}
                       </span>
                     </td>
-                    <td className="pr-12 text-left reason-cell" title={reasonText}>
+                    <td className="text-left reason-cell" title={reasonText}>
                       <span className="text-xs text-slate-400 reason-text align-middle">
                         {reasonText}
                       </span>
@@ -648,14 +646,14 @@ export default function ScannerPage() {
                         {getAdvValue(r, c.key)}
                       </td>
                     ))}
-                    <td className="w-8 text-center">
+                    <td className="relative w-10 text-center group/action">
                       {!opened && (
                         <button
                           type="button"
                           aria-label={`${r.symbol} adayını geç`}
                           title="Bu adayı şimdilik geç"
                           onClick={(e) => handleDismiss(e, r)}
-                          className="inline-flex items-center justify-center rounded p-1 text-slate-600 opacity-0 transition-opacity group-hover:opacity-100 hover:text-slate-300 hover:bg-slate-700/50 focus:opacity-100 focus:outline-none"
+                          className="inline-flex items-center justify-center rounded p-1 text-slate-600 opacity-0 transition-opacity group-hover/action:opacity-100 hover:text-slate-300 hover:bg-slate-700/50 focus:opacity-100 focus:outline-none"
                         >
                           <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden>
                             <path d="M6.5 1.75a.25.25 0 0 1 .25-.25h2.5a.25.25 0 0 1 .25.25V3h-3V1.75zm4.5 0V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15H5.405a1.748 1.748 0 0 1-1.741-1.576l-.66-6.6a.75.75 0 1 1 1.492-.149z"/>

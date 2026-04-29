@@ -74,7 +74,7 @@ describe("Phase 8 — tablo başlıkları büyük harf ve yeni kolon seti", () =
   it("Varsayılan kolon başlıkları büyük harf ve doğru sırada", () => {
     const expected = [
       "COIN", "KAYNAK", "YÖN", "KALİTE", "FIRSAT",
-      "TRADE SKORU", "KARAR", "SEBEP",
+      "SKOR", "KARAR", "SEBEP",
     ];
     for (const h of expected) {
       // Her başlık <th> veya başlığı taşıyan elementte geçmeli.
@@ -603,8 +603,12 @@ describe("Bugfix 1.2 — trade & live gate invariantleri", () => {
 
 // ── 24. Trade Score Column Simplification Patch ──────────────────────
 describe("Trade Score Column Simplification Patch", () => {
-  it("Scanner header'da TRADE SKORU görünür", () => {
-    expect(SCANNER_PAGE.includes(">TRADE SKORU<")).toBe(true);
+  it("Scanner header'da SKOR görünür", () => {
+    expect(SCANNER_PAGE.includes(">SKOR<")).toBe(true);
+  });
+
+  it("TRADE SKORU header'ı artık görünmez (SKOR oldu)", () => {
+    expect(SCANNER_PAGE.includes(">TRADE SKORU<")).toBe(false);
   });
 
   it("İŞLEM SKORU header'ı görünmez", () => {
@@ -737,6 +741,95 @@ describe("Scanner Reason Cleanup + Hover Marquee Patch", () => {
   });
 
   it("Trade logic değişmedi — MIN_SIGNAL_CONFIDENCE=70", () => {
+    const eng = read("src/lib/engines/signal-engine.ts");
+    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+  });
+
+  it("Live gate değişmedi — HARD_LIVE_TRADING_ALLOWED=false", () => {
+    const env = read("src/lib/env.ts");
+    expect(env).toMatch(/HARD_LIVE_TRADING_ALLOWED.*false/);
+  });
+
+  it("Binance order/leverage endpoint yok", () => {
+    expect(SCANNER_PAGE).not.toMatch(/fapi\/v1\/order/);
+    expect(SCANNER_PAGE).not.toMatch(/fapi\/v1\/leverage/);
+    expect(SCANNER_PAGE).not.toMatch(/fapi\.binance\.com/);
+    expect(SCANNER_PAGE).not.toMatch(/api\.binance\.com/);
+  });
+});
+
+// ── 26. Scanner Table UI Final Polish Patch ──────────────────────────
+describe("Scanner Table UI Final Polish Patch", () => {
+  it("Analiz edilen özet satırı render edilmez", () => {
+    expect(SCANNER_PAGE).not.toMatch(/Analiz edilen:/);
+  });
+
+  it("Header'da SKOR görünür", () => {
+    expect(SCANNER_PAGE.includes(">SKOR<")).toBe(true);
+  });
+
+  it("Header'da TRADE SKORU görünmez", () => {
+    expect(SCANNER_PAGE.includes(">TRADE SKORU<")).toBe(false);
+  });
+
+  it("mapDirectionDisplay fonksiyonu tanımlı", () => {
+    expect(SCANNER_PAGE).toMatch(/function mapDirectionDisplay/);
+  });
+
+  it("YÖN display: LONG ADAY → LONG", () => {
+    expect(SCANNER_PAGE).toMatch(/case "LONG ADAY":\s*return "LONG"/);
+  });
+
+  it("YÖN display: SHORT ADAY → SHORT", () => {
+    expect(SCANNER_PAGE).toMatch(/case "SHORT ADAY":\s*return "SHORT"/);
+  });
+
+  it("YÖN display: YÖN KARIŞIK → BELİRSİZ", () => {
+    expect(SCANNER_PAGE).toMatch(/case "YÖN KARIŞIK":\s*return "BELİRSİZ"/);
+  });
+
+  it("YÖN display: YÖN BEKLİYOR → BEKLİYOR", () => {
+    expect(SCANNER_PAGE).toMatch(/case "YÖN BEKLİYOR":\s*return "BEKLİYOR"/);
+  });
+
+  it("directionDisplay render'da kullanılıyor", () => {
+    expect(SCANNER_PAGE).toMatch(/directionDisplay/);
+    expect(SCANNER_PAGE).toMatch(/mapDirectionDisplay\(directionLabel\)/);
+  });
+
+  it("KARAR mapping değişmedi — decisionLabel render korunuyor", () => {
+    expect(SCANNER_PAGE).toMatch(/decisionLabel/);
+    expect(SCANNER_PAGE).toMatch(/mapDecisionLabel/);
+  });
+
+  it("Trash icon action cell içinde render edilir (group/action)", () => {
+    expect(SCANNER_PAGE).toMatch(/group\/action/);
+    expect(SCANNER_PAGE).toMatch(/group-hover\/action:opacity-100/);
+  });
+
+  it("Trash icon tüm satır hover'ında değil, sadece action cell'de görünür", () => {
+    expect(SCANNER_PAGE).not.toMatch(/group-hover:opacity-100/);
+  });
+
+  it("Candidate dismiss click event.stopPropagation korunuyor", () => {
+    expect(SCANNER_PAGE).toMatch(/e\.stopPropagation/);
+  });
+
+  it("COIN sütunu sola yaslı kalır", () => {
+    expect(SCANNER_PAGE).toMatch(/<th className="!text-left">COIN<\/th>/);
+  });
+
+  it("Diğer başlıklar font-semibold class taşıyor", () => {
+    expect(SCANNER_PAGE).toMatch(/className="font-semibold">KAYNAK</);
+    expect(SCANNER_PAGE).toMatch(/className="font-semibold">YÖN</);
+    expect(SCANNER_PAGE).toMatch(/font-semibold[^>]*>KALİTE</);
+    expect(SCANNER_PAGE).toMatch(/font-semibold[^>]*>FIRSAT</);
+    expect(SCANNER_PAGE).toMatch(/font-semibold[^>]*>SKOR</);
+    expect(SCANNER_PAGE).toMatch(/className="font-semibold">KARAR</);
+    expect(SCANNER_PAGE).toMatch(/className="font-semibold">SEBEP</);
+  });
+
+  it("Trade logic değişmedi — MIN_SIGNAL_CONFIDENCE=70 korunur", () => {
     const eng = read("src/lib/engines/signal-engine.ts");
     expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
   });
