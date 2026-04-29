@@ -116,7 +116,7 @@ export default function RiskPage() {
         <div className="flex items-center justify-between flex-wrap gap-3">
           <h1 className="text-lg font-semibold tracking-wide">RİSK YÖNETİMİ</h1>
           <div className="flex items-center gap-2 flex-wrap">
-            <Chip tone="muted">EXECUTION'A BAĞLI DEĞİL</Chip>
+            <Chip tone="muted">EXECUTION&apos;A BAĞLI DEĞİL</Chip>
             <Chip tone="muted">PAPER MODE</Chip>
             {savedAt && (
               <span className="text-[11px] text-muted">
@@ -127,7 +127,7 @@ export default function RiskPage() {
         </div>
         <p className="mt-2 text-xs text-muted">
           Bu sayfa risk ayarlarının canlı mimariye uygun config altyapısını
-          yönetir. Bu fazda kayıtlar trade engine'e uygulanmaz; paper mode
+          yönetir. Bu fazda kayıtlar trade engine&apos;e uygulanmaz; paper mode
           güvenli test katmanıdır.
         </p>
       </div>
@@ -375,8 +375,8 @@ export default function RiskPage() {
         )}
         <p className="mt-3 text-[11px] text-muted">
           Bu sayfanın hiçbir alanı bu fazda trade engine, signal-engine veya
-          canlı trading gate'i tetiklemez. Risk ayarları kalıcı olarak
-          saklanır ve gelecekteki bir fazda execution path'ine güvenli
+          canlı trading gate&apos;i tetiklemez. Risk ayarları kalıcı olarak
+          saklanır ve gelecekteki bir fazda execution path&apos;ine güvenli
           şekilde bağlanır.
         </p>
       </section>
