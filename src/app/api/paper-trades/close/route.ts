@@ -21,9 +21,13 @@ export async function POST(req: Request) {
   const { data: trade } = await supabaseAdmin().from("paper_trades")
     .select("*").eq("id", parsed.tradeId).eq("user_id", userId).single();
   if (!trade) return fail("Trade bulunamadı", 404);
-  const ticker = await getAdapter(trade.exchange_name).getTicker(trade.symbol);
-  const updated = await closePaperTrade({
-    userId, tradeId: parsed.tradeId, exitPrice: ticker.lastPrice, exitReason: parsed.reason,
-  });
-  return ok(updated);
+  try {
+    const ticker = await getAdapter(trade.exchange_name).getTicker(trade.symbol);
+    const updated = await closePaperTrade({
+      userId, tradeId: parsed.tradeId, exitPrice: ticker.lastPrice, exitReason: parsed.reason,
+    });
+    return ok(updated);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Paper close başarısız", 500);
+  }
 }

@@ -1,4 +1,4 @@
-import { ok } from "@/lib/api-helpers";
+import { ok, fail } from "@/lib/api-helpers";
 import { getMarketUniverse } from "@/lib/market-universe";
 import { searchManualListCandidates } from "@/lib/scan-modes/manual-list-search";
 import { getScanModesConfig } from "@/lib/scan-modes";
@@ -17,17 +17,21 @@ export async function GET(req: Request) {
   const limit = clampLimit(url.searchParams.get("limit"));
   const exchange = "binance"; // single-tenant binance default for now
 
-  // Cached: only refetched once per universeTtlMs (default 6h).
-  const universe = await getMarketUniverse({ exchange });
-  const alreadyInList = getScanModesConfig().manualList.symbols;
+  try {
+    // Cached: only refetched once per universeTtlMs (default 6h).
+    const universe = await getMarketUniverse({ exchange });
+    const alreadyInList = getScanModesConfig().manualList.symbols;
 
-  const results = searchManualListCandidates(universe, { query: q, limit, alreadyInList });
-  return ok({
-    query: q,
-    limit,
-    universeSize: universe.length,
-    results,
-  });
+    const results = searchManualListCandidates(universe, { query: q, limit, alreadyInList });
+    return ok({
+      query: q,
+      limit,
+      universeSize: universe.length,
+      results,
+    });
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "Arama başarısız", 500);
+  }
 }
 
 function clampLimit(raw: string | null): number {

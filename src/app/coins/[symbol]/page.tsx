@@ -5,6 +5,16 @@ import { fmtNum, fmtPct, fmtUsd } from "@/lib/format";
 
 const TFS = ["1m", "5m", "15m", "1h", "4h"] as const;
 
+async function safeJson(url: string, opts?: RequestInit): Promise<any> {
+  try {
+    const r = await fetch(url, opts);
+    const text = await r.text();
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function CoinDetail() {
   const params = useParams<{ symbol: string }>();
   const search = useSearchParams();
@@ -15,24 +25,29 @@ export default function CoinDetail() {
   const [ticker, setTicker] = useState<any>(null);
   const [funding, setFunding] = useState<any>(null);
   const [signal, setSignal] = useState<any>(null);
+  const [signalError, setSignalError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const refresh = async () => {
     setLoading(true);
+    setSignalError(null);
     try {
       const [k, t, f] = await Promise.all([
-        fetch(`/api/market/klines?exchange=${exchange}&symbol=${encodeURIComponent(symbol)}&timeframe=${tf}&limit=200`).then((r) => r.json()),
-        fetch(`/api/market/ticker?exchange=${exchange}&symbol=${encodeURIComponent(symbol)}`).then((r) => r.json()),
-        fetch(`/api/market/funding-rate?exchange=${exchange}&symbol=${encodeURIComponent(symbol)}`).then((r) => r.json()),
+        safeJson(`/api/market/klines?exchange=${exchange}&symbol=${encodeURIComponent(symbol)}&timeframe=${tf}&limit=200`),
+        safeJson(`/api/market/ticker?exchange=${exchange}&symbol=${encodeURIComponent(symbol)}`),
+        safeJson(`/api/market/funding-rate?exchange=${exchange}&symbol=${encodeURIComponent(symbol)}`),
       ]);
       if (k.ok) setKlines(k.data);
       if (t.ok) setTicker(t.data);
       if (f.ok) setFunding(f.data);
-      const sig = await fetch("/api/signals/generate", {
+      const sig = await safeJson("/api/signals/generate", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ exchange, symbol, timeframe: tf }),
-      }).then((r) => r.json());
+      });
       if (sig.ok) setSignal(sig.data);
+      else setSignalError(sig.error ?? "Sinyal verisi alınamadı.");
+    } catch (e) {
+      setSignalError(e instanceof Error ? e.message : "Sinyal verisi alınamadı.");
     } finally { setLoading(false); }
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [tf, exchange, symbol]);
@@ -112,7 +127,10 @@ export default function CoinDetail() {
 
       <div className="card">
         <h2 className="font-semibold mb-2">Latest Signal</h2>
-        {!signal ? <div className="text-muted text-sm">hesaplanıyor…</div> : (
+        {loading && !signal ? <div className="text-muted text-sm">hesaplanıyor…</div>
+         : signalError ? <div className="text-muted text-sm">{signalError}</div>
+         : !signal ? <div className="text-muted text-sm">Bu coin için güncel sinyal verisi yok.</div>
+         : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             <div>
               <div className="label">Tip</div>
