@@ -27,9 +27,11 @@ import {
   TodaysSummaryCard,
   PaperValidationCard,
   PerformanceDecisionCard,
+  AIDecisionAssistantCard,
   type DecisionRow,
   type OpenPositionRow,
   type PerformanceDecisionInput,
+  type AIDecisionCardInput,
 } from "@/components/dashboard/Cards";
 
 interface Toast {
@@ -67,6 +69,8 @@ export default function HomePage() {
   const [perfDecision, setPerfDecision] = useState<PerformanceDecisionInput | null>(null);
   // Faz 21 — position management recommendations (advisory, display-only)
   const [pmRecs, setPmRecs] = useState<any[]>([]);
+  // AI Karar Asistanı — RAPORU YENİLE veya ilk yüklemede doldurulur; polling yok
+  const [aiDecision, setAiDecision] = useState<AIDecisionCardInput | null>(null);
 
   const addToast = (t: Omit<Toast, "id">) => {
     const id = ++toastId;
@@ -104,7 +108,8 @@ export default function HomePage() {
 
   useAutoRefresh(refresh);
   // Initial load — useAutoRefresh başlangıçta da çağırır, ama emin olmak için.
-  useEffect(() => { refresh(); }, []);
+  // AI kararı ayrı yüklenir; auto-refresh döngüsüne dahil değil (polling yok).
+  useEffect(() => { refresh(); fetchAIDecision(); }, []);
 
   const { enabled: soundEnabled } = useSoundPref();
   useTradeOpenSound({
@@ -112,6 +117,21 @@ export default function HomePage() {
     paperTradeIds: (paper.open ?? []).map((t: any) => String(t.id)),
     liveTradeIds: [],
   });
+
+  const fetchAIDecision = async () => {
+    try {
+      const res = await fetch("/api/ai-decision/interpret", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "paper" }),
+      }).then((r) => r.json()).catch(() => null);
+      if (res?.ok && res.data?.response?.data) {
+        setAiDecision(res.data.response.data);
+      }
+    } catch {
+      // silent — kart null ile fallback gösterir
+    }
+  };
 
   const actWithBody = async (path: string, label: string, body?: object) => {
     if (path.endsWith("/start") && envCheck && !envCheck.ok) {
@@ -308,6 +328,14 @@ export default function HomePage() {
           // PROMPT/OBSERVE durumları ayrı kayıt yoluna alınabilir.
           void actionId;
           void kind;
+        }}
+      />
+
+      {/* AI Karar Asistanı — ChatGPT API yorum katmanı; ayar değiştirmez, emir açmaz */}
+      <AIDecisionAssistantCard
+        data={aiDecision}
+        onAction={(action) => {
+          if (action === "REFRESH") fetchAIDecision();
         }}
       />
 
