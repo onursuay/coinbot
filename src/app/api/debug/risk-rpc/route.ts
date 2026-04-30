@@ -29,14 +29,14 @@ export async function GET() {
     .eq("user_id", USER_ID)
     .maybeSingle();
 
-  // 3) Write via set_risk_settings RPC with TEST_CAP
+  // 3) Write via write_risk_settings RPC with TEST_CAP
   const testPayload = {
     ...(before.data ?? {}),
     capital: { totalCapitalUsdt: TEST_CAP, riskPerTradePercent: 5, maxDailyLossPercent: 15 },
     profile: "CUSTOM",
     updatedAt: Date.now(),
   };
-  const writeResult = await sb.rpc("set_risk_settings", {
+  const writeResult = await sb.rpc("write_risk_settings", {
     p_user_id: USER_ID,
     p_settings: testPayload,
   });

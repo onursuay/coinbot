@@ -233,7 +233,7 @@ export async function forceReloadFromDb(): Promise<{
 async function persistToDb(
   s: RiskSettings,
 ): Promise<
-  | { ok: true; savedAt: number; via: "rpc_set_risk_settings" }
+  | { ok: true; savedAt: number; via: "rpc_write_risk_settings" }
   | { ok: false; errorSafe: string }
 > {
   if (!supabaseConfigured()) {
@@ -243,12 +243,12 @@ async function persistToDb(
   const userId = resolveUserId();
 
   try {
-    // Write via set_risk_settings RPC — bypasses PostgREST's per-column
+    // Write via write_risk_settings RPC — bypasses PostgREST's per-column
     // schema cache for write paths, which silently drops updates to the
     // freshly-added risk_settings JSONB column even after NOTIFY reload.
-    // The RPC executes raw SQL inside the DB, so column resolution happens
-    // at the plpgsql layer, not at the REST layer.
-    const rpcResult = await sb.rpc("set_risk_settings", {
+    // set_risk_settings adı PostgREST cache'inde eski stub'a kilitli kaldığından
+    // write_risk_settings kullanılıyor (yeni isim, temiz cache).
+    const rpcResult = await sb.rpc("write_risk_settings", {
       p_user_id: userId,
       p_settings: s as unknown as Record<string, unknown>,
     });
@@ -256,7 +256,7 @@ async function persistToDb(
     if (rpcResult.error) {
       // RPC function may not exist — capture descriptive error.
       throw Object.assign(rpcResult.error, {
-        _context: `set_risk_settings RPC error (function may be missing or have wrong signature)`,
+        _context: `write_risk_settings RPC error (function may be missing or have wrong signature)`,
       });
     }
 
@@ -292,7 +292,7 @@ async function persistToDb(
     const tsOk = verifiedUpdatedAt === expectedUpdatedAt;
 
     if (!profileOk || !capOk || !tsOk) {
-      const errorSafe = `DB verify mismatch: sent cap=${expectedCap} ts=${expectedUpdatedAt} but DB has cap=${verifiedCap ?? "null"} ts=${verifiedUpdatedAt ?? "null"} (set_risk_settings yazmadı — DB eski değeri koruyor)`;
+      const errorSafe = `DB verify mismatch: sent cap=${expectedCap} ts=${expectedUpdatedAt} but DB has cap=${verifiedCap ?? "null"} ts=${verifiedUpdatedAt ?? "null"} (write_risk_settings yazmadı — DB eski değeri koruyor)`;
       setStatus({
         state: "fallback",
         errorSafe,
@@ -308,7 +308,7 @@ async function persistToDb(
       lastSavedAt: savedAt,
       lastHydratedAt: persistenceStatus.lastHydratedAt,
     });
-    return { ok: true, savedAt, via: "rpc_set_risk_settings" };
+    return { ok: true, savedAt, via: "rpc_write_risk_settings" };
   } catch (e) {
     const errorSafe = safeErr(e);
     setStatus({
@@ -532,7 +532,7 @@ export function updateRiskSettings(
 export async function updateAndPersistRiskSettings(
   patch: RiskSettingsPatch,
 ): Promise<
-  | { ok: true; data: RiskSettings; savedAt: number; via: "rpc_set_risk_settings" }
+  | { ok: true; data: RiskSettings; savedAt: number; via: "rpc_write_risk_settings" }
   | { ok: false; stage: "validation"; errors: string[] }
   | { ok: false; stage: "persistence"; errorSafe: string; data: RiskSettings }
 > {
