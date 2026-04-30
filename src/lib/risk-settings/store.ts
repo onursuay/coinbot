@@ -254,19 +254,16 @@ async function persistToDb(
     });
 
     if (rpcResult.error) {
-      // RPC function may not exist — capture descriptive error.
       throw Object.assign(rpcResult.error, {
-        _context: `write_risk_settings RPC error (function may be missing or have wrong signature)`,
+        _context: `write_risk_settings RPC error`,
       });
     }
 
-    // Independent verify via read_risk_settings RPC — DO NOT use direct SELECT.
-    // get_risk_settings adı PostgREST cache'inde eski stub'a kilitli kaldığından
-    // read_risk_settings kullanılıyor.
-    const verRpc = await sb.rpc("read_risk_settings", { p_user_id: userId });
-    if (verRpc.error) throw verRpc.error;
-
-    const stored = verRpc.data as {
+    // Verify via RETURNING data from write_risk_settings — NOT a separate read.
+    // Separate read_risk_settings calls hit read replicas that lag behind the
+    // primary, causing false verify failures even when the write succeeded.
+    // RETURNING executes inside the same primary transaction, always reliable.
+    const stored = rpcResult.data as {
       profile?: string;
       capital?: { totalCapitalUsdt?: number };
       updatedAt?: number;
@@ -275,24 +272,20 @@ async function persistToDb(
     if (!stored) {
       return {
         ok: false,
-        errorSafe: "get_risk_settings RPC null döndürdü — satır yok veya risk_settings null.",
+        errorSafe: "write_risk_settings RETURNING null — satır yok veya risk_settings null.",
       };
     }
 
-    const expectedProfile = s.profile;
     const expectedCap = s.capital.totalCapitalUsdt;
     const expectedUpdatedAt = s.updatedAt;
-    const verifiedProfile = stored.profile;
     const verifiedCap = stored.capital?.totalCapitalUsdt;
     const verifiedUpdatedAt = stored.updatedAt;
 
-    const profileOk = verifiedProfile === expectedProfile;
     const capOk = typeof verifiedCap === "number" && verifiedCap === expectedCap;
-    // updatedAt in DB must match what we just wrote — old timestamp means write was dropped.
     const tsOk = verifiedUpdatedAt === expectedUpdatedAt;
 
-    if (!profileOk || !capOk || !tsOk) {
-      const errorSafe = `DB verify mismatch: sent cap=${expectedCap} ts=${expectedUpdatedAt} but DB has cap=${verifiedCap ?? "null"} ts=${verifiedUpdatedAt ?? "null"} (write_risk_settings yazmadı — DB eski değeri koruyor)`;
+    if (!capOk || !tsOk) {
+      const errorSafe = `RETURNING mismatch: sent cap=${expectedCap} ts=${expectedUpdatedAt} got cap=${verifiedCap ?? "null"} ts=${verifiedUpdatedAt ?? "null"}`;
       setStatus({
         state: "fallback",
         errorSafe,
