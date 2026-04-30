@@ -224,7 +224,7 @@ export async function forceReloadFromDb(): Promise<{
 async function persistToDb(
   s: RiskSettings,
 ): Promise<
-  | { ok: true; savedAt: number; via: "direct_update" | "direct_insert" }
+  | { ok: true; savedAt: number; via: "rpc_set_risk_settings" }
   | { ok: false; errorSafe: string }
 > {
   if (!supabaseConfigured()) {
@@ -234,75 +234,32 @@ async function persistToDb(
   const userId = resolveUserId();
 
   try {
-    // 1) Ensure row exists. INSERT ... ON CONFLICT DO NOTHING is achieved via
-    //    upsert with ignoreDuplicates so an existing row is left alone.
-    const ensure = await sb
-      .from("bot_settings")
-      .upsert({ user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true });
-    if (ensure.error) {
-      // Not fatal yet — the row probably already exists. Continue and let
-      // the UPDATE handle it. Capture for error context.
-      // (supabase-js with ignoreDuplicates rarely errors here.)
-    }
+    // Write via set_risk_settings RPC — bypasses PostgREST's per-column
+    // schema cache for write paths, which silently drops updates to the
+    // freshly-added risk_settings JSONB column even after NOTIFY reload.
+    // The RPC executes raw SQL inside the DB, so column resolution happens
+    // at the plpgsql layer, not at the REST layer.
+    const rpcResult = await sb.rpc("set_risk_settings", {
+      p_user_id: userId,
+      p_settings: s as unknown as Record<string, unknown>,
+    });
 
-    // 2) UPDATE risk_settings column with select() chain so we receive the
-    //    actually-stored value. If PostgREST silently drops the JSONB column
-    //    (stale schema cache), .select() returns the row WITHOUT our value
-    //    and we catch it via the verify step.
-    const upd = await sb
-      .from("bot_settings")
-      .update({ risk_settings: s as unknown as Record<string, unknown> })
-      .eq("user_id", userId)
-      .select("user_id, risk_settings")
-      .maybeSingle();
+    if (rpcResult.error) throw rpcResult.error;
 
-    let via: "direct_update" | "direct_insert" = "direct_update";
-
-    if (upd.error) {
-      throw upd.error;
-    }
-    if (!upd.data) {
-      // No row matched — INSERT path. (Should not happen given step 1, but
-      // robust against race conditions.)
-      const ins = await sb
-        .from("bot_settings")
-        .insert({ user_id: userId, risk_settings: s as unknown as Record<string, unknown> })
-        .select("user_id, risk_settings")
-        .maybeSingle();
-      if (ins.error) throw ins.error;
-      if (!ins.data) {
-        return { ok: false, errorSafe: "Insert returned no row" };
-      }
-      via = "direct_insert";
-    }
-
-    // 3) Independent verify SELECT — read directly from the same column on
-    //    the same row. NEVER use in-memory cache or RPC for verify.
-    const ver = await sb
-      .from("bot_settings")
-      .select("risk_settings")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (ver.error) throw ver.error;
-    if (!ver.data) {
-      return { ok: false, errorSafe: "Verify select returned no row" };
-    }
-
-    const stored = (ver.data as { risk_settings?: unknown } | null)?.risk_settings ?? null;
+    // Verify: the RPC returns the stored JSONB directly. Use it as the
+    // primary verify signal so we don't need an extra round-trip.
+    const stored = rpcResult.data as { profile?: string; capital?: { totalCapitalUsdt?: number } } | null;
     if (!stored) {
       return {
         ok: false,
-        errorSafe:
-          "DB verify boş — risk_settings null. Yazma PostgREST tarafından sessizce drop edilmiş olabilir.",
+        errorSafe: "RPC returned null — row may not exist or risk_settings was not stored.",
       };
     }
 
-    const echoed = stored as { profile?: string; capital?: { totalCapitalUsdt?: number } };
     const expectedProfile = s.profile;
     const expectedCap = s.capital.totalCapitalUsdt;
-    const verifiedProfile = echoed.profile;
-    const verifiedCap = echoed.capital?.totalCapitalUsdt;
+    const verifiedProfile = stored.profile;
+    const verifiedCap = stored.capital?.totalCapitalUsdt;
 
     const profileOk = verifiedProfile === expectedProfile;
     const capOk = typeof verifiedCap === "number" && verifiedCap === expectedCap;
@@ -324,7 +281,7 @@ async function persistToDb(
       lastSavedAt: savedAt,
       lastHydratedAt: persistenceStatus.lastHydratedAt,
     });
-    return { ok: true, savedAt, via };
+    return { ok: true, savedAt, via: "rpc_set_risk_settings" };
   } catch (e) {
     const errorSafe = safeErr(e);
     setStatus({
@@ -548,7 +505,7 @@ export function updateRiskSettings(
 export async function updateAndPersistRiskSettings(
   patch: RiskSettingsPatch,
 ): Promise<
-  | { ok: true; data: RiskSettings; savedAt: number; via: "direct_update" | "direct_insert" }
+  | { ok: true; data: RiskSettings; savedAt: number; via: "rpc_set_risk_settings" }
   | { ok: false; stage: "validation"; errors: string[] }
   | { ok: false; stage: "persistence"; errorSafe: string; data: RiskSettings }
 > {
