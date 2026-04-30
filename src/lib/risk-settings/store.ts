@@ -244,28 +244,54 @@ async function persistToDb(
       p_settings: s as unknown as Record<string, unknown>,
     });
 
-    if (rpcResult.error) throw rpcResult.error;
+    if (rpcResult.error) {
+      // RPC function may not exist — capture descriptive error.
+      throw Object.assign(rpcResult.error, {
+        _context: `set_risk_settings RPC error (function may be missing or have wrong signature)`,
+      });
+    }
 
-    // Verify: the RPC returns the stored JSONB directly. Use it as the
-    // primary verify signal so we don't need an extra round-trip.
-    const stored = rpcResult.data as { profile?: string; capital?: { totalCapitalUsdt?: number } } | null;
+    // Independent verify SELECT — DO NOT trust the RPC return value alone.
+    // The RPC may return p_settings verbatim without actually writing to the DB
+    // (e.g. stub function, wrong version). Direct SELECT confirms real DB state.
+    const ver = await sb
+      .from("bot_settings")
+      .select("risk_settings")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (ver.error) throw ver.error;
+    if (!ver.data) {
+      return { ok: false, errorSafe: "Verify SELECT: satır bulunamadı" };
+    }
+
+    const stored = (ver.data as { risk_settings?: unknown })?.risk_settings as {
+      profile?: string;
+      capital?: { totalCapitalUsdt?: number };
+      updatedAt?: number;
+    } | null;
+
     if (!stored) {
       return {
         ok: false,
-        errorSafe: "RPC returned null — row may not exist or risk_settings was not stored.",
+        errorSafe: "Verify SELECT: risk_settings null — RPC yazmış ama DB'de yok (RPC stub olabilir).",
       };
     }
 
     const expectedProfile = s.profile;
     const expectedCap = s.capital.totalCapitalUsdt;
+    const expectedUpdatedAt = s.updatedAt;
     const verifiedProfile = stored.profile;
     const verifiedCap = stored.capital?.totalCapitalUsdt;
+    const verifiedUpdatedAt = stored.updatedAt;
 
     const profileOk = verifiedProfile === expectedProfile;
     const capOk = typeof verifiedCap === "number" && verifiedCap === expectedCap;
+    // updatedAt in DB must match what we just wrote — old timestamp means write was dropped.
+    const tsOk = verifiedUpdatedAt === expectedUpdatedAt;
 
-    if (!profileOk || !capOk) {
-      const errorSafe = `DB verify mismatch: sent profile=${expectedProfile} cap=${expectedCap} but DB has profile=${verifiedProfile ?? "null"} cap=${verifiedCap ?? "null"}`;
+    if (!profileOk || !capOk || !tsOk) {
+      const errorSafe = `DB verify mismatch: sent cap=${expectedCap} ts=${expectedUpdatedAt} but DB has cap=${verifiedCap ?? "null"} ts=${verifiedUpdatedAt ?? "null"} (RPC yazma başarısız — DB eski değeri koruyor)`;
       setStatus({
         state: "fallback",
         errorSafe,
