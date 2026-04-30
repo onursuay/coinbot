@@ -128,17 +128,28 @@ async function readFromDb(): Promise<{
     const userId = resolveUserId();
     const sb = supabaseAdmin();
 
-    // Direct column SELECT — single source of truth.
-    const { data, error } = await sb
+    // Use get_risk_settings RPC — bypasses PostgREST per-instance column cache.
+    // Supabase load-balances across multiple PostgREST instances; some may have
+    // stale schema cache returning null for risk_settings even when DB has data.
+    // The RPC executes at the PostgreSQL layer (SECURITY DEFINER plpgsql) and
+    // always reads the actual column, regardless of PostgREST cache state.
+    const { data: rpcData, error: rpcError } = await sb.rpc("get_risk_settings", {
+      p_user_id: userId,
+    });
+
+    if (rpcError) throw rpcError;
+
+    // Determine row existence via a lightweight direct SELECT on non-JSONB column.
+    // This is just for diagnostics (rowFound flag) and uses a column that has
+    // been in the schema from the start, so its cache is always fresh.
+    const rowCheck = await sb
       .from("bot_settings")
-      .select("user_id, risk_settings")
+      .select("user_id")
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (error) throw error;
-
-    const rowFound = data != null;
-    const stored = (data as { risk_settings?: unknown } | null)?.risk_settings ?? null;
+    const rowFound = rowCheck.data != null;
+    const stored = rpcData ?? null;
     const riskSettingsPresent = stored != null;
 
     if (stored) {
@@ -251,21 +262,16 @@ async function persistToDb(
       });
     }
 
-    // Independent verify SELECT — DO NOT trust the RPC return value alone.
-    // The RPC may return p_settings verbatim without actually writing to the DB
-    // (e.g. stub function, wrong version). Direct SELECT confirms real DB state.
-    const ver = await sb
-      .from("bot_settings")
-      .select("risk_settings")
-      .eq("user_id", userId)
-      .maybeSingle();
+    // Independent verify via get_risk_settings RPC — DO NOT use direct SELECT.
+    // Supabase load-balances across multiple PostgREST instances; some may have
+    // stale schema cache that returns null for the risk_settings column even
+    // when the DB has a real value. The get_risk_settings RPC runs at the
+    // PostgreSQL layer (SECURITY DEFINER plpgsql) and always sees the actual
+    // column, bypassing per-instance PostgREST column resolution entirely.
+    const verRpc = await sb.rpc("get_risk_settings", { p_user_id: userId });
+    if (verRpc.error) throw verRpc.error;
 
-    if (ver.error) throw ver.error;
-    if (!ver.data) {
-      return { ok: false, errorSafe: "Verify SELECT: satır bulunamadı" };
-    }
-
-    const stored = (ver.data as { risk_settings?: unknown })?.risk_settings as {
+    const stored = verRpc.data as {
       profile?: string;
       capital?: { totalCapitalUsdt?: number };
       updatedAt?: number;
@@ -274,7 +280,7 @@ async function persistToDb(
     if (!stored) {
       return {
         ok: false,
-        errorSafe: "Verify SELECT: risk_settings null — RPC yazmış ama DB'de yok (RPC stub olabilir).",
+        errorSafe: "get_risk_settings RPC null döndürdü — satır yok veya risk_settings null.",
       };
     }
 
@@ -291,7 +297,7 @@ async function persistToDb(
     const tsOk = verifiedUpdatedAt === expectedUpdatedAt;
 
     if (!profileOk || !capOk || !tsOk) {
-      const errorSafe = `DB verify mismatch: sent cap=${expectedCap} ts=${expectedUpdatedAt} but DB has cap=${verifiedCap ?? "null"} ts=${verifiedUpdatedAt ?? "null"} (RPC yazma başarısız — DB eski değeri koruyor)`;
+      const errorSafe = `DB verify mismatch: sent cap=${expectedCap} ts=${expectedUpdatedAt} but DB has cap=${verifiedCap ?? "null"} ts=${verifiedUpdatedAt ?? "null"} (set_risk_settings yazmadı — DB eski değeri koruyor)`;
       setStatus({
         state: "fallback",
         errorSafe,
