@@ -15,6 +15,7 @@ import {
   type StopLossMode,
   type WarningEntry,
   computeWarnings,
+  profileDefaults,
 } from "@/lib/risk-settings";
 
 const PROFILES: RiskProfileKey[] = ["LOW", "STANDARD", "AGGRESSIVE", "CUSTOM"];
@@ -96,15 +97,36 @@ export default function RiskPage() {
     tiered?: { scaleInProfitEnabled?: boolean };
   };
   const update = (patch: Patch) => {
+    // Profil değişiyorsa (CUSTOM hariç), kullanıcının görsel olarak yeni
+    // profilin defaultlarını anında görmesi için capital/positions/leverage
+    // alanları profile defaultlarına resetlenir. totalCapitalUsdt korunur
+    // çünkü kullanıcının manuel girdiği sermaye profile bağlı değildir.
+    // API tarafı (applyPatch) zaten aynı reset'i uygular; bu client-side
+    // reset, sadece UX tutarlılığı içindir — kullanıcı butona basar basmaz
+    // değerlerin değiştiğini görür.
+    const profileChanged =
+      patch.profile && patch.profile !== settings.profile && patch.profile !== "CUSTOM";
+    const def = profileChanged ? profileDefaults(patch.profile!) : null;
+
     const next: RiskSettings = {
       profile: patch.profile ?? settings.profile,
-      capital: { ...settings.capital, ...(patch.capital ?? {}) },
-      positions: { ...settings.positions, ...(patch.positions ?? {}) },
-      leverage: {
-        CC: { ...settings.leverage.CC, ...(patch.leverage?.CC ?? {}) },
-        GNMR: { ...settings.leverage.GNMR, ...(patch.leverage?.GNMR ?? {}) },
-        MNLST: { ...settings.leverage.MNLST, ...(patch.leverage?.MNLST ?? {}) },
-      },
+      capital: def
+        ? { ...def.capital, totalCapitalUsdt: settings.capital.totalCapitalUsdt, ...(patch.capital ?? {}) }
+        : { ...settings.capital, ...(patch.capital ?? {}) },
+      positions: def
+        ? { ...def.positions, ...(patch.positions ?? {}) }
+        : { ...settings.positions, ...(patch.positions ?? {}) },
+      leverage: def
+        ? {
+            CC: { ...def.leverage.CC, ...(patch.leverage?.CC ?? {}) },
+            GNMR: { ...def.leverage.GNMR, ...(patch.leverage?.GNMR ?? {}) },
+            MNLST: { ...def.leverage.MNLST, ...(patch.leverage?.MNLST ?? {}) },
+          }
+        : {
+            CC: { ...settings.leverage.CC, ...(patch.leverage?.CC ?? {}) },
+            GNMR: { ...settings.leverage.GNMR, ...(patch.leverage?.GNMR ?? {}) },
+            MNLST: { ...settings.leverage.MNLST, ...(patch.leverage?.MNLST ?? {}) },
+          },
       direction: { ...settings.direction, ...(patch.direction ?? {}) },
       stopLoss: { ...settings.stopLoss, ...(patch.stopLoss ?? {}) },
       tiered: {
