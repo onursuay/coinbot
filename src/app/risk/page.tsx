@@ -26,6 +26,25 @@ const STOP_LOSS_OPTIONS: { value: StopLossMode; label: string }[] = [
   { value: "WIDE",     label: "GENİŞ" },
 ];
 
+// Read replica lag workaround: after a successful save the RETURNING value is
+// stored in localStorage. On page load, if the local cache has a newer
+// updatedAt than what the (potentially stale) replica returned, the cache wins.
+const RS_CACHE_KEY = "coinbot:risk_settings_cache";
+function readLocalCache(): { settings: RiskSettings; updatedAt: number } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(RS_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as { settings: RiskSettings; updatedAt: number };
+  } catch { return null; }
+}
+function writeLocalCache(s: RiskSettings): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(RS_CACHE_KEY, JSON.stringify({ settings: s, updatedAt: s.updatedAt ?? Date.now() }));
+  } catch { /* quota exceeded — silently ignore */ }
+}
+
 type SaveState = "idle" | "saving" | "saved" | "error";
 
 export default function RiskPage() {
@@ -41,7 +60,14 @@ export default function RiskPage() {
   const load = async () => {
     const res = await fetch("/api/risk-settings", { cache: "no-store" }).then((r) => r.json());
     if (res.ok) {
-      setSettings(res.data.settings);
+      const dbSettings = res.data.settings as RiskSettings;
+      const cache = readLocalCache();
+      // Prefer local cache if it has a newer updatedAt (replica lag bridge).
+      const effective =
+        cache && (cache.updatedAt ?? 0) > (dbSettings.updatedAt ?? 0)
+          ? cache.settings
+          : dbSettings;
+      setSettings(effective);
       setPersistenceStatus(res.data.persistenceStatus === "ok" ? "ok" : "fallback");
       setPersistenceErrorSafe(res.data.persistenceErrorSafe);
     }
@@ -67,6 +93,7 @@ export default function RiskPage() {
         setSaveState("error");
         return;
       }
+      writeLocalCache(res.data.settings);
       setSettings(res.data.settings);
       setSavedAt(new Date());
       setSaveState("saved");
