@@ -128,12 +128,10 @@ async function readFromDb(): Promise<{
     const userId = resolveUserId();
     const sb = supabaseAdmin();
 
-    // Use get_risk_settings RPC — bypasses PostgREST per-instance column cache.
-    // Supabase load-balances across multiple PostgREST instances; some may have
-    // stale schema cache returning null for risk_settings even when DB has data.
-    // The RPC executes at the PostgreSQL layer (SECURITY DEFINER plpgsql) and
-    // always reads the actual column, regardless of PostgREST cache state.
-    const { data: rpcData, error: rpcError } = await sb.rpc("get_risk_settings", {
+    // Use read_risk_settings RPC — bypasses PostgREST per-instance column cache.
+    // get_risk_settings adı PostgREST cache'inde eski stub'a kilitli kaldığından
+    // read_risk_settings kullanılıyor (yeni isim, temiz cache).
+    const { data: rpcData, error: rpcError } = await sb.rpc("read_risk_settings", {
       p_user_id: userId,
     });
 
@@ -262,13 +260,10 @@ async function persistToDb(
       });
     }
 
-    // Independent verify via get_risk_settings RPC — DO NOT use direct SELECT.
-    // Supabase load-balances across multiple PostgREST instances; some may have
-    // stale schema cache that returns null for the risk_settings column even
-    // when the DB has a real value. The get_risk_settings RPC runs at the
-    // PostgreSQL layer (SECURITY DEFINER plpgsql) and always sees the actual
-    // column, bypassing per-instance PostgREST column resolution entirely.
-    const verRpc = await sb.rpc("get_risk_settings", { p_user_id: userId });
+    // Independent verify via read_risk_settings RPC — DO NOT use direct SELECT.
+    // get_risk_settings adı PostgREST cache'inde eski stub'a kilitli kaldığından
+    // read_risk_settings kullanılıyor.
+    const verRpc = await sb.rpc("read_risk_settings", { p_user_id: userId });
     if (verRpc.error) throw verRpc.error;
 
     const stored = verRpc.data as {

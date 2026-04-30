@@ -23,8 +23,8 @@ export async function GET() {
     p_cap: TEST_CAP,
   });
 
-  // 2) Ayrı çağrıda get_risk_settings ile oku
-  const afterGet = await sb.rpc("get_risk_settings", { p_user_id: USER_ID });
+  // 2) Ayrı çağrıda read_risk_settings ile oku
+  const afterGet = await sb.rpc("read_risk_settings", { p_user_id: USER_ID });
   const afterGetCap = (afterGet.data as any)?.capital?.totalCapitalUsdt ?? null;
 
   // 3) Ayrı çağrıda direct SELECT ile oku

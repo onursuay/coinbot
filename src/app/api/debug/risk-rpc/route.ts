@@ -19,8 +19,8 @@ export async function GET() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // 1) Read BEFORE via get_risk_settings RPC
-  const before = await sb.rpc("get_risk_settings", { p_user_id: USER_ID });
+  // 1) Read BEFORE via read_risk_settings RPC
+  const before = await sb.rpc("read_risk_settings", { p_user_id: USER_ID });
 
   // 2) Read BEFORE via direct SELECT
   const beforeDirect = await sb
@@ -41,8 +41,8 @@ export async function GET() {
     p_settings: testPayload,
   });
 
-  // 4) Read AFTER via get_risk_settings RPC
-  const after = await sb.rpc("get_risk_settings", { p_user_id: USER_ID });
+  // 4) Read AFTER via read_risk_settings RPC
+  const after = await sb.rpc("read_risk_settings", { p_user_id: USER_ID });
 
   // 5) Read AFTER via direct SELECT
   const afterDirect = await sb
