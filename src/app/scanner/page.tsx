@@ -555,6 +555,18 @@ export default function ScannerPage() {
             )}
           </div>
 
+          {summary && (
+            <div className="px-3 pb-2 pt-1 text-xs text-muted flex flex-wrap gap-x-4 gap-y-1 border-b border-border">
+              <span>Analiz edilen: <strong className="text-slate-300">{summary.rawAnalyzedCount ?? "—"}</strong></span>
+              {summary.coreCount != null && <span>CORE: <strong className="text-slate-300">{summary.coreCount}</strong></span>}
+              {summary.gmtCount != null && <span>GMT: <strong className="text-slate-300">{summary.gmtCount}</strong></span>}
+              {summary.mtCount != null && <span>MT: <strong className="text-slate-300">{summary.mtCount}</strong></span>}
+              {summary.milCount != null && <span>MİL: <strong className="text-slate-300">{summary.milCount}</strong></span>}
+              {summary.krmCount != null && <span>KRM: <strong className="text-slate-300">{summary.krmCount}</strong></span>}
+              {summary.filteredVisibleCount != null && <span>Filtrelenen: <strong className="text-slate-300">{summary.filteredVisibleCount}</strong></span>}
+            </div>
+          )}
+
           <table className="t t-centered">
             <thead>
               <tr>
