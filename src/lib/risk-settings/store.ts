@@ -1,15 +1,19 @@
-// Phase 10 — Risk Yönetimi in-memory store.
+// Risk Yönetimi kalıcılık katmanı.
 //
-// Vercel serverless: birden fazla lambda instance paralel koşar. Bu yüzden
-// API GET path her çağrıda DB'den yeniden okur (forceReloadFromDb). Aksi
-// halde A instance'ı PUT'la DB'yi günceller ama B instance'ı kendi
-// hydrated=true cache'iyle eski default değerleri döner — kullanıcı hard
-// refresh sonrası ayarların kaybolduğunu görür.
+// SOURCE OF TRUTH:
+//   Tablo  : public.bot_settings
+//   Row    : user_id = '00000000-0000-0000-0000-000000000001' (single tenant)
+//   Kolon  : risk_settings JSONB
+//
+// Tüm yazma/okuma DOĞRUDAN bu kolon üzerinden yapılır. RPC, in-memory cache
+// veya başka bir aldatıcı katman kullanılmaz. Vercel serverless: birden fazla
+// lambda instance paralel koşar; bu yüzden GET path her çağrıda DB'den
+// yeniden okur (forceReloadFromDb).
 //
 // Trade engine sync getRiskSettings() çağırır; bu da en son hydrate edilmiş
 // state'i döner. Worker tick'leri ensureHydrated() çağırarak cold start'tan
 // sonra ilk tick'te DB'den yükler. Hiçbir live trading gate fonksiyonu bu
-// store'a bağlı değildir.
+// store'a bağlı değildir; appliedToTradeEngine = false invariant'i korunur.
 
 import {
   defaultRiskSettings,
@@ -24,8 +28,19 @@ import { getCurrentUserId } from "@/lib/auth";
 let state: RiskSettings = clone(defaultRiskSettings());
 let hydrated = false;
 let hydrationPromise: Promise<void> | null = null;
+let lastReadSource: ReadSource = "pending";
 
 export type PersistenceState = "ok" | "fallback" | "unconfigured" | "pending";
+
+/**
+ * Risk settings okumasının nereden geldiğini gösterir. Debug + UI için
+ * kullanılır; in-memory cache yerine kullanıcının DB durumunu doğru
+ * yansıtır.
+ */
+export type ReadSource =
+  | "db_bot_settings_risk_settings"
+  | "default_fallback_no_db_settings"
+  | "pending";
 
 interface PersistenceStatus {
   state: PersistenceState;
@@ -79,11 +94,21 @@ function mergeStored(stored: unknown): RiskSettings | null {
   return v.ok ? merged : null;
 }
 
+const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001";
+
 /**
- * Reads the persisted row from Supabase. Goes through the get_risk_settings
- * RPC so PostgREST's per-column schema cache for the freshly-added JSONB
- * column never enters the picture. Falls back to a column-level SELECT
- * only if the RPC isn't deployed yet.
+ * Single-tenant scaffolding. The system user_id is hard-coded so persistence
+ * cannot accidentally fan out to a wrong row even if `getCurrentUserId()` is
+ * later modified for multi-tenant.
+ */
+function resolveUserId(): string {
+  const fromAuth = getCurrentUserId();
+  return fromAuth || SYSTEM_USER_ID;
+}
+
+/**
+ * Reads the persisted row from Supabase via direct table SELECT (no RPC).
+ * Returns the source of truth indicator for diagnostics.
  *
  * State is replaced atomically when validation passes; on validation
  * failure the in-memory defaults are kept and persistenceStatus moves to
@@ -92,77 +117,43 @@ function mergeStored(stored: unknown): RiskSettings | null {
 async function readFromDb(): Promise<{
   rowFound: boolean;
   riskSettingsPresent: boolean;
+  source: ReadSource;
 }> {
   if (!supabaseConfigured()) {
     setStatus({ state: "unconfigured" });
-    return { rowFound: false, riskSettingsPresent: false };
+    lastReadSource = "default_fallback_no_db_settings";
+    return { rowFound: false, riskSettingsPresent: false, source: lastReadSource };
   }
   try {
-    const userId = getCurrentUserId();
+    const userId = resolveUserId();
     const sb = supabaseAdmin();
 
-    // Primary path — RPC. Returns the JSONB payload directly via raw SQL,
-    // so PostgREST never has to resolve the risk_settings column.
-    let stored: unknown = null;
-    let rowFound = false;
-    const rpcRead = await sb.rpc("get_risk_settings", { p_user_id: userId });
-    if (!rpcRead.error) {
-      stored = rpcRead.data ?? null;
-      // RPC returns NULL only when the row exists with a NULL column or
-      // the row doesn't exist at all. Either way the in-memory defaults
-      // are correct; row presence is checked through a tiny REST select
-      // so diagnostics can distinguish the two cases.
-      const { data: rowProbe } = await sb
-        .from("bot_settings")
-        .select("user_id")
-        .eq("user_id", userId)
-        .maybeSingle();
-      rowFound = rowProbe != null;
-    } else {
-      // Fallback — get_risk_settings RPC not deployed (migration 0016 missing).
-      // Column-level select hits PostgREST schema cache; if the risk_settings
-      // column was added after PostgREST last reloaded its schema, it returns
-      // null even when the row has real data. We probe row existence first so
-      // we can surface this as a real error rather than silently using defaults.
-      const { data: rowCheck } = await sb
-        .from("bot_settings")
-        .select("user_id")
-        .eq("user_id", userId)
-        .maybeSingle();
-      rowFound = rowCheck != null;
+    // Direct column SELECT — single source of truth.
+    const { data, error } = await sb
+      .from("bot_settings")
+      .select("user_id, risk_settings")
+      .eq("user_id", userId)
+      .maybeSingle();
 
-      const { data, error } = await sb
-        .from("bot_settings")
-        .select("risk_settings")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (error) throw error;
-      stored = (data as any)?.risk_settings ?? null;
+    if (error) throw error;
 
-      // If the row exists but risk_settings came back null, the PostgREST schema
-      // cache is stale for this column — not "no data". Surface it as fallback
-      // so the UI shows an error instead of silently loading defaults.
-      if (rowFound && stored == null) {
-        setStatus({
-          state: "fallback",
-          errorSafe: "get_risk_settings RPC eksik (migration 0016 uygulanmadı) — PostgREST kolon önbelleği risk_settings sütununu göremedi",
-          lastHydratedAt: persistenceStatus.lastHydratedAt,
-          lastSavedAt: persistenceStatus.lastSavedAt,
-        });
-        return { rowFound, riskSettingsPresent: false };
-      }
-    }
+    const rowFound = data != null;
+    const stored = (data as { risk_settings?: unknown } | null)?.risk_settings ?? null;
     const riskSettingsPresent = stored != null;
+
     if (stored) {
       const merged = mergeStored(stored);
       if (merged) {
         state = clone(merged);
+        lastReadSource = "db_bot_settings_risk_settings";
         setStatus({
           state: "ok",
           lastHydratedAt: Date.now(),
           lastSavedAt: persistenceStatus.lastSavedAt,
         });
       } else {
+        // Validation failed on stored payload — keep defaults but flag.
+        lastReadSource = "default_fallback_no_db_settings";
         setStatus({
           state: "fallback",
           errorSafe: "stored risk_settings failed validation",
@@ -171,22 +162,24 @@ async function readFromDb(): Promise<{
         });
       }
     } else {
-      // No stored payload yet — defaults are correct, not a failure.
+      // No payload — defaults are correct, not a failure. Source is "default".
+      lastReadSource = "default_fallback_no_db_settings";
       setStatus({
         state: "ok",
         lastHydratedAt: Date.now(),
         lastSavedAt: persistenceStatus.lastSavedAt,
       });
     }
-    return { rowFound, riskSettingsPresent };
+    return { rowFound, riskSettingsPresent, source: lastReadSource };
   } catch (e) {
+    lastReadSource = "default_fallback_no_db_settings";
     setStatus({
       state: "fallback",
       errorSafe: safeErr(e),
       lastHydratedAt: persistenceStatus.lastHydratedAt,
       lastSavedAt: persistenceStatus.lastSavedAt,
     });
-    return { rowFound: false, riskSettingsPresent: false };
+    return { rowFound: false, riskSettingsPresent: false, source: lastReadSource };
   }
 }
 
@@ -203,14 +196,14 @@ export function ensureHydrated(): Promise<void> {
 }
 
 /**
- * Force a fresh read from the DB regardless of the per-process hydrated
- * flag. Used by the GET API path so reads are coherent across Vercel
- * lambda instances (a warm instance must not serve stale defaults after
- * another instance persisted new values).
+ * Force a fresh read from the DB regardless of the per-process hydrated flag.
+ * Used by the GET API path so reads are coherent across Vercel lambda
+ * instances.
  */
 export async function forceReloadFromDb(): Promise<{
   rowFound: boolean;
   riskSettingsPresent: boolean;
+  source: ReadSource;
 }> {
   const r = await readFromDb();
   hydrated = true;
@@ -218,123 +211,104 @@ export async function forceReloadFromDb(): Promise<{
 }
 
 /**
- * Awaited persistence. Returns ok:false with safe error string on failure
- * — caller must surface this to the UI; it is no longer fire-and-forget.
+ * Awaited persistence. Direct table UPDATE/INSERT — no RPC, no in-memory
+ * shortcut. Returns ok:false with safe error on failure so the API/UI can
+ * surface a real error rather than reporting phantom success.
+ *
+ * Strategy:
+ *  1. Ensure row exists (INSERT ... ON CONFLICT DO NOTHING).
+ *  2. UPDATE risk_settings column with .select() chain so PostgREST is
+ *     forced to return the actually-stored row (catches phantom drops).
+ *  3. Independent verify SELECT on the same column — must echo what we sent.
  */
-async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number; via: "rpc" | "fallback" } | { ok: false; errorSafe: string }> {
+async function persistToDb(
+  s: RiskSettings,
+): Promise<
+  | { ok: true; savedAt: number; via: "direct_update" | "direct_insert" }
+  | { ok: false; errorSafe: string }
+> {
   if (!supabaseConfigured()) {
     return { ok: false, errorSafe: "Supabase not configured" };
   }
   const sb = supabaseAdmin();
-  const userId = getCurrentUserId();
+  const userId = resolveUserId();
+
   try {
-    // Primary path — RPC bypasses PostgREST column resolution for writes.
-    // The plpgsql function executes UPDATE/INSERT in raw SQL and surfaces
-    // the stored value via RETURNING. The non-null return value IS the
-    // proof of persistence — we don't follow up with a column-level
-    // SELECT because that path hits PostgREST's stale schema cache for
-    // the JSONB column and returns null even when the row is correct.
-    const rpcRes = await sb.rpc("set_risk_settings", {
-      p_user_id: userId,
-      p_settings: s as unknown as Record<string, unknown>,
-    });
-    if (!rpcRes.error && rpcRes.data != null) {
-      // POST-COMMIT VERIFY — RPC RETURNING runs inside the function's
-      // transaction and could in theory return values that aren't actually
-      // committed (replication lag, connection-pool quirk, transaction
-      // rollback by an outer scope, etc.). To protect against that we do an
-      // independent get_risk_settings RPC call after a tiny delay and
-      // compare profile + capital. If they don't match what we just sent,
-      // persistence is broken and we must report failure.
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      const verifyRpc = await sb.rpc("get_risk_settings", { p_user_id: userId });
-      const verifiedRaw = verifyRpc.error ? null : (verifyRpc.data ?? null);
-      const verified = verifiedRaw as
-        | { profile?: string; capital?: { totalCapitalUsdt?: number } }
-        | null;
-      const expectedProfile = s.profile;
-      const expectedCap = s.capital.totalCapitalUsdt;
-      const verifiedProfile = verified?.profile;
-      const verifiedCap = verified?.capital?.totalCapitalUsdt;
-      const profileOk = verifiedProfile === expectedProfile;
-      const capOk = typeof verifiedCap === "number" && verifiedCap === expectedCap;
-      if (verified == null || !profileOk || !capOk) {
-        const errorSafe = `Post-commit verify mismatch: sent profile=${expectedProfile} cap=${expectedCap} but DB has profile=${verifiedProfile ?? "null"} cap=${verifiedCap ?? "null"} — RPC RETURNING aldatıcı, gerçekte commit olmuyor`;
-        setStatus({
-          state: "fallback",
-          errorSafe,
-          lastSavedAt: persistenceStatus.lastSavedAt,
-          lastHydratedAt: persistenceStatus.lastHydratedAt,
-        });
-        return { ok: false, errorSafe };
-      }
-      const savedAt = Date.now();
-      setStatus({
-        state: "ok",
-        lastSavedAt: savedAt,
-        lastHydratedAt: persistenceStatus.lastHydratedAt,
-      });
-      return { ok: true, savedAt, via: "rpc" };
-    }
-    let lastErr: string | null = rpcRes.error ? safeErr(rpcRes.error) : null;
-
-    // Fallback — RPC not deployed yet (migration 0015 missing) or other
-    // PostgREST function-cache issue. Try upsert + select-then-update/insert
-    // so an older environment still saves.
-    const { error: upsertErr } = await sb
+    // 1) Ensure row exists. INSERT ... ON CONFLICT DO NOTHING is achieved via
+    //    upsert with ignoreDuplicates so an existing row is left alone.
+    const ensure = await sb
       .from("bot_settings")
-      .upsert({ user_id: userId, risk_settings: s }, { onConflict: "user_id" });
-    if (upsertErr) {
-      lastErr = safeErr(upsertErr);
-      const { data: existing, error: selErr } = await sb
-        .from("bot_settings")
-        .select("user_id")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (selErr) throw selErr;
-      if (existing) {
-        const { error: updErr } = await sb
-          .from("bot_settings")
-          .update({ risk_settings: s })
-          .eq("user_id", userId);
-        if (updErr) throw updErr;
-      } else {
-        const { error: insErr } = await sb
-          .from("bot_settings")
-          .insert({ user_id: userId, risk_settings: s });
-        if (insErr) throw insErr;
-      }
+      .upsert({ user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true });
+    if (ensure.error) {
+      // Not fatal yet — the row probably already exists. Continue and let
+      // the UPDATE handle it. Capture for error context.
+      // (supabase-js with ignoreDuplicates rarely errors here.)
     }
 
-    // Verify only on the fallback path — RPC's RETURNING is already
-    // authoritative when it succeeds. Use the same get_risk_settings RPC
-    // for the read so PostgREST column cache stays out of the way.
-    const verifyRpc = await sb.rpc("get_risk_settings", { p_user_id: userId });
-    let storedAfter: unknown = null;
-    if (!verifyRpc.error) {
-      storedAfter = verifyRpc.data ?? null;
-    } else {
-      const { data: verify, error: verifyErr } = await sb
+    // 2) UPDATE risk_settings column with select() chain so we receive the
+    //    actually-stored value. If PostgREST silently drops the JSONB column
+    //    (stale schema cache), .select() returns the row WITHOUT our value
+    //    and we catch it via the verify step.
+    const upd = await sb
+      .from("bot_settings")
+      .update({ risk_settings: s as unknown as Record<string, unknown> })
+      .eq("user_id", userId)
+      .select("user_id, risk_settings")
+      .maybeSingle();
+
+    let via: "direct_update" | "direct_insert" = "direct_update";
+
+    if (upd.error) {
+      throw upd.error;
+    }
+    if (!upd.data) {
+      // No row matched — INSERT path. (Should not happen given step 1, but
+      // robust against race conditions.)
+      const ins = await sb
         .from("bot_settings")
-        .select("risk_settings")
-        .eq("user_id", userId)
+        .insert({ user_id: userId, risk_settings: s as unknown as Record<string, unknown> })
+        .select("user_id, risk_settings")
         .maybeSingle();
-      if (verifyErr) throw verifyErr;
-      storedAfter = (verify as any)?.risk_settings ?? null;
+      if (ins.error) throw ins.error;
+      if (!ins.data) {
+        return { ok: false, errorSafe: "Insert returned no row" };
+      }
+      via = "direct_insert";
     }
-    if (storedAfter == null) {
-      const hint = lastErr ? ` (last write error: ${lastErr})` : "";
-      throw new Error(`DB write verified empty — risk_settings did not persist${hint}`);
+
+    // 3) Independent verify SELECT — read directly from the same column on
+    //    the same row. NEVER use in-memory cache or RPC for verify.
+    const ver = await sb
+      .from("bot_settings")
+      .select("risk_settings")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (ver.error) throw ver.error;
+    if (!ver.data) {
+      return { ok: false, errorSafe: "Verify select returned no row" };
     }
-    // Fallback echo check — same as the RPC primary path. If verify-read
-    // returns a different capital than what we just wrote, the upsert
-    // silently dropped the JSONB column and we're seeing the OLD value.
-    // Phantom success: must reject.
-    const echoedFallback = storedAfter as { capital?: { totalCapitalUsdt?: number } };
-    const expectedCapFallback = s.capital.totalCapitalUsdt;
-    const echoedCapFallback = echoedFallback?.capital?.totalCapitalUsdt;
-    if (typeof echoedCapFallback === "number" && echoedCapFallback !== expectedCapFallback) {
-      const errorSafe = `DB verify mismatch: sent capital=${expectedCapFallback} but DB has capital=${echoedCapFallback} — PostgREST muhtemelen risk_settings sütununu sessizce drop etti`;
+
+    const stored = (ver.data as { risk_settings?: unknown } | null)?.risk_settings ?? null;
+    if (!stored) {
+      return {
+        ok: false,
+        errorSafe:
+          "DB verify boş — risk_settings null. Yazma PostgREST tarafından sessizce drop edilmiş olabilir.",
+      };
+    }
+
+    const echoed = stored as { profile?: string; capital?: { totalCapitalUsdt?: number } };
+    const expectedProfile = s.profile;
+    const expectedCap = s.capital.totalCapitalUsdt;
+    const verifiedProfile = echoed.profile;
+    const verifiedCap = echoed.capital?.totalCapitalUsdt;
+
+    const profileOk = verifiedProfile === expectedProfile;
+    const capOk = typeof verifiedCap === "number" && verifiedCap === expectedCap;
+
+    if (!profileOk || !capOk) {
+      const errorSafe = `DB verify mismatch: sent profile=${expectedProfile} cap=${expectedCap} but DB has profile=${verifiedProfile ?? "null"} cap=${verifiedCap ?? "null"}`;
       setStatus({
         state: "fallback",
         errorSafe,
@@ -343,13 +317,14 @@ async function persistToDb(s: RiskSettings): Promise<{ ok: true; savedAt: number
       });
       return { ok: false, errorSafe };
     }
+
     const savedAt = Date.now();
     setStatus({
       state: "ok",
       lastSavedAt: savedAt,
       lastHydratedAt: persistenceStatus.lastHydratedAt,
     });
-    return { ok: true, savedAt, via: "fallback" };
+    return { ok: true, savedAt, via };
   } catch (e) {
     const errorSafe = safeErr(e);
     setStatus({
@@ -388,6 +363,10 @@ export function getPersistenceStatus(): PersistenceStatus {
   return { ...persistenceStatus };
 }
 
+export function getReadSource(): ReadSource {
+  return lastReadSource;
+}
+
 /**
  * Safe debug snapshot for the GET ?debug=1 endpoint. Reads the DB row
  * directly so the response reflects current persisted state, not the
@@ -395,52 +374,53 @@ export function getPersistenceStatus(): PersistenceStatus {
  */
 export interface RiskSettingsDebugSnapshot {
   hasSupabaseConfigured: boolean;
+  hasServiceRoleKey: boolean;
   selectedUserId: string;
   persistenceStatus: PersistenceState;
   persistenceErrorSafe?: string;
   lastSavedAt?: number;
   lastHydratedAt?: number;
-  dbRowFound: boolean;
+  rowExists: boolean;
   dbRiskSettingsPresent: boolean;
   dbRiskSettingsProfile: RiskProfileKey | null;
   dbRiskSettingsCapital: number | null;
+  dbRiskSettings: unknown;
   inMemoryProfile: RiskProfileKey;
   inMemoryCapital: number;
   hydratedFlag: boolean;
+  source: ReadSource;
+  normalizedResponse: {
+    profile: RiskProfileKey;
+    capital: { totalCapitalUsdt: number; riskPerTradePercent: number; maxDailyLossPercent: number };
+  };
 }
 
 export async function getDebugSnapshot(): Promise<RiskSettingsDebugSnapshot> {
   const hasSupabaseConfigured = supabaseConfigured();
-  const selectedUserId = getCurrentUserId();
-  let dbRowFound = false;
+  // Service role key presence (only the existence flag — never the value).
+  const hasServiceRoleKey = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const selectedUserId = resolveUserId();
+
+  let rowExists = false;
+  let dbRiskSettings: unknown = null;
   let dbRiskSettingsPresent = false;
   let dbRiskSettingsProfile: RiskProfileKey | null = null;
   let dbRiskSettingsCapital: number | null = null;
+
   if (hasSupabaseConfigured) {
     try {
       const sb = supabaseAdmin();
-      // Row presence — small select that doesn't depend on JSONB column cache.
-      const { data: rowProbe } = await sb
+      const { data } = await sb
         .from("bot_settings")
-        .select("user_id")
+        .select("user_id, risk_settings")
         .eq("user_id", selectedUserId)
         .maybeSingle();
-      dbRowFound = rowProbe != null;
 
-      // JSONB payload — through RPC so PostgREST column cache stays out.
-      const rpcRead = await sb.rpc("get_risk_settings", { p_user_id: selectedUserId });
-      let stored: unknown = null;
-      if (!rpcRead.error) {
-        stored = rpcRead.data ?? null;
-      } else {
-        const { data: legacy } = await sb
-          .from("bot_settings")
-          .select("risk_settings")
-          .eq("user_id", selectedUserId)
-          .maybeSingle();
-        stored = (legacy as any)?.risk_settings ?? null;
-      }
+      rowExists = data != null;
+      const stored = (data as { risk_settings?: unknown } | null)?.risk_settings ?? null;
       dbRiskSettingsPresent = stored != null;
+      dbRiskSettings = stored;
+
       if (stored && typeof stored === "object") {
         const p = (stored as any).profile;
         if (p === "LOW" || p === "STANDARD" || p === "AGGRESSIVE" || p === "CUSTOM") {
@@ -452,23 +432,35 @@ export async function getDebugSnapshot(): Promise<RiskSettingsDebugSnapshot> {
         }
       }
     } catch {
-      // Diagnostics-only — surface DB read errors via persistenceStatus already.
+      // Diagnostics-only — surface DB read errors via persistenceStatus.
     }
   }
+
   return {
     hasSupabaseConfigured,
+    hasServiceRoleKey,
     selectedUserId,
     persistenceStatus: persistenceStatus.state,
     persistenceErrorSafe: persistenceStatus.errorSafe,
     lastSavedAt: persistenceStatus.lastSavedAt,
     lastHydratedAt: persistenceStatus.lastHydratedAt,
-    dbRowFound,
+    rowExists,
     dbRiskSettingsPresent,
     dbRiskSettingsProfile,
     dbRiskSettingsCapital,
+    dbRiskSettings,
     inMemoryProfile: state.profile,
     inMemoryCapital: state.capital.totalCapitalUsdt,
     hydratedFlag: hydrated,
+    source: lastReadSource,
+    normalizedResponse: {
+      profile: state.profile,
+      capital: {
+        totalCapitalUsdt: state.capital.totalCapitalUsdt,
+        riskPerTradePercent: state.capital.riskPerTradePercent,
+        maxDailyLossPercent: state.capital.maxDailyLossPercent,
+      },
+    },
   };
 }
 
@@ -556,7 +548,7 @@ export function updateRiskSettings(
 export async function updateAndPersistRiskSettings(
   patch: RiskSettingsPatch,
 ): Promise<
-  | { ok: true; data: RiskSettings; savedAt: number; via: "rpc" | "fallback" }
+  | { ok: true; data: RiskSettings; savedAt: number; via: "direct_update" | "direct_insert" }
   | { ok: false; stage: "validation"; errors: string[] }
   | { ok: false; stage: "persistence"; errorSafe: string; data: RiskSettings }
 > {
@@ -573,4 +565,5 @@ export function __resetRiskSettingsStoreForTests(): void {
   hydrated = false;
   hydrationPromise = null;
   persistenceStatus = { state: "pending" };
+  lastReadSource = "pending";
 }
