@@ -1,32 +1,27 @@
-"use client";
+// Coin Detail Disable Patch — index sayfası da devre dışı.
+//
+// Hiçbir veri fetch'i yapılmaz. Coin listesi yerine kullanıcı Piyasa
+// Tarayıcı'ya yönlendirilir.
+
 import Link from "next/link";
-import { useEffect, useState } from "react";
 
-const DEFAULTS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"];
-
-export default function CoinsIndex() {
-  const [exchange, setExchange] = useState("binance");
-  const [list, setList] = useState<string[]>(DEFAULTS);
-  const [filter, setFilter] = useState("");
-  useEffect(() => {
-    fetch(`/api/market/symbols?exchange=${exchange}`).then((r) => r.json())
-      .then((j) => j.ok && setList((j.data ?? []).slice(0, 200).map((s: any) => s.symbol)))
-      .catch(() => setList(DEFAULTS));
-  }, [exchange]);
-  const filtered = list.filter((s) => s.toLowerCase().includes(filter.toLowerCase()));
+export default function CoinsIndexDisabled() {
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Coin Detail</h1>
-      <div className="flex gap-2">
-        <select className="input w-32" value={exchange} onChange={(e) => setExchange(e.target.value)}>
-          {["mexc", "binance", "okx", "bybit"].map((x) => <option key={x} value={x}>{x.toUpperCase()}</option>)}
-        </select>
-        <input className="input flex-1" placeholder="Sembol ara..." value={filter} onChange={(e) => setFilter(e.target.value)} />
-      </div>
-      <div className="card grid grid-cols-2 md:grid-cols-4 gap-2">
-        {filtered.slice(0, 80).map((s) => (
-          <Link key={s} href={`/coins/${encodeURIComponent(s)}?exchange=${exchange}`} className="btn-ghost text-sm">{s}</Link>
-        ))}
+      <div className="card">
+        <h1 className="text-lg font-semibold tracking-wide mb-2">
+          Coin Detay geçici olarak devre dışı
+        </h1>
+        <p className="text-sm text-muted leading-relaxed">
+          Bu alan, piyasa verisi ve mum verisi güvenilir şekilde sağlanana
+          kadar kapatıldı. Coin bazlı takip için Piyasa Tarayıcı
+          kullanılmalıdır.
+        </p>
+        <div className="mt-4">
+          <Link href="/scanner" className="btn-primary text-sm px-4 py-1.5 inline-block">
+            Piyasa Tarayıcıya dön
+          </Link>
+        </div>
       </div>
     </div>
   );

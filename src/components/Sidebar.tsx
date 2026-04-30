@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard,
   ScanLine,
-  CircleDollarSign,
   ReceiptText,
   ShieldAlert,
   KeyRound,
@@ -23,7 +22,8 @@ const NAV = [
   { href: '/', label: 'Panel', icon: LayoutDashboard },
   { href: '/scanner', label: 'Piyasa Tarayıcı', icon: ScanLine },
   { href: '/scan-modes', label: 'Tarama Modları', icon: Layers },
-  { href: '/coins', label: 'Coin Detayı', icon: CircleDollarSign },
+  // Coin Detayı: piyasa/mum/sinyal verisi güvenilir hâle gelene kadar
+  // ürün arayüzünden çıkarıldı. Coin bazlı takip Piyasa Tarayıcı'dan yapılır.
   { href: '/paper-trades', label: 'Sanal İşlemler', icon: ReceiptText },
   { href: '/risk', label: 'Risk Yönetimi', icon: ShieldAlert },
   { href: '/api-settings', label: 'API Ayarları', icon: KeyRound },

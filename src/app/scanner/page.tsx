@@ -12,7 +12,6 @@
 //  - Gelişmiş metrik seçici sadece UI kolon görünürlüğünü değiştirir;
 //    state localStorage'da tutulur, backend'e gönderilmez.
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { fmtPct } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
 import {
@@ -589,9 +588,8 @@ export default function ScannerPage() {
                 return (
                   <tr key={r.symbol} className={rowClass || undefined}>
                     <td className={`!text-left ${opened ? "font-bold" : "font-medium"}`}>
-                      <Link className="text-accent" href={`/coins/${encodeURIComponent(r.symbol)}?exchange=${exchange}`}>
-                        {r.symbol}
-                      </Link>
+                      {/* Coin Detail Disable Patch: sembol artık /coins linki değil. */}
+                      <span className="text-accent">{r.symbol}</span>
                       {isStale && (
                         <span className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium bg-warning/15 text-warning align-middle">GÜNCEL DEĞİL</span>
                       )}
