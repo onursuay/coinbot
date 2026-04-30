@@ -555,31 +555,19 @@ export default function ScannerPage() {
             )}
           </div>
 
-          {summary && (
-            <div className="px-3 pb-2 pt-1 text-xs text-muted flex flex-wrap gap-x-4 gap-y-1 border-b border-border">
-              <span>Analiz edilen: <strong className="text-slate-300">{summary.rawAnalyzedCount ?? "—"}</strong></span>
-              {summary.coreCount != null && <span>CORE: <strong className="text-slate-300">{summary.coreCount}</strong></span>}
-              {summary.gmtCount != null && <span>GMT: <strong className="text-slate-300">{summary.gmtCount}</strong></span>}
-              {summary.mtCount != null && <span>MT: <strong className="text-slate-300">{summary.mtCount}</strong></span>}
-              {summary.milCount != null && <span>MİL: <strong className="text-slate-300">{summary.milCount}</strong></span>}
-              {summary.krmCount != null && <span>KRM: <strong className="text-slate-300">{summary.krmCount}</strong></span>}
-              {summary.filteredVisibleCount != null && <span>Filtrelenen: <strong className="text-slate-300">{summary.filteredVisibleCount}</strong></span>}
-            </div>
-          )}
-
-          <table className="t t-centered">
+          <table className="t t-centered scanner-table">
             <thead>
               <tr>
-                <th className="!text-left">COIN</th>
-                <th className="font-semibold">KAYNAK</th>
-                <th className="font-semibold">YÖN</th>
-                <th className="font-semibold" title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">KALİTE</th>
-                <th className="font-semibold" title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu">FIRSAT</th>
-                <th className="font-semibold" title="Final işlem skoru. İşlem açma eşiği: 70.">SKOR</th>
-                <th className="font-semibold">KARAR</th>
-                <th className="font-semibold">SEBEP</th>
+                <th className="!text-left font-semibold text-slate-200">COIN</th>
+                <th className="font-semibold text-slate-200">KAYNAK</th>
+                <th className="font-semibold text-slate-200">YÖN</th>
+                <th className="font-semibold text-slate-200" title="Piyasa kalite skoru — hacim, spread, derinlik, ATR, fonlama sağlığı">KALİTE</th>
+                <th className="font-semibold text-slate-200" title="Fırsat yapısı skoru — EMA/MA/MACD/RSI/Bollinger/ADX/VWAP/Hacim uyumu">FIRSAT</th>
+                <th className="font-semibold text-slate-200" title="Final işlem skoru. İşlem açma eşiği: 70.">SKOR</th>
+                <th className="font-semibold text-slate-200">KARAR</th>
+                <th className="font-semibold text-slate-200">KARAR GEREKÇESİ</th>
                 {advColumns.map((c) => (
-                  <th key={c.key}>{c.header}</th>
+                  <th key={c.key} className="font-semibold text-slate-200">{c.header}</th>
                 ))}
                 <th className="w-10" aria-label="Aksiyon"></th>
               </tr>
@@ -647,7 +635,7 @@ export default function ScannerPage() {
                       </span>
                     </td>
                     <td className="text-left reason-cell" title={reasonText}>
-                      <span className="text-xs text-slate-400 reason-text align-middle">
+                      <span className="reason-text align-middle text-xs text-slate-300">
                         {reasonText}
                       </span>
                     </td>

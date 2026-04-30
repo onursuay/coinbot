@@ -154,14 +154,12 @@ describe("scanner page rules", () => {
     expect(SCANNER_PAGE).not.toMatch(/ÇEKİRDEK|Çekirdek|çekirdek/);
   });
 
-  it("renders compact source-mix summary line (CORE/GMT/MT/MİL/KRM/Filtrelenen)", () => {
-    expect(SCANNER_PAGE).toContain("Analiz edilen:");
-    expect(SCANNER_PAGE).toContain("CORE:");
-    expect(SCANNER_PAGE).toContain("GMT:");
-    expect(SCANNER_PAGE).toContain("MT:");
-    expect(SCANNER_PAGE).toContain("MİL:");
-    expect(SCANNER_PAGE).toContain("KRM:");
-    expect(SCANNER_PAGE).toContain("Filtrelenen:");
+  it("source label maps contain CORE/GMT/MT/MİL/KRM identifiers", () => {
+    expect(SCANNER_PAGE).toContain("CORE");
+    expect(SCANNER_PAGE).toContain("GMT");
+    expect(SCANNER_PAGE).toContain("MT");
+    expect(SCANNER_PAGE).toContain("MİL");
+    expect(SCANNER_PAGE).toContain("KRM");
   });
 
   it("shows pool-empty notice when unified pool is empty / provider errored", () => {
