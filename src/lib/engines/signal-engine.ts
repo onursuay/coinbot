@@ -354,42 +354,59 @@ export function generateSignal(ctx: SignalContext): SignalResult {
     let mqs = 0;
     // Volume (25pts)
     const vol24h = ticker.quoteVolume24h;
-    if (vol24h >= 500_000_000) mqs += 25;
-    else if (vol24h >= 100_000_000) mqs += 20;
-    else if (vol24h >= 50_000_000) mqs += 15;
-    else if (vol24h >= 10_000_000) mqs += 10;
-    else mqs += 4;
+    let mqsVol = 0;
+    if (vol24h >= 500_000_000) mqsVol = 25;
+    else if (vol24h >= 100_000_000) mqsVol = 20;
+    else if (vol24h >= 50_000_000) mqsVol = 15;
+    else if (vol24h >= 10_000_000) mqsVol = 10;
+    else mqsVol = 4;
+    mqs += mqsVol;
     // Spread (20pts)
     const spreadPct = ticker.spread * 100;
-    if (spreadPct < 0.01) mqs += 20;
-    else if (spreadPct < 0.05) mqs += 16;
-    else if (spreadPct < 0.1) mqs += 10;
-    else if (spreadPct < 0.15) mqs += 5;
+    let mqsSpread = 0;
+    if (spreadPct < 0.01) mqsSpread = 20;
+    else if (spreadPct < 0.05) mqsSpread = 16;
+    else if (spreadPct < 0.1) mqsSpread = 10;
+    else if (spreadPct < 0.15) mqsSpread = 5;
     // > 0.15% = 0
+    mqs += mqsSpread;
     // ATR/volatility health (20pts) — same as volScore proxy
-    if (volScore >= 70) mqs += 20;
-    else if (volScore >= 50) mqs += 14;
-    else if (volScore >= 30) mqs += 7;
-    else mqs += 0;
+    let mqsAtr = 0;
+    if (volScore >= 70) mqsAtr = 20;
+    else if (volScore >= 50) mqsAtr = 14;
+    else if (volScore >= 30) mqsAtr = 7;
+    mqs += mqsAtr;
     // Funding normalcy (15pts)
+    let mqsFunding = 0;
     if (funding) {
       const fr = Math.abs(funding.rate * 100);
-      if (fr < 0.01) mqs += 15;
-      else if (fr < 0.05) mqs += 12;
-      else if (fr < 0.1) mqs += 7;
-      else if (fr < 0.3) mqs += 2;
+      if (fr < 0.01) mqsFunding = 15;
+      else if (fr < 0.05) mqsFunding = 12;
+      else if (fr < 0.1) mqsFunding = 7;
+      else if (fr < 0.3) mqsFunding = 2;
     } else {
-      mqs += 10; // unknown = neutral
+      mqsFunding = 10; // unknown = neutral
     }
+    mqs += mqsFunding;
     // Data quality (10pts) — reached this point = indicators all computed
-    mqs += 10;
+    const mqsDataQuality = 10;
+    mqs += mqsDataQuality;
     // Pump/dump proxy (10pts) — spread low + volatility healthy
-    if (spreadPct < 0.05 && volScore >= 30) mqs += 10;
-    else if (spreadPct < 0.1 && volScore >= 30) mqs += 6;
-    else mqs += 2;
+    let mqsPumpDump = 0;
+    if (spreadPct < 0.05 && volScore >= 30) mqsPumpDump = 10;
+    else if (spreadPct < 0.1 && volScore >= 30) mqsPumpDump = 6;
+    else mqsPumpDump = 2;
+    mqs += mqsPumpDump;
 
     features.marketQualityScore = Math.max(0, Math.min(85, Math.round(mqs)));
     // Capped at 85: orchestrator can add up to 15pts for order book depth to reach 100
+    // Diagnostic sub-component scores — display/logging only, never used in trade logic.
+    features.mqsVolumeScore = mqsVol;
+    features.mqsSpreadScore = mqsSpread;
+    features.mqsAtrScore = mqsAtr;
+    features.mqsFundingScore = mqsFunding;
+    features.mqsDataQualityScore = mqsDataQuality;
+    features.mqsPumpDumpScore = mqsPumpDump;
   }
 
   // ── BTC trend reference (computed early so directional scoring can include it) ──

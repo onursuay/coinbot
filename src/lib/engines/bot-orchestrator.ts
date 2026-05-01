@@ -161,6 +161,11 @@ export interface ScanDetail {
   signalScore: number;
   setupScore: number;           // opportunity quality (10-component), >0 whenever indicators computed
   marketQualityScore: number;   // coin tradability quality (volume/spread/depth/ATR/funding)
+  // ── Diagnostic fields — display/logging only, never used in trade/signal/risk logic ──
+  /** Signal-engine MQS before order-book depth adjustment (0-85). Display diagnostic only. */
+  mqsBaseScore?: number;
+  /** Order-book depth adjustment applied by orchestrator (-15 to +15). Display diagnostic only. */
+  mqsDepthAdjustment?: number;
   // Direction explainability — observation-only, never gates trades.
   longSetupScore?: number;
   shortSetupScore?: number;
@@ -301,7 +306,16 @@ export function filterScanDetailsForDisplay(details: ScanDetail[]): FilterScanRe
       d.displayFilterPassed = false;
       d.displayFilterReason = "quality_below_threshold";
       d.displayFilterReasons = reasons;
-      d.displayFilterReasonText = buildDisplayFilterReasonText(reasons);
+      // Build detailed rejection text — diagnostic only, never affects trade logic.
+      {
+        const depthAdj = d.mqsDepthAdjustment;
+        const parts: string[] = [`MQS ${mqs}/${DYNAMIC_MIN_QUALITY}`];
+        if (typeof depthAdj === "number" && depthAdj !== 0) {
+          parts.push(`depth ${depthAdj > 0 ? "+" : ""}${depthAdj}`);
+        }
+        if (d.btcTrendRejected) parts.push("BTC zıt");
+        d.displayFilterReasonText = `Kalite düşük: ${parts.join(", ")}`;
+      }
       continue;
     }
 
@@ -1010,6 +1024,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         else if (orderbookDepthUsdt >= 50_000)  depthDelta = -10;
         else                                     depthDelta = -15;
         detail.marketQualityScore = Math.max(0, Math.min(100, baseScore + depthDelta));
+        // Diagnostic — display/logging only. Trade logic is unchanged.
+        detail.mqsBaseScore = baseScore;
+        detail.mqsDepthAdjustment = depthDelta;
       }
 
       // Granular opportunity flags — read by the strict scanner filter and the broader
