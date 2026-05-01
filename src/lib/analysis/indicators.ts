@@ -153,6 +153,8 @@ export function wickAnomaly(klines: Kline[]): boolean {
   return upperWick > 2 * body || lowerWick > 2 * body;
 }
 
+// Bullish-leaning trend score. Kept for backwards compatibility (features.trendScore).
+// For trade-decision composite scoring use trendStrengthScoreForDirection() instead.
 export function trendStrengthScore(closes: number[]): number {
   if (closes.length < 200) return 0;
   const e20 = ema(closes, 20).at(-1) ?? NaN;
@@ -170,6 +172,35 @@ export function trendStrengthScore(closes: number[]): number {
   if (Number.isFinite(v1) && Number.isFinite(v6) && Math.abs(v6) > 1e-9) {
     const slope = (v1 - v6) / Math.abs(v6);
     score += Math.max(-15, Math.min(15, slope * 1000));
+  }
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+// P0 bugfix: Direction-aware trend strength.
+// LONG → bullish alignment pozitif puan. SHORT → bearish alignment pozitif puan.
+// Aynı kalitedeki LONG ve SHORT setup'ları matematiksel olarak eşit puan alır.
+export function trendStrengthScoreForDirection(closes: number[], direction: "LONG" | "SHORT"): number {
+  if (closes.length < 200) return 0;
+  const e20 = ema(closes, 20).at(-1) ?? NaN;
+  const e50 = ema(closes, 50).at(-1) ?? NaN;
+  const e200 = ema(closes, 200).at(-1) ?? NaN;
+  const last = closes.at(-1) ?? NaN;
+  if (![e20, e50, e200, last].every(Number.isFinite)) return 0;
+  let score = 50;
+  const aligned = direction === "LONG"
+    ? { priceVsEma20: last > e20, ema20VsEma50: e20 > e50, ema50VsEma200: e50 > e200 }
+    : { priceVsEma20: last < e20, ema20VsEma50: e20 < e50, ema50VsEma200: e50 < e200 };
+  score += aligned.priceVsEma20 ? 8 : -8;
+  score += aligned.ema20VsEma50 ? 12 : -12;
+  score += aligned.ema50VsEma200 ? 15 : -15;
+  const e20s = ema(closes, 20);
+  const v1 = e20s.at(-1)!;
+  const v6 = e20s.at(-6)!;
+  if (Number.isFinite(v1) && Number.isFinite(v6) && Math.abs(v6) > 1e-9) {
+    const slope = (v1 - v6) / Math.abs(v6);
+    // Direction-aware: LONG ödüllendirir pozitif slope; SHORT ödüllendirir negatif slope
+    const directionalSlope = direction === "LONG" ? slope : -slope;
+    score += Math.max(-15, Math.min(15, directionalSlope * 1000));
   }
   return Math.max(0, Math.min(100, Math.round(score)));
 }

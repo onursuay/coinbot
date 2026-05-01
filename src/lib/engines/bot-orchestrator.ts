@@ -1208,13 +1208,17 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       detail.riskRejectReason = risk.allowed ? null : (risk.reason ?? null);
 
       if (!risk.allowed) {
-        const riskReason = `Risk: ${risk.reason}`;
+        // P0 bugfix: R:R yetersizliği ile gerçek risk reddi ayrı etiketleniyor.
+        const isRrOnly = risk.rejectKind === "rr_insufficient";
+        const riskReason = isRrOnly
+          ? `R:R YETERSİZ: ${risk.reason}`
+          : `RİSK REDDİ: ${risk.reason}`;
         detail.rejectReason = riskReason;
         result.rejectedSignals.push({ symbol, reason: riskReason });
         await botLog({
-          userId, exchange, eventType: "risk_blocked",
-          message: `${symbol} ${sig.signalType} risk engine reddetti: ${risk.reason}`,
-          metadata: { violations: risk.ruleViolations },
+          userId, exchange, eventType: isRrOnly ? "rr_insufficient" : "risk_blocked",
+          message: `${symbol} ${sig.signalType} ${isRrOnly ? "R:R yetersiz" : "risk engine reddetti"}: ${risk.reason}`,
+          metadata: { violations: risk.ruleViolations, rejectKind: risk.rejectKind },
         });
         result.scanDetails.push(detail);
         continue;

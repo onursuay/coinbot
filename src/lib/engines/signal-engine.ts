@@ -6,7 +6,7 @@
 
 import type { Kline, Ticker, FundingRate, Timeframe } from "@/lib/exchanges/types";
 import {
-  atr, ema, sma, macd, rsi, recentSwing, trendStrengthScore,
+  atr, ema, sma, macd, rsi, recentSwing, trendStrengthScore, trendStrengthScoreForDirection,
   volatilityScore, volumeConfirmationScore, wickAnomaly,
   adx, atrPercentile, bollingerBands, vwap, volumeMA,
 } from "@/lib/analysis/indicators";
@@ -476,12 +476,12 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   features.waitReasonCodes = [];
   features.waitReasonSummary = "";
 
-  // ── BTC alignment veto ──
+  // ── BTC alignment — P0 bugfix: paper-only project, hard veto → soft penalty.
+  // Filtre AÇIK kalıyor (CLAUDE.md kuralı) ama trade'i komple bloklamıyor;
+  // composite score'dan ceza puanı düşülüyor. Live execution kalıcı kapalı.
+  let btcMisaligned = false;
   if (btcUp !== null) {
-    if (direction === "LONG" && !btcUp)
-      return earlyExit("NO_TRADE", "BTC trend negatif — LONG sinyali reddedildi");
-    if (direction === "SHORT" && btcUp)
-      return earlyExit("NO_TRADE", "BTC trend pozitif — SHORT sinyali reddedildi");
+    btcMisaligned = (direction === "LONG" && !btcUp) || (direction === "SHORT" && btcUp);
   }
 
   // ── Stop-loss & take-profit (ATR + swing based) ──
@@ -537,14 +537,21 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   }
 
   // ── Signal score composition ──
+  // P0 bugfix: trendScore yerine direction-aware trendScoreDir kullanılıyor.
+  // Eski trendScore (bullish-leaning) features.trendScore'da diagnostic kalır;
+  // composite skor SHORT için bearish alignment'ı LONG için bullish alignment ile
+  // matematiksel olarak eşit ödüllendirir.
+  const trendScoreDir = trendStrengthScoreForDirection(closes, direction);
   let score = 0;
-  score += trendScore * 0.35;
+  score += trendScoreDir * 0.35;
   score += volConf * 0.25;
   score += volScore * 0.15;
   score += Math.min(25, Math.max(0, (rr - 2) * 8));
   if (direction === "LONG" && e50 > e200) score += 5;
   if (direction === "SHORT" && e50 < e200) score += 5;
   if (wickAnom) score -= 8;
+  // P0 bugfix: BTC uyumsuzluğu hard veto değil, soft penalty (-12).
+  if (btcMisaligned) score -= 12;
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   features.signalScore = score;

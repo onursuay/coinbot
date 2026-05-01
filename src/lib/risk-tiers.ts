@@ -63,7 +63,10 @@ const TIER_3_POLICY: TierPolicy = {
   maxLeverage: 2,
   defaultLeverage: 1,
   maxRiskPerTradePercent: 0.5,
-  minRiskRewardRatio: 2.5,
+  // P0 bugfix: Engine üretiyor TP=dist*2.2 (RR=2.20). 2.5 isteyince sistem
+  // kendi sinyalini reddediyordu (TIER_3 + tüm DYNAMIC adaylar). Paper-only
+  // proje (live execution kalıcı kapalı); 2.0 profesyonel taban (CFA).
+  minRiskRewardRatio: 2.0,
   requireBtcDirectionFilter: true,
   maxSpreadPercent: 0.07,
   maxAtrPercent: 6.0,

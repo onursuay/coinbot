@@ -55,9 +55,15 @@ export interface RiskCheckInput {
   riskConfigCapitalSource?: "risk_settings" | "env_fallback" | "capital_missing_fallback";
 }
 
+// P0 bugfix: Reject sebebini ayırmak için tip alanı.
+// "rr_insufficient" → sadece R:R yetersiz; UI'da "R:R YETERSİZ" etiketi.
+// "risk_violation"  → gerçek risk limiti (sermaye, likidasyon, kill switch, vb.).
+export type RiskRejectKind = "rr_insufficient" | "risk_violation";
+
 export interface RiskCheckResult {
   allowed: boolean;
   reason?: string;
+  rejectKind?: RiskRejectKind;
   marketType: "FUTURES";
   marginMode: MarginMode;
   riskAmount: number;
@@ -131,7 +137,10 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   if (tpDist === 0) violations.push("Take-profit tanımsız");
   // Use tier-specific R:R minimum if provided (stricter than env default)
   const effectiveMinRr = Math.max(env.minRiskRewardRatio, input.tierMinRiskRewardRatio ?? 0);
-  if (rr < effectiveMinRr) violations.push(`Risk/ödül yetersiz (1:${rr.toFixed(2)} < 1:${effectiveMinRr})`);
+  // P0 bugfix: R:R violation ayrı flag ile işaretleniyor; orchestrator UI'da
+  // "R:R YETERSİZ" etiketi olarak gösterir (gerçek risk reddinden ayrı).
+  const rrViolationMsg = `Risk/ödül yetersiz (1:${rr.toFixed(2)} < 1:${effectiveMinRr})`;
+  if (rr < effectiveMinRr) violations.push(rrViolationMsg);
 
   // Direction sanity
   if (input.direction === "LONG" && input.stopLoss >= input.entryPrice) violations.push("LONG stop-loss giriş fiyatının altında olmalı");
@@ -183,9 +192,18 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   }
 
   const allowed = violations.length === 0;
+  // P0 bugfix: Reddedildiyse, ihlal listesi *yalnızca* R:R yetersizliği mi?
+  // Öyleyse rejectKind="rr_insufficient" — orchestrator "R:R YETERSİZ" gösterir.
+  // Aksi halde "risk_violation" (gerçek risk limiti).
+  const rejectKind: RiskRejectKind | undefined = allowed
+    ? undefined
+    : (violations.length === 1 && violations[0] === rrViolationMsg)
+      ? "rr_insufficient"
+      : "risk_violation";
   return {
     allowed,
     reason: allowed ? undefined : violations[0],
+    rejectKind,
     marketType: "FUTURES",
     marginMode,
     riskAmount,
