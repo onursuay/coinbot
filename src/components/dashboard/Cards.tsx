@@ -370,7 +370,7 @@ export function NearThresholdCoinsCard({ rows }: { rows: DecisionRow[] }) {
     if (bt !== at) return bt - at;
     return (b.setupScore ?? 0) - (a.setupScore ?? 0);
   });
-  const top = candidates.slice(0, 5);
+  const top = candidates.slice(0, 10);
 
   return (
     <div className="card">
@@ -381,7 +381,7 @@ export function NearThresholdCoinsCard({ rows }: { rows: DecisionRow[] }) {
       {top.length === 0 ? (
         <p className="text-sm text-muted">Bu periyotta güçlü fırsat yok.</p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {top.map((r) => {
             const dist = distanceToThreshold(r);
             const direction = mapDirectionLabel(r);

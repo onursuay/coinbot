@@ -23,7 +23,6 @@ import {
   DecisionCenterCard,
   NearThresholdCoinsCard,
   OpenPositionsCard,
-  BlockingReasonsCard,
   TodaysSummaryCard,
   PaperValidationCard,
   PerformanceDecisionCard,
@@ -315,11 +314,8 @@ export default function HomePage() {
       {/* 4. POZİSYON KARAR MERKEZİ */}
       <DecisionCenterCard rows={scanRows} exchange={status?.bot?.active_exchange ?? "binance"} />
 
-      {/* 5 + 7 — Eşiğe yakın coinler + En çok engelleyen sebepler */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <NearThresholdCoinsCard rows={scanRows} />
-        <BlockingReasonsCard rows={scanRows} />
-      </div>
+      {/* 5. POZİSYONA EN YAKIN COİNLER */}
+      <NearThresholdCoinsCard rows={scanRows} />
 
       {/* 6. AÇIK POZİSYONLAR */}
       <OpenPositionsCard rows={openPositions} />
