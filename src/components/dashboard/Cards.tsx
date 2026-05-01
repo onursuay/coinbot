@@ -6,6 +6,8 @@
 // dosya yalnızca onların çıktısını render eder. Hiçbir trade kararı,
 // risk engine ayarı veya canlı trading gate'i bu kartlardan etkilenmez.
 import Link from "next/link";
+import { useState } from "react";
+import { Copy, Eye, MessageSquare, RefreshCw } from "lucide-react";
 import { fmtNum, fmtUsd } from "@/lib/format";
 import {
   mapDirectionLabel,
@@ -1264,22 +1266,92 @@ const AI_RISK_TONE: Record<string, Tone> = {
   CRITICAL: "danger",
 };
 
+const AI_ACTION_LABEL: Record<string, string> = {
+  NO_ACTION: "Aksiyon yok",
+  OBSERVE: "Gözlem",
+  PROMPT: "Prompt hazırla",
+  REVIEW_RISK: "Risk incelemesi",
+  REVIEW_STOP_LOSS: "Stop incelemesi",
+  REVIEW_POSITION_SIZE: "Boyut incelemesi",
+  REVIEW_LIMITS: "Limit incelemesi",
+  REVIEW_LEVERAGE: "Kaldıraç incelemesi",
+  REVIEW_THRESHOLD: "Eşik incelemesi",
+  LIVE_READINESS_BLOCKED: "Live readiness blocked",
+  DATA_INSUFFICIENT: "Veri yetersiz",
+};
+
+const AI_FALLBACK_PROMPT =
+  "CoinBot mevcut durumda canlı işlem için hazır değil. En az 100 kapanmış paper trade, websocket sağlığı ve Binance API durumu doğrulanana kadar live readiness blocked durumunu koru. Sadece gözlem ve paper trade veri toplama sürecini sürdür.";
+
+type AIDecisionActionKind = "OBSERVE" | "PROMPT" | "REFRESH" | "COPY_PROMPT";
+type AIDecisionActionResult = { ok?: boolean; message?: string } | void;
+
+function textTone(tone: Tone): string {
+  switch (tone) {
+    case "success": return "text-success";
+    case "warning": return "text-warning";
+    case "danger": return "text-danger";
+    case "accent": return "text-accent";
+    default: return "text-slate-200";
+  }
+}
+
+function AIDecisionMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: Tone;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-border/70 bg-bg-soft/70 px-2.5 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-muted">{label}</div>
+      <div className={`mt-0.5 truncate text-xs font-semibold ${textTone(tone)}`}>{value}</div>
+    </div>
+  );
+}
+
+function AIDecisionPanel({
+  title,
+  children,
+  tone = "muted",
+}: {
+  title: string;
+  children: React.ReactNode;
+  tone?: Tone;
+}) {
+  return (
+    <section className="h-full rounded-lg border border-border bg-bg-soft px-3 py-2.5">
+      <div className={`text-[10px] uppercase tracking-wider ${textTone(tone)}`}>{title}</div>
+      <div className="mt-1.5 text-sm leading-relaxed text-slate-200">{children}</div>
+    </section>
+  );
+}
+
 export function AIDecisionAssistantCard({
   data,
   onAction,
 }: {
   data: AIDecisionCardInput | null;
   onAction?: (
-    action: "OBSERVE" | "PROMPT" | "REFRESH" | "COPY_PROMPT",
+    action: AIDecisionActionKind,
     actionId: string,
-  ) => void;
+  ) => AIDecisionActionResult | Promise<AIDecisionActionResult>;
 }) {
   const empty = !data;
   const status = data?.status ?? "DATA_INSUFFICIENT";
   const statusTone = AI_STATUS_TONE[status] ?? "muted";
   const riskLevel = data?.riskLevel ?? "LOW";
   const riskTone = AI_RISK_TONE[riskLevel] ?? "muted";
-  const isPrompt = data?.actionType === "PROMPT" && data?.suggestedPrompt;
+  const actionLabel = AI_ACTION_LABEL[data?.actionType ?? "DATA_INSUFFICIENT"] ?? (data?.actionType ?? "Veri yok");
+  const promptText = data?.suggestedPrompt?.trim() || AI_FALLBACK_PROMPT;
+  const [observeSelected, setObserveSelected] = useState(false);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [copyDone, setCopyDone] = useState(false);
+  const [actionNotice, setActionNotice] = useState<{ tone: Tone; text: string } | null>(null);
 
   // AI durum çubuğu hesabı
   const aiStatusInfo = (() => {
@@ -1291,106 +1363,129 @@ export function AIDecisionAssistantCard({
     return { label: "AKTİF", tone: "success" as Tone };
   })();
 
+  const actionId = `ai-decision-${data?.actionType ?? status}`;
+  const observeDays = data?.observeDays && data.observeDays > 0 ? data.observeDays : 7;
+
+  const runAction = async (action: AIDecisionActionKind) => {
+    const result = await onAction?.(action, actionId);
+    if (result && typeof result === "object" && result.ok === false) {
+      throw new Error(result.message || "İşlem tamamlanamadı");
+    }
+    return result && typeof result === "object" ? result.message : undefined;
+  };
+
+  const handleObserve = async () => {
+    setObserveSelected(true);
+    setActionNotice({ tone: "success", text: `${observeDays} gün gözlem kararı kaydedildi.` });
+    try {
+      await runAction("OBSERVE");
+    } catch (e: any) {
+      setActionNotice({ tone: "warning", text: e?.message ?? "Gözlem seçimi yerel olarak kaydedildi." });
+    }
+  };
+
+  const handlePrompt = async () => {
+    setPromptOpen((v) => !v);
+    setActionNotice({ tone: "accent", text: "Prompt hazırlandı; otomatik uygulanmaz." });
+    try {
+      await runAction("PROMPT");
+    } catch {
+      // Prompt alanı yerel olarak çalışmaya devam eder.
+    }
+  };
+
+  const handleCopyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(promptText);
+      setCopyDone(true);
+      setActionNotice({ tone: "success", text: "Prompt kopyalandı." });
+      await runAction("COPY_PROMPT");
+      window.setTimeout(() => setCopyDone(false), 1800);
+    } catch {
+      setActionNotice({ tone: "warning", text: "Kopyalama başarısız; prompt metnini manuel seçebilirsiniz." });
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setActionNotice(null);
+    try {
+      const message = await runAction("REFRESH");
+      setActionNotice({ tone: "success", text: message || "AI raporu güncellendi." });
+    } catch (e: any) {
+      setActionNotice({ tone: "danger", text: e?.message ?? "AI raporu yenilenemedi." });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const actionButtonCls =
+    "inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md border px-3 text-[11px] font-semibold uppercase tracking-wider transition sm:w-auto";
+
   return (
     <div className="card">
-      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-        <h2 className="font-semibold tracking-wide">AI KARAR ASİSTANI</h2>
-        <div className="flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="font-semibold tracking-wide">AI KARAR ASİSTANI</h2>
+          <p className="mt-0.5 text-[11px] text-muted">
+            Yorumlayıcı karar desteği; ayar değiştirmez, emir açmaz.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <Pill tone={statusTone}>{AI_STATUS_LABEL[status]}</Pill>
-          <Pill tone={riskTone}>RİSK: {riskLevel}</Pill>
-          {!empty && data!.confidence > 0 && (
-            <Pill tone="accent">GÜVEN: %{Math.round(data!.confidence)}</Pill>
-          )}
+          <Pill tone={aiStatusInfo.tone}>AI: {aiStatusInfo.label}</Pill>
         </div>
       </div>
 
-      {/* AI Durum Çubuğu */}
-      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border/40 bg-bg-soft px-3 py-1.5 text-[11px]">
-        <span>
-          AI:{" "}
-          <span className={`font-medium ${
-            aiStatusInfo.tone === "success" ? "text-success"
-            : aiStatusInfo.tone === "warning" ? "text-warning"
-            : aiStatusInfo.tone === "danger"  ? "text-danger"
-            : "text-muted"
-          }`}>{aiStatusInfo.label}</span>
-        </span>
-        {data?.model && (
-          <span className="text-muted">
-            Model: <span className="text-foreground">{data.model}</span>
-          </span>
-        )}
-        {data?.lastCallAt && (
-          <span className="text-muted">
-            Son:{" "}
-            <span className="text-foreground">
-              {new Date(data.lastCallAt).toLocaleTimeString("tr-TR")}
-            </span>
-          </span>
-        )}
-        {data?.actionType && data.actionType !== "DATA_INSUFFICIENT" && (
-          <span className="text-muted">
-            Aksiyon: <span className="text-foreground">{data.actionType}</span>
-          </span>
-        )}
-        {data && data.confidence > 0 && (
-          <span className="text-muted">
-            Güven: <span className="text-foreground">%{Math.round(data.confidence)}</span>
-          </span>
-        )}
-        {data?.fallbackReason && data.fallbackReason !== "AI_UNCONFIGURED" && (
-          <span className="text-warning">
-            AI fallback çalıştı — OpenAI API çağrısı yapılmadı.
-          </span>
-        )}
-        {data?.fallbackReason === "AI_UNCONFIGURED" && (
-          <span className="text-warning">
-            OpenAI API anahtarı yapılandırılmamış — AI fallback modda.
-          </span>
-        )}
+      <div className="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <AIDecisionMetric label="Risk Seviyesi" value={riskLevel} tone={riskTone} />
+        <AIDecisionMetric
+          label="Güven"
+          value={data && data.confidence > 0 ? `%${Math.round(data.confidence)}` : "—"}
+          tone={data && data.confidence >= 70 ? "success" : data && data.confidence >= 45 ? "warning" : "muted"}
+        />
+        <AIDecisionMetric label="Veri Durumu" value={aiStatusInfo.label} tone={aiStatusInfo.tone} />
+        <AIDecisionMetric label="Aksiyon" value={actionLabel} tone={statusTone} />
       </div>
 
       {empty ? (
-        <p className="text-sm text-muted">AI yorumu yükleniyor…</p>
+        <div className="rounded-lg border border-border bg-bg-soft px-3 py-3 text-sm text-muted">
+          AI yorumu yükleniyor...
+        </div>
       ) : (
         <>
           {data!.fallbackReason && (
-            <div className="mb-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+            <div className="mb-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
               AI değerlendirmesi şu an alınamadı: {data!.fallbackReason}.
               CoinBot mevcut karar destek kartlarıyla çalışmaya devam ediyor.
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <MiniSection label="ANA BULGU" tone={statusTone}>
-              {data!.mainFinding || "—"}
-            </MiniSection>
-            <MiniSection label="SİSTEM YORUMU" tone="muted">
+          <div className="mb-3 rounded-md border border-border/70 bg-bg-soft/60 px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wider text-muted">Ana Bulgu</div>
+            <p className="mt-1 text-sm text-slate-200">{data!.mainFinding || "—"}</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            <AIDecisionPanel title="Sistem Yorumu" tone="muted">
               {data!.systemInterpretation || "—"}
-            </MiniSection>
-            <MiniSection label="ÖNERİ" tone={statusTone}>
-              {data!.recommendation || "—"}
-            </MiniSection>
-            <MiniSection label="RİSK SEVİYESİ" tone={riskTone}>
-              {riskLevel}
-              {data!.requiresUserApproval ? " · Kullanıcı onayı gerekli" : ""}
-            </MiniSection>
-            <MiniSection label="AKSİYON" tone="muted">
-              {data!.actionType}
-              {data!.observeDays > 0 ? ` · ${data!.observeDays} gün gözlem` : ""}
-            </MiniSection>
-            <MiniSection label="UYGULAMA" tone="muted">
-              AI çıktıları trade engine&apos;e otomatik uygulanmaz
-              ({data!.appliedToTradeEngine ? "uygulandı?!" : "uygulanmadı"}).
-            </MiniSection>
+            </AIDecisionPanel>
+            <AIDecisionPanel title="Önerilen Aksiyon" tone={statusTone}>
+              <div>{data!.recommendation || "—"}</div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <Pill tone={statusTone}>{actionLabel}</Pill>
+                {data!.observeDays > 0 && <Pill tone="muted">{data!.observeDays} gün gözlem</Pill>}
+                {data!.requiresUserApproval && <Pill tone="warning">Kullanıcı onayı gerekli</Pill>}
+              </div>
+            </AIDecisionPanel>
           </div>
 
           {data!.blockedBy.length > 0 && (
-            <div className="mt-3 rounded-lg border border-border bg-bg-soft px-3 py-2">
+            <div className="mt-3 rounded-md border border-border/70 bg-bg-soft/60 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wider text-muted">BLOKER ETİKETLERİ</div>
               <div className="mt-1 flex flex-wrap gap-1">
                 {data!.blockedBy.map((b) => (
-                  <span key={b} className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-bg-soft border border-border text-slate-300">
+                  <span key={b} className="rounded-md border border-border bg-bg px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-300">
                     {b}
                   </span>
                 ))}
@@ -1398,16 +1493,20 @@ export function AIDecisionAssistantCard({
             </div>
           )}
 
-          {isPrompt && data!.suggestedPrompt && (
-            <div className="mt-3 rounded-lg border border-accent/40 bg-accent/5 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wider text-accent">ÖNERİLEN PROMPT</div>
-              <pre className="mt-1 text-[11px] text-slate-200 whitespace-pre-wrap break-words">{data!.suggestedPrompt}</pre>
+          {promptOpen && (
+            <div className="mt-3 rounded-md border border-accent/40 bg-accent/5 px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-[10px] uppercase tracking-wider text-accent">ÖNERİLEN PROMPT</div>
+                {!data!.suggestedPrompt && <span className="text-[10px] text-muted">Fallback prompt</span>}
+              </div>
+              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-bg/70 p-2 text-[11px] leading-relaxed text-slate-200">{promptText}</pre>
               <button
                 type="button"
-                onClick={() => onAction?.("COPY_PROMPT", "ai-decision-prompt")}
-                className="mt-2 text-[11px] font-medium px-3 py-1 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
+                onClick={handleCopyPrompt}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-soft px-3 py-1.5 text-[11px] font-medium text-slate-300 hover:border-accent hover:text-accent"
               >
-                PROMPT&apos;U KOPYALA
+                <Copy className="h-3.5 w-3.5" />
+                {copyDone ? "KOPYALANDI" : "PROMPT'U KOPYALA"}
               </button>
               <p className="mt-1 text-[10px] text-muted">
                 Bu prompt otomatik çalıştırılmaz; manuel olarak Claude Code/Codex&apos;e yapıştırabilirsiniz.
@@ -1416,9 +1515,9 @@ export function AIDecisionAssistantCard({
           )}
 
           {data!.safetyNotes.length > 0 && (
-            <div className="mt-3 rounded-lg border border-border bg-bg-soft px-3 py-2">
+            <div className="mt-3 rounded-md border border-border/70 bg-bg-soft/60 px-3 py-2">
               <div className="text-[10px] uppercase tracking-wider text-muted">GÜVENLİK NOTLARI</div>
-              <ul className="mt-1 space-y-0.5 text-[11px] text-slate-300 list-disc list-inside">
+              <ul className="mt-1 grid gap-1 text-[11px] leading-snug text-slate-300 sm:grid-cols-2">
                 {data!.safetyNotes.map((n, i) => <li key={i}>{n}</li>)}
               </ul>
             </div>
@@ -1426,30 +1525,64 @@ export function AIDecisionAssistantCard({
         </>
       )}
 
+      {actionNotice && (
+        <div className={`mt-3 rounded-md border px-3 py-2 text-xs ${
+          actionNotice.tone === "success" ? "border-success/30 bg-success/10 text-success" :
+          actionNotice.tone === "warning" ? "border-warning/30 bg-warning/10 text-warning" :
+          actionNotice.tone === "danger" ? "border-danger/30 bg-danger/10 text-danger" :
+          "border-accent/30 bg-accent/10 text-accent"
+        }`}>
+          {actionNotice.text}
+        </div>
+      )}
+
       {/* Aksiyon butonları — ONAYLA YOK; AI canlıyı açan UI içermez */}
-      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
-        {(["OBSERVE", "PROMPT", "REFRESH"] as const).map((k) => (
+      <div className="mt-3 flex flex-col gap-2 border-t border-border/60 pt-3 lg:flex-row lg:items-center">
+        <div className="flex flex-col gap-1.5 sm:flex-row">
           <button
-            key={k}
             type="button"
-            onClick={() => onAction?.(k, `ai-decision-${data?.actionType ?? "unknown"}`)}
-            className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent disabled:opacity-50"
-            data-action-kind={k}
-            disabled={empty && k !== "REFRESH"}
+            onClick={handleObserve}
+            className={`${actionButtonCls} ${
+              observeSelected
+                ? "border-success/50 bg-success/10 text-success"
+                : "border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
+            } disabled:opacity-50`}
+            data-action-kind="OBSERVE"
+            disabled={empty}
           >
-            {k === "OBSERVE" ? `GÖZLEM (${data?.observeDays ?? 7}g)`
-              : k === "PROMPT" ? "PROMPT"
-              : "RAPORU YENİLE"}
+            <Eye className="h-3.5 w-3.5" />
+            {observeSelected ? "GÖZLEM KAYDEDİLDİ" : `GÖZLEM (${observeDays}g)`}
           </button>
-        ))}
-        <span className="ml-auto text-[10px] uppercase tracking-wider text-muted self-center">
+          <button
+            type="button"
+            onClick={handlePrompt}
+            className={`${actionButtonCls} ${
+              promptOpen
+                ? "border-accent/50 bg-accent/10 text-accent"
+                : "border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
+            } disabled:opacity-50`}
+            data-action-kind="PROMPT"
+            aria-expanded={promptOpen}
+            disabled={empty}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            PROMPT
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className={`${actionButtonCls} border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent disabled:opacity-50`}
+            data-action-kind="REFRESH"
+            disabled={refreshing}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "YENİLENİYOR" : "RAPORU YENİLE"}
+          </button>
+        </div>
+        <span className="text-[10px] uppercase tracking-wider text-muted lg:ml-auto lg:text-right">
           AI yorumlayıcıdır; ayar değiştirmez, emir açmaz.
         </span>
       </div>
-
-      <p className="mt-2 text-[10px] text-muted">
-        ChatGPT API çıktısı yorum amaçlıdır. Kritik aksiyonlar için kullanıcı onayı zorunludur.
-      </p>
     </div>
   );
 }

@@ -11,7 +11,7 @@
 //   kapısı üzerinde değişiklik yapmaz.
 // - Yeni Binance API çağrısı eklenmemiştir; tüm veriler mevcut
 //   `/api/bot/*`, `/api/paper-trades*` endpoint'lerinden okunur.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fmtPct, fmtUsd } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
 import { useTradeOpenSound } from "@/lib/hooks/use-trade-open-sound";
@@ -72,13 +72,13 @@ export default function HomePage() {
   // AI Karar Asistanı — RAPORU YENİLE veya ilk yüklemede doldurulur; polling yok
   const [aiDecision, setAiDecision] = useState<AIDecisionCardInput | null>(null);
 
-  const addToast = (t: Omit<Toast, "id">) => {
+  const addToast = useCallback((t: Omit<Toast, "id">) => {
     const id = ++toastId;
     setToasts((prev) => [...prev, { ...t, id }]);
     setTimeout(() => setToasts((prev) => prev.filter((x) => x.id !== id)), 8000);
-  };
+  }, []);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     const noCache: RequestInit = { cache: "no-store" };
     const [a, b, c, d, e, h, i, j, k] = await Promise.all([
       fetch("/api/bot/status", noCache).then((r) => r.json()).catch(() => null),
@@ -104,21 +104,9 @@ export default function HomePage() {
     if (i?.ok) setE2eStatus(i.data);
     if (j?.ok && j.data?.decision) setPerfDecision(j.data.decision as PerformanceDecisionInput);
     if (k?.ok && Array.isArray(k.data?.recommendations)) setPmRecs(k.data.recommendations);
-  };
+  }, []);
 
-  useAutoRefresh(refresh);
-  // Initial load — useAutoRefresh başlangıçta da çağırır, ama emin olmak için.
-  // AI kararı ayrı yüklenir; auto-refresh döngüsüne dahil değil (polling yok).
-  useEffect(() => { refresh(); fetchAIDecision(); }, []);
-
-  const { enabled: soundEnabled } = useSoundPref();
-  useTradeOpenSound({
-    enabled: soundEnabled,
-    paperTradeIds: (paper.open ?? []).map((t: any) => String(t.id)),
-    liveTradeIds: [],
-  });
-
-  const fetchAIDecision = async () => {
+  const fetchAIDecision = useCallback(async (opts?: { notify?: boolean }): Promise<{ ok: boolean; message?: string }> => {
     try {
       const res = await fetch("/api/ai-decision/interpret", {
         method: "POST",
@@ -127,11 +115,36 @@ export default function HomePage() {
       }).then((r) => r.json()).catch(() => null);
       if (res?.ok && res.data?.response?.data) {
         setAiDecision(res.data.response.data);
+        if (opts?.notify) {
+          addToast({ type: "success", message: "AI raporu güncellendi" });
+        }
+        return { ok: true, message: "AI raporu güncellendi." };
       }
+      const message = res?.error ?? "AI raporu alınamadı.";
+      if (opts?.notify) {
+        addToast({ type: "error", message: "AI raporu yenilenemedi", detail: message });
+      }
+      return { ok: false, message };
     } catch {
-      // silent — kart null ile fallback gösterir
+      const message = "AI raporu yenilenemedi.";
+      if (opts?.notify) {
+        addToast({ type: "error", message });
+      }
+      return { ok: false, message };
     }
-  };
+  }, [addToast]);
+
+  useAutoRefresh(refresh);
+  // Initial load — useAutoRefresh başlangıçta da çağırır, ama emin olmak için.
+  // AI kararı ayrı yüklenir; auto-refresh döngüsüne dahil değil (polling yok).
+  useEffect(() => { refresh(); void fetchAIDecision(); }, [refresh, fetchAIDecision]);
+
+  const { enabled: soundEnabled } = useSoundPref();
+  useTradeOpenSound({
+    enabled: soundEnabled,
+    paperTradeIds: (paper.open ?? []).map((t: any) => String(t.id)),
+    liveTradeIds: [],
+  });
 
   const actWithBody = async (path: string, label: string, body?: object) => {
     if (path.endsWith("/start") && envCheck && !envCheck.ok) {
@@ -334,8 +347,30 @@ export default function HomePage() {
       {/* AI Karar Asistanı — ChatGPT API yorum katmanı; ayar değiştirmez, emir açmaz */}
       <AIDecisionAssistantCard
         data={aiDecision}
-        onAction={(action) => {
-          if (action === "REFRESH") fetchAIDecision();
+        onAction={async (action) => {
+          if (action === "REFRESH") {
+            return fetchAIDecision({ notify: true });
+          }
+          if (action === "OBSERVE") {
+            console.info("ai_decision_observation_selected", {
+              observeDays: aiDecision?.observeDays ?? 7,
+              status: aiDecision?.status ?? "DATA_INSUFFICIENT",
+              actionType: aiDecision?.actionType ?? "DATA_INSUFFICIENT",
+            });
+            addToast({
+              type: "success",
+              message: "7 gün gözlem kararı kaydedildi",
+              detail: "Bu seçim ayar değiştirmez ve emir açmaz.",
+            });
+            return { ok: true, message: "7 gün gözlem kararı kaydedildi." };
+          }
+          if (action === "PROMPT") {
+            return { ok: true, message: "Prompt hazırlandı; otomatik uygulanmaz." };
+          }
+          if (action === "COPY_PROMPT") {
+            addToast({ type: "success", message: "Prompt kopyalandı" });
+            return { ok: true, message: "Prompt kopyalandı." };
+          }
         }}
       />
 
