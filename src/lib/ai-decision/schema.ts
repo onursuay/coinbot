@@ -99,7 +99,7 @@ export function normalizeAIDecisionOutput(raw: unknown): AIDecisionOutput {
   if (confidence < 0) confidence = 0;
   if (confidence > 100) confidence = 100;
 
-  // observeDays default 7
+  // observeDays default 14
   let observeDays =
     typeof obj.observeDays === "number" && isFinite(obj.observeDays)
       ? Math.round(obj.observeDays)

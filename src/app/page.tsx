@@ -357,16 +357,16 @@ export default function HomePage() {
           }
           if (action === "OBSERVE") {
             console.info("ai_decision_observation_selected", {
-              observeDays: aiDecision?.observeDays ?? 7,
+              observeDays: aiDecision?.observeDays ?? 14,
               status: aiDecision?.status ?? "DATA_INSUFFICIENT",
               actionType: aiDecision?.actionType ?? "DATA_INSUFFICIENT",
             });
             addToast({
               type: "success",
-              message: "7 gün gözlem kararı kaydedildi",
+              message: "14 gün gözlem kararı kaydedildi",
               detail: "Bu seçim ayar değiştirmez ve emir açmaz.",
             });
-            return { ok: true, message: "7 gün gözlem kararı kaydedildi." };
+            return { ok: true, message: "14 gün gözlem kararı kaydedildi." };
           }
           if (action === "PROMPT") {
             return { ok: true, message: "Prompt hazırlandı; otomatik uygulanmaz." };

@@ -24,7 +24,7 @@ export interface ActionFooterProps {
   onAction?: (action: CardAction, actionId: string) => void;
   /** Hangi butonların gösterileceği — varsayılan olarak hepsi görünür. */
   show?: Partial<Record<CardAction, boolean>>;
-  /** "GÖZLEM" tıklandığında üstüne yazılacak gün sayısı. Varsayılan 7. */
+  /** "GÖZLEM" tıklandığında üstüne yazılacak gün sayısı. Varsayılan 14. */
   observeDays?: number;
 }
 
@@ -38,7 +38,7 @@ const LABEL: Record<CardAction, string> = {
 const ARIA_HINT: Record<CardAction, string> = {
   APPROVE: "Önerilen aksiyonu onayla",
   REJECT: "Önerilen aksiyonu reddet",
-  OBSERVE: "Bir hafta gözlem altında tut",
+  OBSERVE: "14 gün gözlem altında tut",
   PROMPT: "Claude/Codex prompt taslağı oluştur (gelecek faz)",
 };
 
@@ -58,7 +58,7 @@ export default function ActionFooter({
   actionId,
   onAction,
   show,
-  observeDays = 7,
+  observeDays = 14,
 }: ActionFooterProps) {
   const [selected, setSelected] = useState<CardAction | null>(null);
 

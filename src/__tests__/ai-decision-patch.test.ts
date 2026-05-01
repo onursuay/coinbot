@@ -4,7 +4,7 @@
 //   • OPENAI_API_KEY yoksa fallback güvenli dönüyor
 //   • AI context içinde secret pattern'ı yok
 //   • Structured output schema validasyonu çalışıyor
-//   • confidence 0–100 clamp ediliyor; observeDays default 7
+//   • confidence 0–100 clamp ediliyor; observeDays default 14
 //   • suggestedPrompt sadece PROMPT actionType için dolu
 //   • Endpoint dosyasında /fapi/v1/order ve /fapi/v1/leverage YOK
 //   • Endpoint trade açmaz / ayar değiştirmez (update sentinels)
@@ -151,9 +151,9 @@ describe("Schema — normalizeAIDecisionOutput", () => {
     expect(normalizeAIDecisionOutput({ confidence: NaN as any }).confidence).toBe(0);
   });
 
-  it("observeDays default 7", () => {
-    expect(normalizeAIDecisionOutput({}).observeDays).toBe(7);
-    expect(normalizeAIDecisionOutput({ observeDays: 14 }).observeDays).toBe(14);
+  it("observeDays default 14", () => {
+    expect(normalizeAIDecisionOutput({}).observeDays).toBe(14);
+    expect(normalizeAIDecisionOutput({ observeDays: 7 }).observeDays).toBe(7);
     expect(normalizeAIDecisionOutput({ observeDays: -5 }).observeDays).toBe(0);
     expect(normalizeAIDecisionOutput({ observeDays: 1000 }).observeDays).toBe(365);
   });

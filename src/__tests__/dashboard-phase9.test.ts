@@ -93,10 +93,11 @@ describe("Phase 9 — gerekli kartların hepsi mevcut", () => {
     expect(PAGE).toMatch(/<NearThresholdCoinsCard/);
   });
 
-  it("En Çok Engelleyen Sebepler kartı var", () => {
+  it("BlockingReasonsCard bileşeni tanımlı (ana sayfa dışında kullanım için)", () => {
     expect(CARDS).toMatch(/export function BlockingReasonsCard/);
     expect(CARDS).toMatch(/EN ÇOK ENGELLEYEN SEBEPLER/);
-    expect(PAGE).toMatch(/<BlockingReasonsCard/);
+    // Ana sayfa (page.tsx) tasarım kararıyla bu paneli göstermiyor;
+    // bileşen Cards.tsx'te export olarak korunuyor.
   });
 
   it("Bugünkü Özet kartı var", () => {
@@ -385,8 +386,8 @@ describe("Phase 9 — ActionFooter component", () => {
     expect(CARDS).not.toMatch(/<ActionFooter/);
   });
 
-  it("GÖZLEM 1 haftalık varsayılan gözlem süresine işaret eder", () => {
-    expect(ACTION_FOOTER).toMatch(/observeDays\s*=\s*7/);
+  it("GÖZLEM 14 günlük varsayılan gözlem süresine işaret eder", () => {
+    expect(ACTION_FOOTER).toMatch(/observeDays\s*=\s*14/);
   });
 
   it("ActionFooter doğrudan trade engine veya canlı gate fonksiyonu çağırmaz", () => {

@@ -829,7 +829,7 @@ export function PerformanceDecisionCard({
               className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
               data-action-kind={k}
             >
-              {k === "APPROVE" ? "ONAYLA" : k === "REJECT" ? "REDDET" : k === "OBSERVE" ? `GÖZLEM (${data!.observeDays || 7}g)` : "PROMPT"}
+              {k === "APPROVE" ? "ONAYLA" : k === "REJECT" ? "REDDET" : k === "OBSERVE" ? `GÖZLEM (${data!.observeDays || 14}g)` : "PROMPT"}
             </button>
           ))}
           <span className="ml-auto text-[10px] uppercase tracking-wider text-muted">
@@ -1023,7 +1023,7 @@ export function TradeAuditCard({
             >
               {k === "APPROVE" ? "ONAYLA"
                 : k === "REJECT" ? "REDDET"
-                : k === "OBSERVE" ? `GÖZLEM (${data!.observeDays || 7}g)`
+                : k === "OBSERVE" ? `GÖZLEM (${data!.observeDays || 14}g)`
                 : "PROMPT"}
             </button>
           ))}
@@ -1389,7 +1389,7 @@ export function AIDecisionAssistantCard({
   })();
 
   const actionId = `ai-decision-${data?.actionType ?? status}`;
-  const observeDays = data?.observeDays && data.observeDays > 0 ? data.observeDays : 7;
+  const observeDays = data?.observeDays && data.observeDays > 0 ? data.observeDays : 14;
 
   const runAction = async (action: AIDecisionActionKind) => {
     const result = await onAction?.(action, actionId);

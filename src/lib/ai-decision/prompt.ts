@@ -39,7 +39,7 @@ YASAKLAR (ASLA İHLAL ETME):
 - mainFinding ≤ 200 karakter; systemInterpretation ≤ 600 karakter;
   recommendation ≤ 600 karakter.
 - confidence 0–100 arasıdır; 100 verme — finansal kesinlik yoktur.
-- observeDays default 7; gerekirse 1–30 aralığında ver.
+- observeDays default 14; gerekirse 1–30 aralığında ver.
 - blockedBy bir dizidir; canlıya geçişi engelleyen blocker etiketleri
   (örn. "PAPER_TRADES_INSUFFICIENT", "API_SECURITY_INCOMPLETE",
   "WEBSOCKET_DISCONNECTED").

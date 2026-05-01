@@ -201,7 +201,7 @@ export interface AIDecisionResponse {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-export const DEFAULT_OBSERVE_DAYS = 7;
+export const DEFAULT_OBSERVE_DAYS = 14;
 export const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 export const OPENAI_RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
 export const AI_REQUEST_TIMEOUT_MS = 30_000;
