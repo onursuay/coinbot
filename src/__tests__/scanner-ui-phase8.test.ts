@@ -74,7 +74,7 @@ describe("Phase 8 — tablo başlıkları büyük harf ve yeni kolon seti", () =
   it("Varsayılan kolon başlıkları büyük harf ve doğru sırada", () => {
     const expected = [
       "COIN", "KAYNAK", "YÖN", "KALİTE", "FIRSAT",
-      "SKOR", "KARAR", "SEBEP",
+      "SKOR", "KARAR", "KARAR GEREKÇESİ",
     ];
     for (const h of expected) {
       // Her başlık <th> veya başlığı taşıyan elementte geçmeli.
@@ -546,7 +546,7 @@ describe("Bugfix 1.2 — Scanner tickSkipped boş tablo mesajı", () => {
 // ── 22.5 Scanner Coin Column Alignment Patch ────────────────────────
 describe("Scanner Coin Column Alignment Patch", () => {
   it("COIN <th> sola yaslı (!text-left)", () => {
-    expect(SCANNER_PAGE).toMatch(/<th className="!text-left">COIN<\/th>/);
+    expect(SCANNER_PAGE).toMatch(/<th className="!text-left font-semibold text-slate-200">COIN<\/th>/);
   });
 
   it("COIN <td> sola yaslı (!text-left)", () => {
@@ -637,8 +637,8 @@ describe("Trade Score Column Simplification Patch", () => {
     expect(SCANNER_PAGE).toMatch(/tradeSignalScore != null/);
   });
 
-  it("SEBEP kolonu korunur", () => {
-    expect(SCANNER_PAGE.includes(">SEBEP<")).toBe(true);
+  it("KARAR GEREKÇESİ kolonu korunur", () => {
+    expect(SCANNER_PAGE.includes(">KARAR GEREKÇESİ<")).toBe(true);
     expect(SCANNER_PAGE).toMatch(/buildReasonText/);
   });
 
@@ -669,8 +669,8 @@ describe("Trade Score Column Simplification Patch", () => {
   });
 });
 
-// ── 25. Scanner Reason Cleanup + Hover Marquee Patch ────────────────
-describe("Scanner Reason Cleanup + Hover Marquee Patch", () => {
+// ── 25. Scanner Reason Cleanup + Reason Cell Ellipsis Patch ──────────
+describe("Scanner Reason Cleanup + Reason Cell Ellipsis Patch", () => {
   const GLOBALS_CSS = read("src/app/globals.css");
 
   it("SEBEP metninde 'Filtrelendi:' prefix'i kaldırıldı (DISPLAY_FILTER_TR)", () => {
@@ -703,32 +703,42 @@ describe("Scanner Reason Cleanup + Hover Marquee Patch", () => {
     expect(SCANNER_PAGE).toMatch(/cleanReasonText\(buildReasonText\(r\)\)/);
   });
 
-  it("SEBEP hücresi reason-cell class'ını taşıyor", () => {
+  it("KARAR GEREKÇESİ hücresi reason-cell class'ını taşıyor", () => {
     expect(SCANNER_PAGE).toMatch(/reason-cell/);
   });
 
-  it("SEBEP içindeki span reason-text class'ını taşıyor", () => {
+  it("KARAR GEREKÇESİ içindeki span reason-text class'ını taşıyor", () => {
     expect(SCANNER_PAGE).toMatch(/reason-text/);
   });
 
-  it("SEBEP hücresi title ile tam sebep metnini içeriyor (tooltip korundu)", () => {
+  it("KARAR GEREKÇESİ hücresi title ile tam sebep metnini içeriyor (tooltip korundu)", () => {
     expect(SCANNER_PAGE).toMatch(/title=\{reasonText\}/);
   });
 
-  it("globals.css'de reason-scroll keyframe tanımlı", () => {
-    expect(GLOBALS_CSS).toMatch(/@keyframes reason-scroll/);
-    expect(GLOBALS_CSS).toMatch(/translateX/);
+  it("globals.css'de marquee keyframe tanımı yok", () => {
+    expect(GLOBALS_CSS).not.toMatch(/@keyframes reason-scroll/);
+    expect(GLOBALS_CSS).not.toMatch(/translateX\(/);
   });
 
-  it("globals.css'de tr:hover .reason-text animasyonu tanımlı", () => {
-    expect(GLOBALS_CSS).toMatch(/tr:hover .reason-text/);
-    expect(GLOBALS_CSS).toMatch(/reason-scroll/);
+  it("globals.css'de hover marquee animasyonu tanımlı değil", () => {
+    expect(GLOBALS_CSS).not.toMatch(/tr:hover \.reason-text/);
+    expect(GLOBALS_CSS).not.toMatch(/animation:\s*reason-scroll/);
   });
 
   it("globals.css'de reason-cell overflow:hidden ve max-width tanımlı", () => {
     expect(GLOBALS_CSS).toMatch(/\.reason-cell/);
     expect(GLOBALS_CSS).toMatch(/overflow:\s*hidden/);
     expect(GLOBALS_CSS).toMatch(/max-width:\s*240px/);
+  });
+
+  it("globals.css'de reason-text tek satır ellipsis uygular", () => {
+    expect(GLOBALS_CSS).toMatch(/\.reason-text/);
+    expect(GLOBALS_CSS).toMatch(/text-overflow:\s*ellipsis/);
+    expect(GLOBALS_CSS).toMatch(/white-space:\s*nowrap/);
+  });
+
+  it("globals.css'de KARAR GEREKÇESİ metni görsel olarak büyük harf gösterilir", () => {
+    expect(GLOBALS_CSS).toMatch(/text-transform:\s*uppercase/);
   });
 
   it("body/html overflow-x:hidden korunuyor (sayfa yatay kaymaz)", () => {
@@ -816,17 +826,17 @@ describe("Scanner Table UI Final Polish Patch", () => {
   });
 
   it("COIN sütunu sola yaslı kalır", () => {
-    expect(SCANNER_PAGE).toMatch(/<th className="!text-left">COIN<\/th>/);
+    expect(SCANNER_PAGE).toMatch(/<th className="!text-left font-semibold text-slate-200">COIN<\/th>/);
   });
 
   it("Diğer başlıklar font-semibold class taşıyor", () => {
-    expect(SCANNER_PAGE).toMatch(/className="font-semibold">KAYNAK</);
-    expect(SCANNER_PAGE).toMatch(/className="font-semibold">YÖN</);
+    expect(SCANNER_PAGE).toMatch(/className="font-semibold text-slate-200">KAYNAK</);
+    expect(SCANNER_PAGE).toMatch(/className="font-semibold text-slate-200">YÖN</);
     expect(SCANNER_PAGE).toMatch(/font-semibold[^>]*>KALİTE</);
     expect(SCANNER_PAGE).toMatch(/font-semibold[^>]*>FIRSAT</);
     expect(SCANNER_PAGE).toMatch(/font-semibold[^>]*>SKOR</);
-    expect(SCANNER_PAGE).toMatch(/className="font-semibold">KARAR</);
-    expect(SCANNER_PAGE).toMatch(/className="font-semibold">SEBEP</);
+    expect(SCANNER_PAGE).toMatch(/className="font-semibold text-slate-200">KARAR</);
+    expect(SCANNER_PAGE).toMatch(/className="font-semibold text-slate-200">KARAR GEREKÇESİ</);
   });
 
   it("Trade logic değişmedi — MIN_SIGNAL_CONFIDENCE=70 korunur", () => {

@@ -25,6 +25,7 @@ table.t th { @apply text-left text-muted font-normal py-2 px-2 border-b border-b
 table.t td { @apply py-2 px-2 border-b border-border/60; }
 table.t-centered th,
 table.t-centered td { @apply text-center; }
+table.scanner-table th { @apply text-slate-200 font-semibold; }
 
 /* Animated "snake" border — soft white glow chasing around the tile edge.
    Uses @property + conic-gradient + mask trick so only the 1.5px border ring
@@ -60,11 +61,7 @@ table.t-centered td { @apply text-center; }
   to { --snake-angle: 360deg; }
 }
 
-/* Scanner SEBEP sütunu — hover'da uzun metinleri yatay kaydırarak göster */
-@keyframes reason-scroll {
-  from { transform: translateX(0); }
-  to   { transform: translateX(-200px); }
-}
+/* Scanner karar gerekçesi sütunu — tek satır kalır, overflow ellipsis olur. */
 .reason-cell {
   overflow: hidden;
   white-space: nowrap;
@@ -72,9 +69,10 @@ table.t-centered td { @apply text-center; }
   position: relative;
 }
 .reason-text {
-  display: inline-block;
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
   white-space: nowrap;
-}
-tr:hover .reason-text {
-  animation: reason-scroll 7s ease-in-out infinite alternate;
 }
