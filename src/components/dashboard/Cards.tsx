@@ -50,18 +50,26 @@ export interface BotStatusActions {
   onKillSwitch: () => void;
   onTick: () => void;
 }
+
+function titleCaseStatusValue(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .toLocaleLowerCase("tr-TR")
+    .replace(/(^|\s)\S/g, (m) => m.toLocaleUpperCase("tr-TR"));
+}
+
 export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions: BotStatusActions }) {
   const status = (data.bot_status ?? "stopped").toString().toLowerCase();
   const isRunning = status.startsWith("running");
   const isKillSwitch = status === "kill_switch" || data.kill_switch_active === true;
-  const exchange = (data.active_exchange ?? "binance").toString().toUpperCase();
+  const exchange = titleCaseStatusValue((data.active_exchange ?? "binance").toString());
 
   const statusLabel = isKillSwitch
-    ? "ACİL DURDURULDU"
+    ? "Acil Durduruldu"
     : status === "running" || status === "running_paper" || status === "running_live"
-      ? "ÇALIŞIYOR"
-      : status === "stopped" ? "DURDU"
-      : status.toUpperCase().replace(/_/g, " ");
+      ? "Çalışıyor"
+      : status === "stopped" ? "Durdu"
+      : titleCaseStatusValue(status);
 
   const statusTone = isKillSwitch ? "danger" : isRunning ? "success" : "muted";
 
@@ -90,14 +98,42 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-        <CompactBox label="PİYASA VERİSİ" value={marketLive ? "CANLI" : "BEKLİYOR"}
-          tone={marketLive ? "success" : "muted"} />
-        <CompactBox label="SUNUCU" value={data.worker_online ? "ÇEVRİMİÇİ" : "ÇEVRİMDIŞI"}
-          tone={data.worker_online ? "success" : "danger"} />
-        <CompactBox label="WEBSOCKET" value={(data.websocket_status ?? "—").toUpperCase()}
-          tone={data.websocket_status === "connected" ? "success" : "muted"} />
-        <CompactBox label="SON GÜNCELLEME" value={lastTickLabel} tone="muted" />
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-stretch">
+        <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+          <CompactBox label="PİYASA VERİSİ" value={marketLive ? "Canlı" : "Bekliyor"}
+            tone={marketLive ? "success" : "muted"} />
+          <CompactBox label="SUNUCU" value={data.worker_online ? "Çevrimiçi" : "Çevrimdışı"}
+            tone={data.worker_online ? "success" : "danger"} />
+          <CompactBox label="WEBSOCKET" value={data.websocket_status ? titleCaseStatusValue(data.websocket_status) : "—"}
+            tone={data.websocket_status === "connected" ? "success" : "muted"} />
+        </div>
+        <div className="rounded-lg border border-border bg-bg-soft px-3 py-2 lg:min-w-[560px]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="min-w-[118px]">
+              <div className="text-[10px] uppercase tracking-wider text-muted">SON GÜNCELLEME</div>
+              <div className="text-sm font-semibold text-slate-200">{lastTickLabel}</div>
+            </div>
+            <div className="flex flex-wrap gap-1.5 sm:ml-auto lg:flex-nowrap">
+              <button className="btn-primary h-8 whitespace-nowrap px-2.5 text-xs" onClick={actions.onStartPaper} disabled={data.busy || isRunning}>
+                Başlat
+              </button>
+              <button className="btn-ghost h-8 whitespace-nowrap px-2.5 text-xs" onClick={actions.onStop} disabled={data.busy || !isRunning}>
+                Durdur
+              </button>
+              <button className="btn-ghost h-8 whitespace-nowrap px-2.5 text-xs" onClick={actions.onTick} disabled={data.busy}>
+                Taramayı Çalıştır
+              </button>
+              <button
+                className="h-8 whitespace-nowrap rounded-lg border border-danger/60 px-2.5 text-xs font-medium text-danger transition-colors hover:bg-danger/10"
+                onClick={actions.onKillSwitch}
+                disabled={data.busy}
+                aria-label="ACİL DURDUR"
+              >
+                Acil Durdur
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {isKillSwitch && data.kill_switch_reason && (
@@ -115,25 +151,6 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
           {tickRuntimeNotice.message}
         </div>
       )}
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button className="btn-primary text-sm px-3 py-1.5" onClick={actions.onStartPaper} disabled={data.busy || isRunning}>
-          Başlat
-        </button>
-        <button className="btn-ghost text-sm px-3 py-1.5" onClick={actions.onStop} disabled={data.busy || !isRunning}>
-          Durdur
-        </button>
-        <button className="btn-ghost text-sm px-3 py-1.5" onClick={actions.onTick} disabled={data.busy}>
-          Taramayı Çalıştır
-        </button>
-        <button
-          className="ml-auto text-sm px-3 py-1.5 rounded-lg border border-danger/60 text-danger hover:bg-danger/10 font-medium transition-colors"
-          onClick={actions.onKillSwitch}
-          disabled={data.busy}
-        >
-          ACİL DURDUR
-        </button>
-      </div>
     </div>
   );
 }
@@ -574,13 +591,13 @@ export function PaperValidationCard({ data, hardLiveAllowed }: {
       <div className="card border border-border">
         <div className="flex items-center justify-between mb-2">
           <h2 className="font-semibold tracking-wide">PAPER İŞLEM DOĞRULAMASI</h2>
-          <span className="text-[10px] uppercase tracking-wider text-muted">BEKLENİYOR</span>
+          <span className="text-[10px] tracking-wider text-muted">Bekleniyor</span>
         </div>
         <p className="text-sm text-muted">İlk paper işlem açıldıktan sonra E2E doğrulaması burada raporlanır.</p>
         <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-          <CompactBox label="HARD LIVE GATE" value={hardLiveAllowed ? "AÇIK" : "KAPALI"} tone={hardLiveAllowed ? "warning" : "success"} />
-          <CompactBox label="MOD" value="PAPER" tone="muted" />
-          <CompactBox label="GERÇEK EMİR" value="YOK" tone="success" />
+          <CompactBox label="HARD LIVE GATE" value={hardLiveAllowed ? "Açık" : "Kapalı"} tone={hardLiveAllowed ? "warning" : "success"} />
+          <CompactBox label="MOD" value="Paper" tone="muted" />
+          <CompactBox label="GERÇEK EMİR" value="Yok" tone="success" />
         </div>
       </div>
     );
@@ -605,14 +622,14 @@ export function PaperValidationCard({ data, hardLiveAllowed }: {
         <h2 className="font-semibold tracking-wide">PAPER İŞLEM DOĞRULAMASI</h2>
         <div className="flex items-center gap-2">
           {allPassed ? (
-            <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-success/20 text-success">TÜMÜ GEÇTİ</span>
+            <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full bg-success/20 text-success">Tümü Geçti</span>
           ) : firstTradeMissing ? (
-            <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-bg-soft text-muted">BEKLENİYOR</span>
+            <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full bg-bg-soft text-muted">Bekleniyor</span>
           ) : failed.length > 0 ? (
-            <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-danger/20 text-danger">{failed.length} BAŞARISIZ</span>
+            <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full bg-danger/20 text-danger">{failed.length} Başarısız</span>
           ) : null}
           {skipped.length > 0 && (
-            <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-bg-soft text-muted">{skipped.length} ATLANDI</span>
+            <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full bg-bg-soft text-muted">{skipped.length} Atlandı</span>
           )}
         </div>
       </div>
@@ -722,10 +739,10 @@ export interface PerformanceDecisionInput {
 }
 
 const STATUS_LABEL: Record<DecisionStatusPretty, string> = {
-  HEALTHY: "SAĞLIKLI",
-  WATCH: "GÖZLEM",
-  ATTENTION_NEEDED: "DİKKAT",
-  DATA_INSUFFICIENT: "VERİ YETERSİZ",
+  HEALTHY: "Sağlıklı",
+  WATCH: "Gözlem",
+  ATTENTION_NEEDED: "Dikkat",
+  DATA_INSUFFICIENT: "Veri Yetersiz",
 };
 
 const STATUS_TONE: Record<DecisionStatusPretty, Tone> = {
@@ -736,14 +753,14 @@ const STATUS_TONE: Record<DecisionStatusPretty, Tone> = {
 };
 
 const ACTION_LABEL: Record<DecisionActionPretty, string> = {
-  NO_ACTION: "AKSİYON YOK",
-  OBSERVE: "GÖZLEM",
-  REVIEW_THRESHOLD: "EŞİK İNCELEMESİ",
-  REVIEW_STOP_LOSS: "STOP-LOSS İNCELEMESİ",
-  REVIEW_RISK_SETTINGS: "RİSK AYAR İNCELEMESİ",
-  REVIEW_POSITION_LIMITS: "POZİSYON LİMİT İNCELEMESİ",
-  REVIEW_SIGNAL_QUALITY: "SİNYAL KALİTE İNCELEMESİ",
-  DATA_INSUFFICIENT: "VERİ YETERSİZ",
+  NO_ACTION: "Aksiyon Yok",
+  OBSERVE: "Gözlem",
+  REVIEW_THRESHOLD: "Eşik İncelemesi",
+  REVIEW_STOP_LOSS: "Stop-Loss İncelemesi",
+  REVIEW_RISK_SETTINGS: "Risk Ayar İncelemesi",
+  REVIEW_POSITION_LIMITS: "Pozisyon Limit İncelemesi",
+  REVIEW_SIGNAL_QUALITY: "Sinyal Kalite İncelemesi",
+  DATA_INSUFFICIENT: "Veri Yetersiz",
 };
 
 export function PerformanceDecisionCard({
@@ -756,7 +773,7 @@ export function PerformanceDecisionCard({
   const empty = !data;
   const status = data?.status ?? "DATA_INSUFFICIENT";
   const action = data?.actionType ?? "DATA_INSUFFICIENT";
-  const tradeModeLabel = data?.tradeMode === "live" ? "CANLI" : "PAPER";
+  const tradeModeLabel = data?.tradeMode === "live" ? "Canlı" : "Paper";
   const isActionable = !empty && data!.actionType !== "NO_ACTION" && data!.actionType !== "DATA_INSUFFICIENT";
 
   return (
@@ -793,7 +810,7 @@ export function PerformanceDecisionCard({
           <MiniSection label="AKSİYON DURUMU" tone={isActionable ? "warning" : "muted"}>
             {ACTION_LABEL[action]}
             {data!.observeDays > 0 ? ` · ${data!.observeDays} gün gözlem` : ""}
-            {data!.requiresUserApproval ? " · KULLANICI ONAYI BEKLENİYOR" : ""}
+            {data!.requiresUserApproval ? " · Kullanıcı Onayı Bekleniyor" : ""}
           </MiniSection>
           <MiniSection label="UYGULAMA" tone="muted">
             Bu öneri trade engine&apos;e otomatik uygulanmaz
@@ -903,10 +920,10 @@ export interface TradeAuditCardInput {
 }
 
 const AUDIT_STATUS_LABEL: Record<string, string> = {
-  HEALTHY: "SAĞLIKLI",
-  WATCH: "GÖZLEM",
-  ATTENTION_NEEDED: "DİKKAT",
-  DATA_INSUFFICIENT: "VERİ YETERSİZ",
+  HEALTHY: "Sağlıklı",
+  WATCH: "Gözlem",
+  ATTENTION_NEEDED: "Dikkat",
+  DATA_INSUFFICIENT: "Veri Yetersiz",
 };
 
 const AUDIT_STATUS_TONE: Record<string, Tone> = {
@@ -960,7 +977,7 @@ export function TradeAuditCard({
   const empty = !data;
   const status = data?.status ?? "DATA_INSUFFICIENT";
   const statusTone = AUDIT_STATUS_TONE[status] ?? "muted";
-  const tradeModeLabel = data?.tradeMode === "live" ? "CANLI" : "PAPER";
+  const tradeModeLabel = data?.tradeMode === "live" ? "Canlı" : "Paper";
   const isActionable =
     !empty &&
     data!.actionType !== "NO_ACTION" &&
@@ -1063,9 +1080,9 @@ export interface LiveReadinessCardInput {
 }
 
 const READINESS_STATUS_LABEL: Record<string, string> = {
-  READY: "HAZIR",
-  NOT_READY: "HAZIR DEĞİL",
-  OBSERVE: "GÖZLEM GEREKLİ",
+  READY: "Hazır",
+  NOT_READY: "Hazır Değil",
+  OBSERVE: "Gözlem Gerekli",
 };
 
 const READINESS_STATUS_TONE: Record<string, Tone> = {
@@ -1244,11 +1261,11 @@ export interface AIDecisionCardInput {
 }
 
 const AI_STATUS_LABEL: Record<string, string> = {
-  NO_ACTION: "AKSİYON YOK",
-  OBSERVE: "GÖZLEM",
-  REVIEW_REQUIRED: "İNCELEME GEREKLİ",
-  CRITICAL_BLOCKER: "KRİTİK BLOKER",
-  DATA_INSUFFICIENT: "VERİ YETERSİZ",
+  NO_ACTION: "Aksiyon Yok",
+  OBSERVE: "Gözlem",
+  REVIEW_REQUIRED: "İnceleme Gerekli",
+  CRITICAL_BLOCKER: "Kritik Bloker",
+  DATA_INSUFFICIENT: "Veri Yetersiz",
 };
 
 const AI_STATUS_TONE: Record<string, Tone> = {
@@ -1266,18 +1283,25 @@ const AI_RISK_TONE: Record<string, Tone> = {
   CRITICAL: "danger",
 };
 
+const AI_RISK_LABEL: Record<string, string> = {
+  LOW: "Low",
+  MEDIUM: "Medium",
+  HIGH: "High",
+  CRITICAL: "Critical",
+};
+
 const AI_ACTION_LABEL: Record<string, string> = {
-  NO_ACTION: "Aksiyon yok",
+  NO_ACTION: "Aksiyon Yok",
   OBSERVE: "Gözlem",
-  PROMPT: "Prompt hazırla",
-  REVIEW_RISK: "Risk incelemesi",
-  REVIEW_STOP_LOSS: "Stop incelemesi",
-  REVIEW_POSITION_SIZE: "Boyut incelemesi",
-  REVIEW_LIMITS: "Limit incelemesi",
-  REVIEW_LEVERAGE: "Kaldıraç incelemesi",
-  REVIEW_THRESHOLD: "Eşik incelemesi",
-  LIVE_READINESS_BLOCKED: "Live readiness blocked",
-  DATA_INSUFFICIENT: "Veri yetersiz",
+  PROMPT: "Prompt Hazırla",
+  REVIEW_RISK: "Risk İncelemesi",
+  REVIEW_STOP_LOSS: "Stop İncelemesi",
+  REVIEW_POSITION_SIZE: "Boyut İncelemesi",
+  REVIEW_LIMITS: "Limit İncelemesi",
+  REVIEW_LEVERAGE: "Kaldıraç İncelemesi",
+  REVIEW_THRESHOLD: "Eşik İncelemesi",
+  LIVE_READINESS_BLOCKED: "Live Readiness Blocked",
+  DATA_INSUFFICIENT: "Veri Yetersiz",
 };
 
 const AI_FALLBACK_PROMPT =
@@ -1346,6 +1370,7 @@ export function AIDecisionAssistantCard({
   const riskLevel = data?.riskLevel ?? "LOW";
   const riskTone = AI_RISK_TONE[riskLevel] ?? "muted";
   const actionLabel = AI_ACTION_LABEL[data?.actionType ?? "DATA_INSUFFICIENT"] ?? (data?.actionType ?? "Veri yok");
+  const riskLabel = AI_RISK_LABEL[riskLevel] ?? riskLevel;
   const promptText = data?.suggestedPrompt?.trim() || AI_FALLBACK_PROMPT;
   const [observeSelected, setObserveSelected] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -1355,12 +1380,12 @@ export function AIDecisionAssistantCard({
 
   // AI durum çubuğu hesabı
   const aiStatusInfo = (() => {
-    if (!data) return { label: "YÜKLENIYOR", tone: "muted" as Tone };
+    if (!data) return { label: "Yükleniyor", tone: "muted" as Tone };
     if (data.fallbackReason === "AI_UNCONFIGURED" || data.hasOpenAiKey === false)
-      return { label: "API KEY YOK", tone: "warning" as Tone };
-    if (data.fallbackReason) return { label: "FALLBACK", tone: "warning" as Tone };
-    if (data.aiCallSucceeded === false) return { label: "HATA", tone: "danger" as Tone };
-    return { label: "AKTİF", tone: "success" as Tone };
+      return { label: "API Key Yok", tone: "warning" as Tone };
+    if (data.fallbackReason) return { label: "Fallback", tone: "warning" as Tone };
+    if (data.aiCallSucceeded === false) return { label: "Hata", tone: "danger" as Tone };
+    return { label: "Aktif", tone: "success" as Tone };
   })();
 
   const actionId = `ai-decision-${data?.actionType ?? status}`;
@@ -1438,7 +1463,7 @@ export function AIDecisionAssistantCard({
       </div>
 
       <div className="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
-        <AIDecisionMetric label="Risk Seviyesi" value={riskLevel} tone={riskTone} />
+        <AIDecisionMetric label="Risk Seviyesi" value={riskLabel} tone={riskTone} />
         <AIDecisionMetric
           label="Güven"
           value={data && data.confidence > 0 ? `%${Math.round(data.confidence)}` : "—"}

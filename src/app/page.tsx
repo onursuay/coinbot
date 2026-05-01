@@ -304,6 +304,14 @@ export default function HomePage() {
         <OpportunityRadarCard rows={scanRows} />
       </div>
 
+      {/* Hızlı performans satırı — karar merkezi başlamadan önce görünür */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <KpiTile label="GÜNLÜK KÂR/ZARAR" value={fmtUsd(daily?.realizedPnlUsd ?? 0)} tone={(daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
+        <KpiTile label="TOPLAM KÂR/ZARAR" value={fmtUsd(perf?.totalPnl ?? 0)} tone={(perf?.totalPnl ?? 0) >= 0 ? "success" : "danger"} />
+        <KpiTile label="KAZANMA ORANI" value={fmtPct(perf?.winRate ?? 0)} tone="muted" />
+        <KpiTile label="İŞLEM SAYISI" value={String(perf?.totalTrades ?? 0)} tone="muted" />
+      </div>
+
       {/* 4. POZİSYON KARAR MERKEZİ */}
       <DecisionCenterCard rows={scanRows} exchange={status?.bot?.active_exchange ?? "binance"} />
 
@@ -373,14 +381,6 @@ export default function HomePage() {
           }
         }}
       />
-
-      {/* Hızlı performans satırı — küçük KPI'lar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KpiTile label="GÜNLÜK KÂR/ZARAR" value={fmtUsd(daily?.realizedPnlUsd ?? 0)} tone={(daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
-        <KpiTile label="TOPLAM KÂR/ZARAR" value={fmtUsd(perf?.totalPnl ?? 0)} tone={(perf?.totalPnl ?? 0) >= 0 ? "success" : "danger"} />
-        <KpiTile label="KAZANMA ORANI" value={fmtPct(perf?.winRate ?? 0)} tone="muted" />
-        <KpiTile label="İŞLEM SAYISI" value={String(perf?.totalTrades ?? 0)} tone="muted" />
-      </div>
     </div>
   );
 }
