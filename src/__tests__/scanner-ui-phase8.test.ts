@@ -178,7 +178,7 @@ describe("Phase 8 — açılan paper pozisyon satırı aday satırından belirgi
 describe("Phase 8 — trading invariantleri korunur", () => {
   it("MIN_SIGNAL_CONFIDENCE eşiği signal-engine'de 70 (değişmedi)", () => {
     const eng = read("src/lib/engines/signal-engine.ts");
-    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(eng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("Piyasa Tarayıcı SIGNAL_THRESHOLD sabiti 70 (UI gösterimi için)", () => {
@@ -307,7 +307,7 @@ describe("Bugfix 1 — trade & live gate invariantleri", () => {
 
   it("MIN_SIGNAL_CONFIDENCE=70 korunur (signal-engine)", () => {
     const eng = read("src/lib/engines/signal-engine.ts");
-    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(eng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("Scanner içinde Binance API çağrısı yok", () => {
@@ -410,7 +410,7 @@ describe("Bugfix 1.1 — worker error summary", () => {
 describe("Bugfix 1.1 — invariantler korunmuş", () => {
   it("signal-engine MIN_SIGNAL_CONFIDENCE=70 değişmedi", () => {
     const eng = read("src/lib/engines/signal-engine.ts");
-    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(eng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("orchestrator içinde Binance API çağrısı eklenmedi", () => {
@@ -580,7 +580,7 @@ describe("Scanner Coin Column Alignment Patch", () => {
 describe("Bugfix 1.2 — trade & live gate invariantleri", () => {
   it("MIN_SIGNAL_CONFIDENCE=70 korunmuş", () => {
     const eng = read("src/lib/engines/signal-engine.ts");
-    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(eng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("HARD_LIVE_TRADING_ALLOWED=false korunmuş", () => {
@@ -649,7 +649,7 @@ describe("Trade Score Column Simplification Patch", () => {
 
   it("Trade logic değişmedi — MIN_SIGNAL_CONFIDENCE=70 korunur", () => {
     const eng = read("src/lib/engines/signal-engine.ts");
-    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(eng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("SIGNAL_THRESHOLD sabiti scanner sayfasında 70 olarak korunur", () => {
@@ -752,7 +752,7 @@ describe("Scanner Reason Cleanup + Reason Cell Ellipsis Patch", () => {
 
   it("Trade logic değişmedi — MIN_SIGNAL_CONFIDENCE=70", () => {
     const eng = read("src/lib/engines/signal-engine.ts");
-    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(eng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("Live gate değişmedi — HARD_LIVE_TRADING_ALLOWED=false", () => {
@@ -841,7 +841,7 @@ describe("Scanner Table UI Final Polish Patch", () => {
 
   it("Trade logic değişmedi — MIN_SIGNAL_CONFIDENCE=70 korunur", () => {
     const eng = read("src/lib/engines/signal-engine.ts");
-    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(eng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("Live gate değişmedi — HARD_LIVE_TRADING_ALLOWED=false", () => {

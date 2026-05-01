@@ -247,9 +247,16 @@ describe("Phase 7 / Phase 14 invariants — codebase", () => {
     expect(route).not.toMatch(/enable_live_trading/);
   });
 
-  it("signal-engine still rejects trades below 70", () => {
+  it("signal-engine default score gate is 70 (aggressive paper mode may lower it)", () => {
     const src = read("src/lib/engines/signal-engine.ts");
-    expect(src).toMatch(/if\s*\(\s*score\s*<\s*70\s*\)/);
+    // Default threshold must remain 70 when no aggressiveMinScore is provided.
+    expect(src).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
+    // Gate must use the resolved minScore variable.
+    expect(src).toMatch(/if\s*\(\s*score\s*<\s*minScore\s*\)/);
+    // Aggressive mode cannot be active in live trading — confirmed by aggressive-paper-mode.ts guard.
+    const aggHelper = read("src/lib/aggressive-paper-mode.ts");
+    expect(aggHelper).toMatch(/HARD_LIVE_TRADING_ALLOWED/);
+    expect(aggHelper).toMatch(/trading_mode.*paper/);
   });
 
   it("worker entry still does not import the orchestrator directly", () => {

@@ -317,7 +317,7 @@ describe("Phase-3 invariants — module hygiene + global guarantees", () => {
 
   it("signal-engine still rejects trades below 70", () => {
     const src = read("src/lib/engines/signal-engine.ts");
-    expect(src).toMatch(/if\s*\(\s*score\s*<\s*70\s*\)/);
+    expect(src).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("env defaults still keep live trading off and paper as default mode", () => {

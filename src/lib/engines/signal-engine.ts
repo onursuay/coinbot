@@ -33,6 +33,9 @@ export interface SignalContext {
   ticker: Ticker;
   funding?: FundingRate | null;
   btcKlines?: Kline[];
+  // Aggressive Paper Test Mode — paper-only relaxed thresholds. NEVER set in live mode.
+  aggressiveMinScore?: number;   // lowers the NO_TRADE score gate (default 70)
+  aggressiveBtcBypass?: boolean; // skips the -12 BTC misalignment soft penalty
 }
 
 export interface SignalResult {
@@ -568,7 +571,8 @@ export function generateSignal(ctx: SignalContext): SignalResult {
   if (direction === "SHORT" && e50 < e200) score += 5;
   if (wickAnom) score -= 8;
   // P0 bugfix: BTC uyumsuzluğu hard veto değil, soft penalty (-12).
-  if (btcMisaligned) score -= 12;
+  // Aggressive paper mode can bypass this penalty to observe more signals.
+  if (btcMisaligned && !ctx.aggressiveBtcBypass) score -= 12;
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   features.signalScore = score;
@@ -583,7 +587,8 @@ export function generateSignal(ctx: SignalContext): SignalResult {
 
   const mqs = typeof features.marketQualityScore === "number" ? (features.marketQualityScore as number) : 0;
 
-  if (score < 70) {
+  const minScore = ctx.aggressiveMinScore ?? 70;
+  if (score < minScore) {
     return {
       symbol, timeframe, signalType: "NO_TRADE", score,
       setupScore,
@@ -596,7 +601,7 @@ export function generateSignal(ctx: SignalContext): SignalResult {
       waitReasonSummary: dirExp.waitReasonSummary,
       entryPrice: last, stopLoss: stop, takeProfit: take, riskRewardRatio: rr,
       reasons,
-      rejectedReason: `Sinyal skoru düşük (${score}/100 < 70)`,
+      rejectedReason: `Sinyal skoru düşük (${score}/100 < ${minScore})`,
       // near-miss: score 50-69 passed all other filters — direction is valid but score too low
       nearMissDirection: score >= 50 ? direction : undefined,
       features: { ...features },

@@ -399,7 +399,7 @@ describe("Phase 9 — ActionFooter component", () => {
 describe("Phase 9 — trading invariant'leri korunur", () => {
   it("MIN_SIGNAL_CONFIDENCE eşiği 70 (signal-engine)", () => {
     const eng = read("src/lib/engines/signal-engine.ts");
-    expect(eng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(eng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("Dashboard SIGNAL_THRESHOLD 70 (UI display)", () => {

@@ -226,7 +226,7 @@ describe("Phase 14 safety invariants — unchanged", () => {
 
   it("MIN_SIGNAL_CONFIDENCE=70 unchanged in signal-engine", () => {
     const src = read("src/lib/engines/signal-engine.ts");
-    expect(src).toMatch(/if\s*\(\s*score\s*<\s*70\s*\)/);
+    expect(src).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("worker lock mechanism untouched", () => {

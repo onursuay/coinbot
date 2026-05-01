@@ -321,7 +321,7 @@ describe("Phase 11 — reasons / penalties örnekleri", () => {
 // ── 14. tradeSignalScore matematiği ve trade-açma akışı değişmedi ─────
 describe("Phase 11 — trading invariant'leri ve decoupling", () => {
   it("MIN_SIGNAL_CONFIDENCE eşiği signal-engine'de hâlâ 70", () => {
-    expect(ENG_SIGNAL).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(ENG_SIGNAL).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("Opportunity Priority kodu signal-engine veya bot-orchestrator import etmez", () => {

@@ -17,6 +17,7 @@ import {
   type UnifiedCandidateMetadata,
 } from "@/lib/engines/unified-candidate-provider";
 import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist, getTierPolicy } from "@/lib/risk-tiers";
+import { checkAggressivePaperMode } from "@/lib/aggressive-paper-mode";
 import { calculateStrategyHealth } from "./strategy-health";
 import { buildRiskExecutionConfig, ensureHydrated } from "@/lib/risk-settings";
 import { ensureScanModesHydrated } from "@/lib/scan-modes";
@@ -217,6 +218,8 @@ export interface ScanDetail {
   displayFilterReasons?: string[];
   /** Short Turkish reason summary for the scanner SEBEP column when the row was display-filtered. */
   displayFilterReasonText?: string;
+  /** True when this trade was opened via Aggressive Paper Test Mode relaxed gates. */
+  aggressivePaperOpened?: boolean;
 }
 
 // ── Display filter reason text mapping (Turkish, scanner SEBEP column) ──
@@ -856,11 +859,22 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     return result;
   }
 
+  // Aggressive Paper Test Mode — paper-only relaxed gates.
+  const aggMode = checkAggressivePaperMode(settings);
+  if (aggMode.active) {
+    await botLog({
+      userId, eventType: "aggressive_paper_mode_active",
+      message: `AGGRESSIVE PAPER TEST MODE aktif — minSignal=${aggMode.minSignalScore} minMQS=${aggMode.minMarketQuality} maxTrades=${aggMode.maxTradesPerDay} maxPos=${aggMode.maxOpenPositions} btcBypass=${aggMode.btcBypass} qualityBypass=${aggMode.qualityBypass}`,
+    });
+  }
+
   const { data: openPos } = await sb.from("paper_trades").select("id").eq("user_id", userId).eq("status", "open");
   let openCount = openPos?.length ?? 0;
 
   // Faz 20: use defaultMaxOpenPositions from risk settings, falling back to DB setting.
+  // Aggressive mode overrides with its own (typically higher) open positions limit.
   const effectiveMaxOpenPositions = riskCfg.defaultMaxOpenPositions ?? settings.max_open_positions;
+  const loopMaxOpenPositions = aggMode.active ? aggMode.maxOpenPositions : effectiveMaxOpenPositions;
 
   // Populate risk config diagnostics into result
   result.riskConfigBound = true;
@@ -870,17 +884,21 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   result.effectiveCapitalUsdt = effectiveCapitalUsdt;
   result.riskCapitalSource = riskCapitalSource;
 
-  if (openCount >= effectiveMaxOpenPositions) {
+  if (openCount >= loopMaxOpenPositions) {
     result.ok = true;
     result.reason = "max_open_positions";
     result.durationMs = Date.now() - start;
-    await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}/${effectiveMaxOpenPositions}) doldu` });
+    await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}/${loopMaxOpenPositions}) doldu${aggMode.active ? " [AGGRESSIVE]" : ""}` });
     await writeSkipSummary(userId, opts?.workerContext, "max_open_positions", tickStartedAt);
     return result;
   }
 
   // Faz 20: daily trade count guard from risk settings.
+  // Aggressive mode uses its own (typically higher) daily trade limit.
   const maxDailyTrades = riskCfg.maxDailyTrades;
+  const loopMaxDailyTrades = aggMode.active
+    ? Math.max(maxDailyTrades, aggMode.maxTradesPerDay)
+    : maxDailyTrades;
   const startOfDay = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
   const { data: todayTrades } = await sb
     .from("paper_trades")
@@ -888,11 +906,11 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     .eq("user_id", userId)
     .gte("opened_at", startOfDay.toISOString());
   const todayTradeCount = todayTrades?.length ?? 0;
-  if (todayTradeCount >= maxDailyTrades) {
+  if (todayTradeCount >= loopMaxDailyTrades) {
     result.ok = true;
     result.reason = "max_daily_trades";
     result.durationMs = Date.now() - start;
-    await botLog({ userId, eventType: "tick_completed", message: `Tick — günlük maksimum işlem sayısı (${todayTradeCount}/${maxDailyTrades}) doldu` });
+    await botLog({ userId, eventType: "tick_completed", message: `Tick — günlük maksimum işlem sayısı (${todayTradeCount}/${loopMaxDailyTrades}) doldu${aggMode.active ? " [AGGRESSIVE DAILY_LIMIT_REACHED]" : ""}` });
     await writeSkipSummary(userId, opts?.workerContext, "max_daily_trades", tickStartedAt);
     return result;
   }
@@ -990,7 +1008,13 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       detail.spreadPercent = ticker.spread * 100;
       detail.fundingRate = funding?.rate ?? 0;
 
-      const sig = generateSignal({ symbol, timeframe: tf, klines, ticker, funding, btcKlines });
+      const sig = generateSignal({
+        symbol, timeframe: tf, klines, ticker, funding, btcKlines,
+        ...(aggMode.active ? {
+          aggressiveMinScore: aggMode.minSignalScore,
+          aggressiveBtcBypass: aggMode.btcBypass,
+        } : {}),
+      });
       detail.signalType = sig.signalType;
       detail.tradeSignalScore = sig.score;
       detail.signalScore = sig.score;
@@ -1132,27 +1156,38 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         // Dynamic coins use TIER_3 policy; apply runtime risk gates manually
         const atrPct = detail.atrPercent;
         const fundingPct = Math.abs((funding?.rate ?? 0) * 100);
-        if (atrPct > 6.0) {
-          const r = `Dynamic: ATR aşırı (${atrPct.toFixed(2)}%)`;
-          detail.rejectReason = r;
-          result.rejectedSignals.push({ symbol, reason: r });
-          result.scanDetails.push(detail);
-          continue;
-        }
-        if (fundingPct > 0.04) {
-          const r = `Dynamic: Funding yüksek (${fundingPct.toFixed(3)}%)`;
-          detail.rejectReason = r;
-          result.rejectedSignals.push({ symbol, reason: r });
-          result.scanDetails.push(detail);
-          continue;
-        }
-        if (orderbookDepthUsdt < 150_000) {
-          const r = `Dynamic: Order book yetersiz (${(orderbookDepthUsdt / 1000).toFixed(0)}K USD)`;
-          detail.rejectReason = r;
-          result.rejectedSignals.push({ symbol, reason: r });
-          result.dynamicRejectedInsufficientDepth = (result.dynamicRejectedInsufficientDepth ?? 0) + 1;
-          result.scanDetails.push(detail);
-          continue;
+        // Aggressive paper mode bypasses quality gates — logs but does not block.
+        if (!aggMode.active || !aggMode.qualityBypass) {
+          if (atrPct > 6.0) {
+            const r = `Dynamic: ATR aşırı (${atrPct.toFixed(2)}%)`;
+            detail.rejectReason = r;
+            result.rejectedSignals.push({ symbol, reason: r });
+            result.scanDetails.push(detail);
+            continue;
+          }
+          if (fundingPct > 0.04) {
+            const r = `Dynamic: Funding yüksek (${fundingPct.toFixed(3)}%)`;
+            detail.rejectReason = r;
+            result.rejectedSignals.push({ symbol, reason: r });
+            result.scanDetails.push(detail);
+            continue;
+          }
+          if (orderbookDepthUsdt < 150_000) {
+            const r = `Dynamic: Order book yetersiz (${(orderbookDepthUsdt / 1000).toFixed(0)}K USD)`;
+            detail.rejectReason = r;
+            result.rejectedSignals.push({ symbol, reason: r });
+            result.dynamicRejectedInsufficientDepth = (result.dynamicRejectedInsufficientDepth ?? 0) + 1;
+            result.scanDetails.push(detail);
+            continue;
+          }
+        } else {
+          // Aggressive mode: log bypassed quality checks for diagnostics (error code: SPREAD_DEPTH_FATAL bypass).
+          if (atrPct > 6.0 || fundingPct > 0.04 || orderbookDepthUsdt < 150_000) {
+            await botLog({
+              userId, exchange, eventType: "aggressive_quality_bypass",
+              message: `[AGGRESSIVE PAPER] ${symbol} kalite filtresi bypass — ATR=${atrPct.toFixed(2)}% funding=${fundingPct.toFixed(3)}% depth=${(orderbookDepthUsdt / 1000).toFixed(0)}K`,
+            });
+          }
         }
         tierResult = {
           originalTier: "REJECTED" as const,
@@ -1247,13 +1282,17 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         : 0;
       const positionNotionalUsdt = sig.entryPrice > 0 ? risk.positionSize * sig.entryPrice : 0;
 
+      const aggressiveEntryPrefix = aggMode.active
+        ? "AGGRESSIVE PAPER TEST: normal filtreler geçilemedi ancak minimum paper test koşulları sağlandı. "
+        : "";
       const trade = await openPaperTrade({
         userId, exchange, symbol, direction: sig.signalType,
         entryPrice: sig.entryPrice, stopLoss: sig.stopLoss, takeProfit: sig.takeProfit,
         leverage: risk.leverage, positionSize: risk.positionSize, marginUsed: risk.marginUsed,
         riskAmount: risk.riskAmount, riskRewardRatio: risk.riskRewardRatio,
         marginMode: "isolated", estimatedLiquidationPrice: risk.estimatedLiquidationPrice ?? null,
-        signalScore: sig.score, entryReason: sig.reasons.join(" • "),
+        signalScore: sig.score,
+        entryReason: `${aggressiveEntryPrefix}${sig.reasons.join(" • ")}`,
         tier: tierResult.effectiveTier,
         spreadPercent: ticker.spread * 100,
         atrPercent: detail.atrPercent,
@@ -1271,17 +1310,19 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       });
 
       detail.opened = true;
+      detail.aggressivePaperOpened = aggMode.active;
       result.openedPaperTrades.push({
         symbol, direction: sig.signalType, entryPrice: sig.entryPrice,
       });
+      const tradeOpenEvent = aggMode.active ? "aggressive_paper_trade_opened" : "paper_trade_opened";
       await botLog({
-        userId, exchange, eventType: "paper_trade_opened",
-        message: `${sig.signalType} ${symbol} @ ${sig.entryPrice} lev=${risk.leverage}x skor=${sig.score}`,
-        metadata: { tradeId: trade?.id },
+        userId, exchange, eventType: tradeOpenEvent,
+        message: `${aggMode.active ? "[AGGRESSIVE PAPER]" : ""} ${sig.signalType} ${symbol} @ ${sig.entryPrice} lev=${risk.leverage}x skor=${sig.score}`,
+        metadata: { tradeId: trade?.id, aggressivePaper: aggMode.active, minSignalScore: aggMode.minSignalScore },
       });
       result.scanDetails.push(detail);
       openCount++;
-      if (openCount >= effectiveMaxOpenPositions) break;
+      if (openCount >= loopMaxOpenPositions) break;
     } catch (e: any) {
       const msg = e?.message ?? String(e);
       detail.rejectReason = `Hata: ${msg}`;

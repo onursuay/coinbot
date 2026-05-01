@@ -74,7 +74,7 @@ describe("Coin Detail Disable Patch", () => {
     expect(exec).toMatch(/LIVE_EXECUTION_NOT_IMPLEMENTED/);
 
     const sigEng = read("src/lib/engines/signal-engine.ts");
-    expect(sigEng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(sigEng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
 
     // Coin detail sayfası Binance order/leverage endpoint çağırmıyor
     const symbolPage = read("src/app/coins/[symbol]/page.tsx");

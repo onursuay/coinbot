@@ -320,9 +320,11 @@ describe("Phase 6 invariants — codebase hygiene + global guarantees", () => {
     expect(src).toMatch(/useUnifiedCandidatePool:\s*bool\(process\.env\.USE_UNIFIED_CANDIDATE_POOL,\s*true\)/);
   });
 
-  it("signal-engine still rejects trades below 70", () => {
+  it("signal-engine default score gate is 70 (aggressive paper mode may lower it)", () => {
     const src = read("src/lib/engines/signal-engine.ts");
-    expect(src).toMatch(/if\s*\(\s*score\s*<\s*70\s*\)/);
+    // Default threshold stays 70 when aggressiveMinScore is not provided.
+    expect(src).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
+    expect(src).toMatch(/if\s*\(\s*score\s*<\s*minScore\s*\)/);
   });
 
   it("env defaults still keep live trading off and paper as default mode", () => {

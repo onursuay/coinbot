@@ -135,6 +135,16 @@ export const env = {
   // candidate-pool snapshot endpoint cache. Default 120s (2 min).
   unifiedCandidateRefreshIntervalSec: num(process.env.UNIFIED_CANDIDATE_REFRESH_INTERVAL_SEC, 120),
 
+  // ── Aggressive Paper Test Mode ──
+  // All flags are paper-only: HARD_LIVE_TRADING_ALLOWED=true OR trading_mode=live disables them.
+  aggressivePaperTestMode: bool(process.env.AGGRESSIVE_PAPER_TEST_MODE, false),
+  aggressiveMinSignalScore: num(process.env.AGGRESSIVE_MIN_SIGNAL_SCORE, 45),
+  aggressiveMinMarketQuality: num(process.env.AGGRESSIVE_MIN_MARKET_QUALITY, 25),
+  aggressiveMaxTradesPerDay: num(process.env.AGGRESSIVE_MAX_TRADES_PER_DAY, 20),
+  aggressiveMaxOpenPositions: num(process.env.AGGRESSIVE_MAX_OPEN_POSITIONS, 5),
+  aggressiveAllowBtcFilterBypass: bool(process.env.AGGRESSIVE_ALLOW_BTC_FILTER_BYPASS, true),
+  aggressiveAllowMarketQualityBypass: bool(process.env.AGGRESSIVE_ALLOW_MARKET_QUALITY_BYPASS, true),
+
   // ── Worker identity (for heartbeat) ──
   workerId: str(process.env.WORKER_ID, "vercel-default"),
 

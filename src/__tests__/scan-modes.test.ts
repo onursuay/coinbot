@@ -140,10 +140,10 @@ describe("ScanModes store — toggle and manual list semantics", () => {
 describe("Phase 1 invariants — values that must NOT change", () => {
   it("signal-engine still rejects trades below 70 (MIN_SIGNAL_CONFIDENCE)", () => {
     const src = read("src/lib/engines/signal-engine.ts");
-    // Sentinel: the gate "if (score < 70)" must still exist.
-    expect(src).toMatch(/if\s*\(\s*score\s*<\s*70\s*\)/);
-    // And the rejection message must still cite "< 70".
-    expect(src).toMatch(/<\s*70/);
+    // Default threshold is still 70 when no aggressiveMinScore is provided.
+    expect(src).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
+    // Rejection message references the dynamic minScore variable.
+    expect(src).toMatch(/Sinyal skoru düşük.*minScore/);
   });
 
   it("env defaults still keep live trading off and paper as default mode", () => {

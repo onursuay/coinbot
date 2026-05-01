@@ -157,7 +157,7 @@ describe("Risk Settings Persistence Bugfix", () => {
     expect(exec).toMatch(/LIVE_EXECUTION_NOT_IMPLEMENTED/);
 
     const sigEng = read("src/lib/engines/signal-engine.ts");
-    expect(sigEng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(sigEng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
 
     // No Binance order/leverage endpoints introduced by this bugfix.
     const route = read("src/app/api/risk-settings/route.ts");

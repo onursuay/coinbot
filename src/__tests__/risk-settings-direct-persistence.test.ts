@@ -152,7 +152,7 @@ describe("Risk Settings Direct Persistence Bugfix", () => {
     const exec = read("src/lib/live-execution/index.ts");
     expect(exec).toMatch(/LIVE_EXECUTION_NOT_IMPLEMENTED/);
     const sigEng = read("src/lib/engines/signal-engine.ts");
-    expect(sigEng).toMatch(/if\s*\(score\s*<\s*70\)/);
+    expect(sigEng).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
 
     // Risk settings dosyaları Binance order/leverage endpoint çağırmıyor
     const route = read("src/app/api/risk-settings/route.ts");

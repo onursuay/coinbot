@@ -142,7 +142,7 @@ describe("Scan Modes Persistence — worker uyumu", () => {
 describe("Scan Modes Persistence — invariant'ler korundu", () => {
   it("signal-engine eşik 70 hâlâ kilitli", () => {
     const src = read("src/lib/engines/signal-engine.ts");
-    expect(src).toMatch(/if\s*\(\s*score\s*<\s*70\s*\)/);
+    expect(src).toMatch(/aggressiveMinScore\s*\?\?\s*70/);
   });
 
   it("env defaults: hard live trading off, paper default", () => {
