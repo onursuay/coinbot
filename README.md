@@ -6,6 +6,30 @@ Next.js + Supabase tabanlı, **futures-first**, **paper-trading varsayılanı** 
 
 ---
 
+## Zorunlu İşlem Sonrası Kontrol
+
+Bu projede her kod değişikliği, bugfix, mini patch, UI düzeltmesi veya audit sonrası aşağıdaki adımlar tamamlanmadan işlem bitmiş sayılmaz:
+
+1. Değişiklikleri commit et.
+2. GitHub’a push et.
+3. GitHub Actions durumunu kontrol et.
+4. VPS deploy sürecinin tetiklendiğini doğrula.
+5. VPS üzerinde Docker worker’ın yeniden deploy edildiğini doğrula.
+6. Worker heartbeat / sağlık durumunu kontrol et.
+7. Son durumda botun `running_paper` modunda çalıştığını doğrula.
+8. Canlı trading güvenlik değişmezlerini kontrol et:
+   - HARD_LIVE_TRADING_ALLOWED=false
+   - DEFAULT_TRADING_MODE=paper
+   - enable_live_trading=false
+   - openLiveOrder LIVE_EXECUTION_NOT_IMPLEMENTED
+   - /fapi/v1/order kullanılmıyor
+   - /fapi/v1/leverage kullanılmıyor
+
+Not:
+CLAUDE.md içinde bu kural ana operasyon standardı olarak ayrıca korunur. README.md’ye eklenmesinin amacı, projeyi açan geliştirici veya AI aracının bu kuralı ilk bakışta görmesidir.
+
+---
+
 ## Özellikler
 
 - **Futures-first mimari** — LONG / SHORT / WAIT / EXIT_LONG / EXIT_SHORT / NO_TRADE sinyalleri.
