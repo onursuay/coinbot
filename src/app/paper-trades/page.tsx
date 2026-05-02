@@ -58,7 +58,14 @@ export default function PaperTradesPage() {
             {open.length === 0 && <tr><td colSpan={14} className="text-muted">Açık pozisyon yok</td></tr>}
             {open.map((t) => (
               <tr key={t.id}>
-                <td className="font-medium">{t.symbol}</td>
+                <td className="font-medium">
+                  {t.symbol}
+                  {isPaperLearning(t) && (
+                    <span className="ml-2 inline-block rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent" title={learningHypothesis(t) ?? "Paper Learning Mode"}>
+                      PAPER LEARNING
+                    </span>
+                  )}
+                </td>
                 <td><span className={`tag-${t.direction === "LONG" ? "success" : "danger"}`}>{t.direction}</span></td>
                 <td>{t.leverage}x</td>
                 <td>{fmtUsd(t.margin_used)}</td>
@@ -98,7 +105,14 @@ export default function PaperTradesPage() {
             {closed.length === 0 && <tr><td colSpan={13} className="text-muted">Henüz kapanan işlem yok</td></tr>}
             {closed.map((t) => (
               <tr key={t.id}>
-                <td className="font-medium">{t.symbol}</td>
+                <td className="font-medium">
+                  {t.symbol}
+                  {isPaperLearning(t) && (
+                    <span className="ml-2 inline-block rounded-md border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent" title={learningHypothesis(t) ?? "Paper Learning Mode"}>
+                      PAPER LEARNING
+                    </span>
+                  )}
+                </td>
                 <td><span className={`tag-${t.direction === "LONG" ? "success" : "danger"}`}>{t.direction}</span></td>
                 <td>{t.leverage}x</td>
                 <td>{fmtNum(t.entry_price, 4)}</td>
@@ -127,6 +141,18 @@ export default function PaperTradesPage() {
       </section>
     </div>
   );
+}
+
+function isPaperLearning(t: any): boolean {
+  const m = t?.risk_metadata;
+  if (!m || typeof m !== "object") return false;
+  return m.paper_learning_mode === true || m.opened_by === "PAPER_LEARNING_MODE";
+}
+
+function learningHypothesis(t: any): string | null {
+  const m = t?.risk_metadata;
+  if (!m || typeof m !== "object") return null;
+  return typeof m.learning_hypothesis === "string" ? m.learning_hypothesis : null;
 }
 
 function TrashIcon() {

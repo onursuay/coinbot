@@ -4,6 +4,8 @@
 import { supabaseAdmin, supabaseConfigured } from "@/lib/supabase/server";
 import { getAdapter } from "@/lib/exchanges/exchange-factory";
 import { botLog } from "@/lib/logger";
+import { recordLearningEvent } from "@/lib/learning/learning-events";
+import { analyzeOutcome, generateLesson, type ClosedTradeContext } from "@/lib/learning/lesson-engine";
 import type { ExchangeName, MarginMode, PositionDirection } from "@/lib/exchanges/types";
 
 export interface OpenPaperTradeInput {
@@ -162,6 +164,85 @@ export async function closePaperTrade(input: ClosePaperTradeInput) {
     message: `${trade.direction} ${trade.symbol} kapandı @ ${input.exitPrice} pnl=${netPnl.toFixed(2)} (${input.exitReason})`,
     metadata: { tradeId: trade.id },
   });
+
+  // Paper Learning outcome analysis + lesson — best-effort. Only writes
+  // trade_learning_events when the trade was opened under PAPER_LEARNING_MODE.
+  try {
+    const meta = (trade.risk_metadata ?? null) as Record<string, unknown> | null;
+    const isLearningTrade = meta?.paper_learning_mode === true || meta?.opened_by === "PAPER_LEARNING_MODE";
+    if (isLearningTrade) {
+      const ctx: ClosedTradeContext = {
+        symbol: trade.symbol,
+        direction: trade.direction as "LONG" | "SHORT",
+        pnl: netPnl,
+        pnlPercent: pnlPct,
+        exitReason: input.exitReason,
+        hoursOpen,
+        bypassedRiskGates: Array.isArray(meta?.bypassed_risk_gates)
+          ? (meta!.bypassed_risk_gates as string[])
+          : Array.isArray(meta?.bypassed_gates)
+            ? (meta!.bypassed_gates as string[])
+            : [],
+        normalModeWouldReject: typeof meta?.normal_mode_would_reject === "boolean" ? (meta!.normal_mode_would_reject as boolean) : null,
+        originalRejectReason: typeof meta?.original_reject_reason === "string" ? (meta!.original_reject_reason as string) : null,
+        originalSignalScore: typeof meta?.original_signal_score === "number" ? (meta!.original_signal_score as number) : null,
+        originalMarketQualityScore: typeof meta?.original_market_quality_score === "number" ? (meta!.original_market_quality_score as number) : null,
+        generatedFallbackSlTp: typeof meta?.generated_fallback_sl_tp === "boolean" ? (meta!.generated_fallback_sl_tp as boolean) : null,
+        btcTrendState: typeof meta?.btc_trend_state === "string" ? (meta!.btc_trend_state as string) : null,
+        marketRegime: typeof meta?.market_regime === "string" ? (meta!.market_regime as string) : null,
+      };
+      const analysis = analyzeOutcome(ctx);
+      const lesson = generateLesson(ctx);
+
+      await recordLearningEvent({
+        paperTradeId: String(trade.id),
+        symbol: trade.symbol,
+        direction: trade.direction as "LONG" | "SHORT",
+        eventType: "closed",
+        eventJson: {
+          exitPrice: input.exitPrice,
+          exitReason: input.exitReason,
+          pnl: netPnl,
+          pnlPercent: pnlPct,
+          hoursOpen,
+        },
+      });
+      await recordLearningEvent({
+        paperTradeId: String(trade.id),
+        symbol: trade.symbol,
+        direction: trade.direction as "LONG" | "SHORT",
+        eventType: "outcome_analyzed",
+        eventJson: {
+          outcome: analysis.outcome,
+          riskWarrantedFlag: analysis.riskWarrantedFlag,
+          bypassesEvaluated: analysis.bypassesEvaluated,
+          notes: analysis.notes,
+        },
+      });
+      await recordLearningEvent({
+        paperTradeId: String(trade.id),
+        symbol: trade.symbol,
+        direction: trade.direction as "LONG" | "SHORT",
+        eventType: "lesson_created",
+        eventJson: {
+          tags: lesson.tags,
+          outcome: lesson.outcome,
+        },
+        llmSummary: lesson.text,
+      });
+      await botLog({
+        userId: input.userId, exchange: trade.exchange_name,
+        eventType: "paper_learning_lesson_created",
+        message: `[PAPER LEARNING] ${trade.symbol} ${trade.direction} → ${lesson.outcome} • ${lesson.text}`,
+        metadata: { tradeId: trade.id, outcome: lesson.outcome, tags: lesson.tags },
+      });
+    }
+  } catch (e) {
+    // Outcome analysis failure must never block paper close flow.
+    // eslint-disable-next-line no-console
+    console.warn("[learning] outcome analysis failed:", (e as Error).message);
+  }
+
   return data;
 }
 

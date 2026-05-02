@@ -150,8 +150,26 @@ export const env = {
   forcePaperAllowBtcFilterBypass: bool(process.env.FORCE_PAPER_ALLOW_BTC_FILTER_BYPASS, true),
   forcePaperAllowRrBypass: bool(process.env.FORCE_PAPER_ALLOW_RR_BYPASS, true),
 
-  // ── Aggressive Paper Test Mode ──
+  // ── Paper Learning Mode (canonical) ──
+  // Unified paper-mode learning channel. When active, behaves like force-paper
+  // entry mode (risk/quality/BTC/R:R bypasses) but additionally records
+  // learning metadata and emits trade_learning_events rows used by the lesson
+  // engine. Live execution gates are unaffected.
+  // Active ONLY when: trading_mode=paper + PAPER_LEARNING_MODE=true +
+  // HARD_LIVE_TRADING_ALLOWED=false + enable_live_trading=false + kill switch inactive.
+  paperLearningMode: bool(process.env.PAPER_LEARNING_MODE, false),
+  paperLearningMaxOpenPositions: num(process.env.PAPER_LEARNING_MAX_OPEN_POSITIONS, 20),
+  paperLearningMaxTradesPerDay: num(process.env.PAPER_LEARNING_MAX_TRADES_PER_DAY, 100),
+  paperLearningMinSignalScore: num(process.env.PAPER_LEARNING_MIN_SIGNAL_SCORE, 1),
+  paperLearningAllowRiskBypass: bool(process.env.PAPER_LEARNING_ALLOW_RISK_BYPASS, true),
+  paperLearningAllowMarketQualityBypass: bool(process.env.PAPER_LEARNING_ALLOW_MARKET_QUALITY_BYPASS, true),
+  paperLearningAllowBtcFilterBypass: bool(process.env.PAPER_LEARNING_ALLOW_BTC_FILTER_BYPASS, true),
+  paperLearningAllowRrBypass: bool(process.env.PAPER_LEARNING_ALLOW_RR_BYPASS, true),
+  paperLearningAutoSlTp: bool(process.env.PAPER_LEARNING_AUTO_SL_TP, true),
+
+  // ── Aggressive Paper Test Mode (legacy backward-compat) ──
   // All flags are paper-only: HARD_LIVE_TRADING_ALLOWED=true OR trading_mode=live disables them.
+  // Superseded by PAPER_LEARNING_MODE; kept for backward-compat.
   aggressivePaperTestMode: bool(process.env.AGGRESSIVE_PAPER_TEST_MODE, false),
   aggressiveMinSignalScore: num(process.env.AGGRESSIVE_MIN_SIGNAL_SCORE, 45),
   aggressiveMinMarketQuality: num(process.env.AGGRESSIVE_MIN_MARKET_QUALITY, 25),

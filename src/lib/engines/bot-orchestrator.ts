@@ -19,7 +19,9 @@ import {
 import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist, getTierPolicy } from "@/lib/risk-tiers";
 import { checkAggressivePaperMode } from "@/lib/aggressive-paper-mode";
 import { checkForcePaperEntryMode } from "@/lib/force-paper-entry-mode";
+import { checkPaperLearningMode } from "@/lib/paper-learning-mode";
 import { validateSignalScoreGate } from "./signal-score-gate";
+import { recordLearningEvent } from "@/lib/learning/learning-events";
 import { calculateStrategyHealth } from "./strategy-health";
 import { buildRiskExecutionConfig, ensureHydrated } from "@/lib/risk-settings";
 import { ensureScanModesHydrated } from "@/lib/scan-modes";
@@ -224,6 +226,8 @@ export interface ScanDetail {
   aggressivePaperOpened?: boolean;
   /** True when this trade was opened via Force Paper Entry Mode — all risk gates bypassed. */
   forcePaperOpened?: boolean;
+  /** True when this trade was opened via Paper Learning Mode (canonical learning channel). */
+  paperLearningOpened?: boolean;
 }
 
 // ── Display filter reason text mapping (Turkish, scanner SEBEP column) ──
@@ -874,11 +878,40 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
   // Force Paper Entry Mode — all risk gates bypassed for paper learning.
   // Supersedes aggMode when both are active (though typically only one is set).
-  const forceMode = checkForcePaperEntryMode(settings);
+  let forceMode = checkForcePaperEntryMode(settings);
   if (forceMode.active) {
     await botLog({
       userId, eventType: "force_paper_mode_active",
       message: `FORCE PAPER ENTRY MODE aktif — minSignal=${forceMode.minSignalScore} maxPos=${forceMode.maxOpenPositions} maxTrades=${forceMode.maxTradesPerDay} riskBypass=${forceMode.allowRiskBypass} rrBypass=${forceMode.allowRrBypass} qualityBypass=${forceMode.allowMarketQualityBypass}`,
+    });
+  }
+
+  // Paper Learning Mode — canonical learning channel. When active and force
+  // mode is not, promote forceMode to paperLearning's settings so the existing
+  // bypass path is reused; learning metadata + trade_learning_events are
+  // layered on top via `learningModeActive`. Live execution gates untouched.
+  const paperLearning = checkPaperLearningMode(settings);
+  const learningModeActive = paperLearning.active;
+  if (paperLearning.active && !forceMode.active) {
+    forceMode = {
+      active: true,
+      inactiveReason: null,
+      maxOpenPositions: paperLearning.maxOpenPositions,
+      maxTradesPerDay: paperLearning.maxTradesPerDay,
+      minSignalScore: paperLearning.minSignalScore,
+      allowRiskBypass: paperLearning.allowRiskBypass,
+      allowMarketQualityBypass: paperLearning.allowMarketQualityBypass,
+      allowBtcFilterBypass: paperLearning.allowBtcFilterBypass,
+      allowRrBypass: paperLearning.allowRrBypass,
+    };
+    await botLog({
+      userId, eventType: "paper_learning_mode_active",
+      message: `PAPER LEARNING MODE aktif — minSignal=${paperLearning.minSignalScore} maxPos=${paperLearning.maxOpenPositions} maxTrades=${paperLearning.maxTradesPerDay} autoSlTp=${paperLearning.autoSlTp} riskBypass=${paperLearning.allowRiskBypass} qualityBypass=${paperLearning.allowMarketQualityBypass}`,
+    });
+  } else if (paperLearning.active && forceMode.active) {
+    await botLog({
+      userId, eventType: "paper_learning_mode_active",
+      message: `PAPER LEARNING MODE aktif (force-paper ile birlikte; force-paper ayarları korundu)`,
     });
   }
 
@@ -1466,12 +1499,23 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         if (forceMode.allowBtcFilterBypass) bypassedGates.push("btc_filter_bypass");
       }
 
-      const forcePaperPrefix = forceMode.active
+      const paperLearningPrefix = learningModeActive
+        ? "PAPER LEARNING: risk gates bypassed for learning dataset. "
+        : "";
+      const forcePaperPrefix = forceMode.active && !learningModeActive
         ? "FORCE PAPER ENTRY: risk gates bypassed for paper learning mode. "
         : "";
       const aggressiveEntryPrefix = !forceMode.active && aggMode.active
         ? "AGGRESSIVE PAPER TEST: normal filtreler geçilemedi ancak minimum paper test koşulları sağlandı. "
         : "";
+
+      // Learning hypothesis — short Turkish summary tied to outcome analysis later.
+      const normalModeWouldReject =
+        forceMode.active &&
+        (!risk.allowed || effectiveSignalType !== sig.signalType || generatedFallbackSlTp);
+      const learningHypothesis = normalModeWouldReject
+        ? "Bu işlem normal risk kurallarına göre reddedilirdi; paper learning mode ile açıldı. Amaç, reddedilen sinyalin gerçek sonuç performansını ölçmek."
+        : "Bu işlem normal kurallarla geçti; paper learning mode kapsamında baseline veri olarak kaydediliyor.";
 
       const trade = await openPaperTrade({
         userId, exchange, symbol,
@@ -1487,7 +1531,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         marginMode: "isolated",
         estimatedLiquidationPrice: risk.estimatedLiquidationPrice ?? null,
         signalScore: sig.score,
-        entryReason: `${forcePaperPrefix}${aggressiveEntryPrefix}${sig.reasons.join(" • ")}`,
+        entryReason: `${paperLearningPrefix}${forcePaperPrefix}${aggressiveEntryPrefix}${sig.reasons.join(" • ")}`,
         tier: tierResult.effectiveTier,
         spreadPercent: ticker.spread * 100,
         atrPercent: detail.atrPercent,
@@ -1503,7 +1547,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
           risk_config_bound: true,
           // Force paper mode metadata
           ...(forceMode.active ? {
-            force_paper_entry: true,
+            force_paper_entry: !learningModeActive,
             bypassed_gates: bypassedGates,
             original_reject_reason: forcePaperOriginalRejectReason,
             original_signal_score: sig.score,
@@ -1515,31 +1559,93 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
               minSignalScore: forceMode.minSignalScore,
             },
           } : {}),
+          // Paper learning metadata (only when canonical learning mode active)
+          ...(learningModeActive ? {
+            paper_learning_mode: true,
+            opened_by: "PAPER_LEARNING_MODE",
+            original_signal_score: sig.score,
+            original_market_quality_score: detail.marketQualityScore,
+            original_setup_score: detail.setupScore,
+            normal_mode_would_reject: normalModeWouldReject,
+            original_reject_reason: forcePaperOriginalRejectReason ?? (risk.allowed ? null : risk.reason),
+            bypassed_risk_gates: bypassedGates,
+            risk_warnings: risk.allowed ? [] : risk.ruleViolations,
+            btc_trend_state: detail.btcTrendRejected ? "misaligned" : "aligned_or_neutral",
+            spread_state: typeof ticker.spread === "number" ? `${(ticker.spread * 100).toFixed(3)}%` : null,
+            depth_state: typeof detail.mqsDepthAdjustment === "number" ? `delta=${detail.mqsDepthAdjustment}` : null,
+            volatility_state: typeof detail.atrPercent === "number" ? `atr%=${detail.atrPercent.toFixed(2)}` : null,
+            rr_value: effectiveRr,
+            generated_fallback_sl_tp: generatedFallbackSlTp,
+            entry_decision_snapshot: {
+              signalType: sig.signalType,
+              effectiveSignalType,
+              directionCandidate: sig.directionCandidate,
+              score: sig.score,
+              entryPrice: effectiveEntryPrice,
+              stopLoss: effectiveStopLoss,
+              takeProfit: effectiveTakeProfit,
+            },
+            learning_hypothesis: learningHypothesis,
+          } : {}),
         },
       });
 
       detail.opened = true;
       detail.aggressivePaperOpened = !forceMode.active && aggMode.active;
-      detail.forcePaperOpened = forceMode.active;
+      detail.forcePaperOpened = forceMode.active && !learningModeActive;
+      detail.paperLearningOpened = learningModeActive;
       openSymbols.add(symbol);
       result.openedPaperTrades.push({
         symbol, direction: effectiveSignalType, entryPrice: effectiveEntryPrice,
       });
-      const tradeOpenEvent = forceMode.active
-        ? "force_paper_opened"
-        : aggMode.active ? "aggressive_paper_trade_opened" : "paper_trade_opened";
-      const modeTag = forceMode.active ? "[FORCE PAPER]" : aggMode.active ? "[AGGRESSIVE PAPER]" : "";
+      const tradeOpenEvent = learningModeActive
+        ? "paper_learning_trade_opened"
+        : forceMode.active
+          ? "force_paper_opened"
+          : aggMode.active ? "aggressive_paper_trade_opened" : "paper_trade_opened";
+      const modeTag = learningModeActive
+        ? "[PAPER LEARNING]"
+        : forceMode.active ? "[FORCE PAPER]" : aggMode.active ? "[AGGRESSIVE PAPER]" : "";
       await botLog({
         userId, exchange, eventType: tradeOpenEvent,
         message: `${modeTag} ${effectiveSignalType} ${symbol} @ ${effectiveEntryPrice} lev=${risk.leverage}x skor=${sig.score}`,
         metadata: {
           tradeId: trade?.id,
-          forcePaper: forceMode.active,
+          forcePaper: forceMode.active && !learningModeActive,
           aggressivePaper: !forceMode.active && aggMode.active,
+          paperLearning: learningModeActive,
           bypassedGates: forceMode.active ? bypassedGates : undefined,
           openedPositionId: trade?.id,
         },
       });
+
+      // Learning event — best-effort write to trade_learning_events.
+      if (learningModeActive && trade?.id) {
+        await recordLearningEvent({
+          paperTradeId: String(trade.id),
+          symbol,
+          direction: effectiveSignalType as "LONG" | "SHORT",
+          eventType: "opened",
+          eventJson: {
+            signalScore: sig.score,
+            signalType: sig.signalType,
+            effectiveSignalType,
+            directionCandidate: sig.directionCandidate,
+            setupScore: detail.setupScore,
+            marketQualityScore: detail.marketQualityScore,
+            bypassedGates,
+            normalModeWouldReject,
+            originalRejectReason: forcePaperOriginalRejectReason ?? (risk.allowed ? null : risk.reason),
+            riskWarnings: risk.allowed ? [] : risk.ruleViolations,
+            entryPrice: effectiveEntryPrice,
+            stopLoss: effectiveStopLoss,
+            takeProfit: effectiveTakeProfit,
+            riskRewardRatio: effectiveRr,
+            generatedFallbackSlTp,
+            learningHypothesis,
+          },
+        });
+      }
       result.scanDetails.push(detail);
       openCount++;
       if (openCount >= loopMaxOpenPositions && !forceMode.active) break;

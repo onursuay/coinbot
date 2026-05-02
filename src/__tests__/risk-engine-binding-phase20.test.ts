@@ -656,7 +656,9 @@ describe("Force Paper Entry Mode — checkForcePaperEntryMode guard", () => {
 
   it("codebase: force paper mode stores metadata in risk_metadata (force_paper_entry field)", () => {
     const src = fs.readFileSync(path.join(process.cwd(), "src/lib/engines/bot-orchestrator.ts"), "utf8");
-    expect(src).toMatch(/force_paper_entry:\s*true/);
+    // force_paper_entry is now `!learningModeActive` (true when paper-learning is off,
+    // false when learning takes over). Either form satisfies the metadata invariant.
+    expect(src).toMatch(/force_paper_entry:\s*(true|!learningModeActive)/);
     expect(src).toMatch(/bypassed_gates/);
     expect(src).toMatch(/generated_fallback_sl_tp/);
     expect(src).toMatch(/original_signal_score/);
