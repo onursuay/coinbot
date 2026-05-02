@@ -1248,8 +1248,9 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         exchangeStepSize: info?.stepSize,
         exchangeTickSize: info?.tickSize,
         marginMode: "isolated",
-        // Faz 20 — risk settings config overrides
-        riskConfigMaxOpenPositions: riskCfg.defaultMaxOpenPositions,
+        // Faz 20 — risk settings config overrides.
+        // Aggressive paper mode aktifse kendi maxOpenPositions limitini kullan.
+        riskConfigMaxOpenPositions: aggMode.active ? aggMode.maxOpenPositions : riskCfg.defaultMaxOpenPositions,
         riskConfigDailyMaxLossPercent: riskCfg.dailyMaxLossPercent,
         riskConfigRiskPerTradePercent: riskCfg.riskPerTradePercent,
         riskConfigTotalCapitalUsdt: effectiveCapitalUsdt,

@@ -450,6 +450,92 @@ describe("Faz 20 — daily max loss risk settings'ten", () => {
   });
 });
 
+// ── Grup 6b: Aggressive Paper Mode — maxOpenPositions override ──────────────
+
+describe("Aggressive Paper Mode — max open positions override (riskConfigMaxOpenPositions)", () => {
+  const base = {
+    symbol: "ETHUSDT",
+    direction: "LONG" as const,
+    entryPrice: 3000,
+    stopLoss: 2900,
+    takeProfit: 3200,
+    signalScore: 55,
+    marketSpread: 0.001,
+    recentLossStreak: 0,
+    dailyRealizedPnlUsd: 0,
+    weeklyRealizedPnlUsd: 0,
+    dailyTargetHit: false,
+    conservativeMode: false,
+    killSwitchActive: false,
+    webSocketHealthy: true,
+    apiHealthy: true,
+    dataFresh: true,
+    accountBalanceUsd: 1000,
+  };
+
+  it("normal mode: 4/4 açık pozisyon → bloklar", () => {
+    const result = evaluateRisk({
+      ...base,
+      openPositionCount: 4,
+      riskConfigMaxOpenPositions: 4,
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.ruleViolations.some(v => v.includes("Maksimum açık pozisyon (4)"))).toBe(true);
+  });
+
+  it("aggressive paper: 4/5 açık pozisyon → izin verir (override çalışıyor)", () => {
+    const result = evaluateRisk({
+      ...base,
+      openPositionCount: 4,
+      riskConfigMaxOpenPositions: 5,
+    });
+    // 4 < 5 → max open positions violation olmamalı
+    const hasMaxPosViolation = result.ruleViolations.some(v => v.includes("Maksimum açık pozisyon"));
+    expect(hasMaxPosViolation).toBe(false);
+  });
+
+  it("aggressive paper: 5/5 açık pozisyon → bloklar", () => {
+    const result = evaluateRisk({
+      ...base,
+      openPositionCount: 5,
+      riskConfigMaxOpenPositions: 5,
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.ruleViolations.some(v => v.includes("Maksimum açık pozisyon (5)"))).toBe(true);
+  });
+
+  it("maxOpenPositionsFromRiskSettings result'ta doğru limit dönüyor", () => {
+    const result = evaluateRisk({
+      ...base,
+      openPositionCount: 4,
+      riskConfigMaxOpenPositions: 5,
+    });
+    expect(result.maxOpenPositionsFromRiskSettings).toBe(5);
+  });
+
+  it("bot-orchestrator aggressive override: aggMode.active iken maxOpenPositions'ı riskCfg'den değil aggMode'dan alır", () => {
+    const src = fs.readFileSync(
+      path.join(process.cwd(), "src/lib/engines/bot-orchestrator.ts"),
+      "utf8",
+    );
+    // Override satırı aggMode.active ? aggMode.maxOpenPositions : riskCfg şeklinde olmalı
+    expect(src).toMatch(/riskConfigMaxOpenPositions:\s*aggMode\.active\s*\?\s*aggMode\.maxOpenPositions\s*:\s*riskCfg\.defaultMaxOpenPositions/);
+  });
+
+  it("live mode'da aggressive override uygulanmaz: aggMode.active her zaman false olur (checkAggressivePaperMode guard)", () => {
+    const src = fs.readFileSync(
+      path.join(process.cwd(), "src/lib/aggressive-paper-mode.ts"),
+      "utf8",
+    );
+    // Guard: HARD_LIVE_TRADING_ALLOWED=true ise inactive döner
+    expect(src).toMatch(/HARD_LIVE_TRADING_ALLOWED/);
+    // Guard: enable_live_trading=true ise inactive döner
+    expect(src).toMatch(/enable_live_trading/);
+    // Guard: trading_mode !== 'paper' ise inactive döner
+    expect(src).toMatch(/trading_mode.*paper/);
+  });
+});
+
 // ── Grup 6: Position sizing formül doğrulama ────────────────────────────────
 
 describe("Faz 20 — position sizing formül edge cases", () => {
