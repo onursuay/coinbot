@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
 import MainContent from "@/components/MainContent";
+import GlobalTradeSoundNotifier from "@/components/GlobalTradeSoundNotifier";
 
 export const metadata: Metadata = {
   title: "Multi-Exchange Futures Trading Bot",
@@ -22,6 +23,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <main className="flex-1 overflow-y-auto p-6">{children}</main>
           </MainContent>
         </div>
+        {/* Yeni paper pozisyon açıldığında ses bildirimi — hangi sayfa
+            açık olursa olsun çalışır (panel, scanner, paper-trades, risk, ...) */}
+        <GlobalTradeSoundNotifier />
       </body>
     </html>
   );

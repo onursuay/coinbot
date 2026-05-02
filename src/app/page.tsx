@@ -14,8 +14,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { fmtPct, fmtUsd } from "@/lib/format";
 import { useAutoRefresh } from "@/lib/hooks/use-auto-refresh";
-import { useTradeOpenSound } from "@/lib/hooks/use-trade-open-sound";
-import { useSoundPref } from "@/lib/sound-pref";
+// Trade-open ses bildirimi artık layout seviyesinde GlobalTradeSoundNotifier
+// üzerinden tüm sayfalarda çalışıyor; panel sayfası ayrıca abone olmuyor.
 import {
   BotStatusCard,
   MarketPulseCard,
@@ -137,13 +137,6 @@ export default function HomePage() {
   // Initial load — useAutoRefresh başlangıçta da çağırır, ama emin olmak için.
   // AI kararı ayrı yüklenir; auto-refresh döngüsüne dahil değil (polling yok).
   useEffect(() => { refresh(); void fetchAIDecision(); }, [refresh, fetchAIDecision]);
-
-  const { enabled: soundEnabled } = useSoundPref();
-  useTradeOpenSound({
-    enabled: soundEnabled,
-    paperTradeIds: (paper.open ?? []).map((t: any) => String(t.id)),
-    liveTradeIds: [],
-  });
 
   const actWithBody = async (path: string, label: string, body?: object) => {
     if (path.endsWith("/start") && envCheck && !envCheck.ok) {
@@ -303,12 +296,18 @@ export default function HomePage() {
         <OpportunityRadarCard rows={scanRows} />
       </div>
 
-      {/* Hızlı performans satırı — karar merkezi başlamadan önce görünür */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KpiTile label="GÜNLÜK KÂR/ZARAR" value={fmtUsd(daily?.realizedPnlUsd ?? 0)} tone={(daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
+      {/* Hızlı performans satırı — karar merkezi başlamadan önce görünür.
+          Tüm değerler tek canonical kaynaktan (paper_trades.pnl) gelir; Sanal
+          İşlemler > Kapanan İşlemler tablosundaki Kâr/Zarar kolonu ile birebir
+          tutarlıdır. perf.dailyPnl / perf.totalPnl aynı satırların net pnl
+          toplamıdır (fees/slippage/funding paper_trades.pnl yazılırken zaten
+          düşülmüştür — burada yeniden düşme). */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <KpiTile label="GÜNLÜK KÂR/ZARAR" value={fmtUsd(perf?.dailyPnl ?? daily?.realizedPnlUsd ?? 0)} tone={(perf?.dailyPnl ?? daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
         <KpiTile label="TOPLAM KÂR/ZARAR" value={fmtUsd(perf?.totalPnl ?? 0)} tone={(perf?.totalPnl ?? 0) >= 0 ? "success" : "danger"} />
         <KpiTile label="KAZANMA ORANI" value={fmtPct(perf?.winRate ?? 0)} tone="muted" />
-        <KpiTile label="İŞLEM SAYISI" value={String(perf?.totalTrades ?? 0)} tone="muted" />
+        <KpiTile label="KAPANAN İŞLEM" value={String(perf?.totalTrades ?? 0)} tone="muted" />
+        <KpiTile label="AÇIK POZİSYON" value={String(perf?.openTrades ?? (paper.open?.length ?? 0))} tone="muted" />
       </div>
 
       {/* 4. POZİSYON KARAR MERKEZİ */}
@@ -329,7 +328,9 @@ export default function HomePage() {
             nearThreshold,
             openedToday: typeof tickStats.opened === "number" ? tickStats.opened : undefined,
             closedToday: typeof perf?.closedToday === "number" ? perf.closedToday : undefined,
-            realizedPnlUsd: typeof daily.realizedPnlUsd === "number" ? daily.realizedPnlUsd : undefined,
+            realizedPnlUsd: typeof perf?.dailyPnl === "number"
+              ? perf.dailyPnl
+              : (typeof daily.realizedPnlUsd === "number" ? daily.realizedPnlUsd : undefined),
           }}
         />
         <PaperValidationCard data={e2eStatus} hardLiveAllowed={hardLiveAllowed} />
