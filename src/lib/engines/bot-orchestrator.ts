@@ -463,11 +463,22 @@ export interface TickResult {
   // Strategy health diagnostics — populated every tick. The "*BypassedByLearning"
   // flag is true only when the score was below the live/normal-mode threshold
   // and Paper Learning Mode kept the tick alive for data collection.
+  // `strategyHealthBlocked` flips on whenever the score is below threshold,
+  // regardless of mode — the scanner UI uses it to render the monitoring
+  // banner. `positionOpeningBlocked` gates the per-symbol openPaperTrade call
+  // in normal/live mode; learning mode never sets it (learning trades open).
+  // `tableStillGenerated` is always true and exists so external consumers can
+  // assert "scanner is never closed by strategy health" as an invariant.
   strategyHealthScore?: number;
   strategyHealthMin?: number;
+  strategyHealthBlocked?: boolean;
   strategyHealthBypassedByLearning?: boolean;
   strategyHealthBlockedInNormalMode?: boolean;
   strategyHealthBlockReason?: string | null;
+  positionOpeningBlocked?: boolean;
+  positionOpeningBlockReason?: string | null;
+  scannerMode?: "full" | "monitoring_only";
+  tableStillGenerated?: boolean;
 }
 
 const PAPER_BALANCE = 1000;
@@ -867,19 +878,29 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   const paperLearning = checkPaperLearningMode(settings);
   const learningModeActive = paperLearning.active;
 
-  // ── STRATEGY HEALTH GATE ── block new trades if score below threshold
-  // In Paper Learning Mode the gate becomes informational: tick continues,
-  // scanner runs, candidates are produced; the score is recorded as a risk
-  // warning / metadata on every paper-learning trade that opens.
+  // ── STRATEGY HEALTH GATE ──
+  // Strategy health NEVER closes the scanner. A low score blocks only the
+  // *opening* of new positions (via the per-symbol gate just before
+  // openPaperTrade). Scanning, signal generation, and scanner rows always
+  // continue so the Piyasa Tarayıcı table stays populated. In Paper Learning
+  // Mode the score is additionally recorded as a risk warning / metadata on
+  // every learning trade that opens.
   const strategyHealth = await calculateStrategyHealth(userId);
   const strategyHealthMin = env.minStrategyHealthScoreToTrade;
   result.strategyHealthScore = strategyHealth.score;
   result.strategyHealthMin = strategyHealthMin;
+  result.scannerMode = "full";
+  result.tableStillGenerated = true;
   if (strategyHealth.blocked) {
+    result.strategyHealthBlocked = true;
+    result.strategyHealthBlockedInNormalMode = true;
+    result.strategyHealthBlockReason = strategyHealth.blockReason;
+    result.scannerMode = "monitoring_only";
     if (learningModeActive) {
+      // Paper Learning soft-pass — trades still open, low score recorded as
+      // risk metadata. Position opening is NOT blocked here so the learning
+      // dataset can keep growing; the per-trade metadata reveals the warning.
       result.strategyHealthBypassedByLearning = true;
-      result.strategyHealthBlockedInNormalMode = true;
-      result.strategyHealthBlockReason = strategyHealth.blockReason;
       await botLog({
         userId, level: "warn", eventType: "paper_learning_strategy_health_bypass",
         message: `Tick — strategy health düşük (${strategyHealth.score}/${strategyHealthMin}), paper learning izleme/öğrenme modunda devam ediyor`,
@@ -891,17 +912,22 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         },
       });
     } else {
-      result.ok = true;
-      result.reason = `strategy_health_blocked: ${strategyHealth.blockReason}`;
-      result.durationMs = Date.now() - start;
+      // Normal/live mode — block position opening only. Scanner keeps running.
+      result.positionOpeningBlocked = true;
+      result.positionOpeningBlockReason = "strategy_health";
       await botLog({
-        userId, level: "warn", eventType: "tick_completed",
-        message: `Tick — strateji sağlık gate reddetti: ${strategyHealth.blockReason}`,
-        metadata: { score: strategyHealth.score, totalTrades: strategyHealth.totalTrades },
+        userId, level: "warn", eventType: "strategy_health_position_open_blocked",
+        message: `Tick — strategy health düşük (${strategyHealth.score}/${strategyHealthMin}), tarama izleme modunda devam ediyor; yeni pozisyon açılmıyor`,
+        metadata: {
+          score: strategyHealth.score,
+          threshold: strategyHealthMin,
+          totalTrades: strategyHealth.totalTrades,
+          blockReason: strategyHealth.blockReason,
+        },
       });
-      await writeSkipSummary(userId, opts?.workerContext, `strategy_health_blocked:${strategyHealth.blockReason ?? "unknown"}`, tickStartedAt);
-      return result;
     }
+    // Intentionally NO early return + NO writeSkipSummary call — the tick must
+    // proceed so scanDetails get populated and the scanner UI keeps the table.
   }
 
   // Aggressive Paper Test Mode — paper-only relaxed gates.
@@ -1546,6 +1572,28 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         ...(result.strategyHealthBypassedByLearning ? ["Strateji sağlık skoru düşük"] : []),
       ];
 
+      // Per-symbol position-opening gate — when strategy health blocks new
+      // positions in normal/live mode, every candidate that would otherwise
+      // open is rejected here with a clear reason. Scanner rows still get
+      // pushed so the table stays alive. Paper Learning mode bypasses this
+      // gate (its own metadata path records the warning).
+      if (result.positionOpeningBlocked && !learningModeActive) {
+        const reason = "Strateji sağlık düşük: işlem açılmadı";
+        detail.rejectReason = reason;
+        result.rejectedSignals.push({ symbol, reason });
+        await botLog({
+          userId, exchange, eventType: "position_open_blocked",
+          message: `${symbol} ${effectiveSignalType} — ${reason} (skor=${result.strategyHealthScore}/${result.strategyHealthMin})`,
+          metadata: {
+            score: result.strategyHealthScore,
+            threshold: result.strategyHealthMin,
+            blockReason: result.positionOpeningBlockReason,
+          },
+        });
+        result.scanDetails.push(detail);
+        continue;
+      }
+
       const paperLearningPrefix = learningModeActive
         ? "PAPER LEARNING: risk gates bypassed for learning dataset. "
         : "";
@@ -1817,12 +1865,18 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     lastOpenedTrade: result.openedPaperTrades[0] ?? null,
     topRejectReasons: result.rejectedSignals.slice(0, 10).map((r) => `${r.symbol}: ${r.reason}`),
     topNearMiss: result.nearMissSignals.slice(0, 5).map((n) => `${n.direction} ${n.symbol} skor=${n.score}`),
-    // Strategy health diagnostics — surfaces the soft-pass banner in the scanner UI.
+    // Strategy health diagnostics — surfaces the monitoring-mode banner in
+    // the scanner UI and asserts the "scanner never closes" invariant.
     strategyHealthScore: result.strategyHealthScore ?? null,
     strategyHealthMin: result.strategyHealthMin ?? null,
+    strategyHealthBlocked: result.strategyHealthBlocked ?? false,
     strategyHealthBypassedByLearning: result.strategyHealthBypassedByLearning ?? false,
     strategyHealthBlockedInNormalMode: result.strategyHealthBlockedInNormalMode ?? false,
     strategyHealthBlockReason: result.strategyHealthBlockReason ?? null,
+    positionOpeningBlocked: result.positionOpeningBlocked ?? false,
+    positionOpeningBlockReason: result.positionOpeningBlockReason ?? null,
+    scannerMode: result.scannerMode ?? "full",
+    tableStillGenerated: result.tableStillGenerated ?? true,
   };
   if (wCtx?.isLockOwner !== false) {
     await sb.from("bot_settings").update({

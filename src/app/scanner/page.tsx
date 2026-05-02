@@ -119,9 +119,14 @@ interface DiagData {
   strategy_health?: {
     score?: number | null;
     min?: number | null;
+    blocked?: boolean;
     bypassedByLearning?: boolean;
     blockedInNormalMode?: boolean;
     blockReason?: string | null;
+    positionOpeningBlocked?: boolean;
+    positionOpeningBlockReason?: string | null;
+    scannerMode?: "full" | "monitoring_only";
+    tableStillGenerated?: boolean;
   } | null;
 }
 
@@ -478,8 +483,11 @@ export default function ScannerPage() {
         </div>
       )}
 
-      {/* Strategy health soft-pass uyarısı (Paper Learning Mode) */}
-      {data?.strategy_health?.bypassedByLearning && (
+      {/* Strategy health monitoring banner — gösterilir whenever score is below
+          threshold. Learning mode varyantı "tarama izleme/öğrenme modunda devam"
+          mesajını verir; normal mod ise yalnızca "yeni işlem açılmıyor" der.
+          Tablo HER iki durumda da kapanmaz. */}
+      {data?.strategy_health?.blocked && (
         <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden>
             <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3.5a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 4.5zm0 7a.875.875 0 1 1 0-1.75.875.875 0 0 1 0 1.75z"/>
@@ -488,7 +496,9 @@ export default function ScannerPage() {
           {typeof data.strategy_health.score === "number" && typeof data.strategy_health.min === "number"
             ? ` (${data.strategy_health.score}/${data.strategy_health.min})`
             : ""}
-          . Tarama devam ediyor, canlı/sıkı modda işlem açılmaz.
+          . {data.strategy_health.bypassedByLearning
+            ? "Tarama izleme/öğrenme modunda devam ediyor; paper learning trade'leri açılabilir."
+            : "Tarama izleme modunda devam ediyor; yeni işlem açılmıyor."}
         </div>
       )}
 

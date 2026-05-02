@@ -264,7 +264,9 @@ describe("Bugfix 1.2 — tick skip visibility mapping", () => {
     expect(mapTickSkipReasonTr("bot_not_running:paused")).toBe("Bot duraklatıldı");
     expect(mapTickSkipReasonTr("daily_target_hit")).toBe("Günlük hedef doldu");
     expect(mapTickSkipReasonTr("daily_loss_limit_hit")).toBe("Günlük zarar limiti doldu");
-    expect(mapTickSkipReasonTr("strategy_health_blocked:score_low")).toBe("Strateji sağlık kontrolü engelledi");
+    expect(mapTickSkipReasonTr("strategy_health_blocked:score_low")).toBe(
+      "Strateji sağlık skoru düşük. Tarama izleme modunda devam ediyor; yeni işlem açılmıyor.",
+    );
     expect(mapTickSkipReasonTr("max_open_positions")).toBe("Maksimum açık pozisyon dolu");
     expect(mapTickSkipReasonTr("worker_lock_not_owner")).toBe("Worker lock sahibi değil");
     expect(mapTickSkipReasonTr("something_else")).toBe("Bilinmeyen sebep");

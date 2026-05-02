@@ -367,9 +367,15 @@ describe("Bugfix 1.1 — tickBot early return path'ler", () => {
     expect(nearbyCtx).toMatch(/writeSkipSummary/);
   });
 
-  it("strategy_health_blocked path summary yazıyor", () => {
-    // writeSkipSummary ile strategy_health_blocked birlikte geçiyor
-    expect(ORCHESTRATOR).toMatch(/writeSkipSummary.*strategy_health_blocked|strategy_health_blocked.*writeSkipSummary/s);
+  it("strategy_health düşük tick'i ARTIK skip etmiyor — scanner her zaman çalışır", () => {
+    // Strategy health gate orchestrator'da pozisyon açmayı bloklar ama tick'i
+    // erken bitirmez. Bu yüzden writeSkipSummary("strategy_health_blocked:…")
+    // çağrısı kaldırıldı. Bunun yerine `position_open_blocked` log eventi ve
+    // `strategyHealthBlocked` / `positionOpeningBlocked` flag'leri yazılır.
+    expect(ORCHESTRATOR).not.toMatch(/writeSkipSummary[^)]*strategy_health_blocked/);
+    expect(ORCHESTRATOR).toMatch(/eventType:\s*"position_open_blocked"/);
+    expect(ORCHESTRATOR).toMatch(/result\.strategyHealthBlocked\s*=\s*true/);
+    expect(ORCHESTRATOR).toMatch(/result\.positionOpeningBlocked\s*=\s*true/);
   });
 
   it("max_open_positions path summary yazıyor", () => {
@@ -479,7 +485,7 @@ describe("Bugfix 1.2 — skipReason Türkçe mapping (labels.ts)", () => {
     expect(LABELS).toMatch(/Bot duraklatıldı/);
     expect(LABELS).toMatch(/Günlük hedef doldu/);
     expect(LABELS).toMatch(/Günlük zarar limiti doldu/);
-    expect(LABELS).toMatch(/Strateji sağlık kontrolü engelledi/);
+    expect(LABELS).toMatch(/Strateji sağlık skoru düşük\. Tarama izleme modunda devam ediyor; yeni işlem açılmıyor\./);
     expect(LABELS).toMatch(/Maksimum açık pozisyon dolu/);
     expect(LABELS).toMatch(/Worker lock sahibi değil/);
   });

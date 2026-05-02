@@ -81,9 +81,14 @@ export async function GET() {
         strategy_health: {
           score: null,
           min: null,
+          blocked: false,
           bypassedByLearning: false,
           blockedInNormalMode: false,
           blockReason: null,
+          positionOpeningBlocked: false,
+          positionOpeningBlockReason: null,
+          scannerMode: "full" as const,
+          tableStillGenerated: true,
         },
         supabase_configured: false,
       });
@@ -288,9 +293,14 @@ export async function GET() {
       strategy_health: {
         score: tickSummary?.strategyHealthScore ?? null,
         min: tickSummary?.strategyHealthMin ?? null,
+        blocked: tickSummary?.strategyHealthBlocked ?? false,
         bypassedByLearning: tickSummary?.strategyHealthBypassedByLearning ?? false,
         blockedInNormalMode: tickSummary?.strategyHealthBlockedInNormalMode ?? false,
         blockReason: tickSummary?.strategyHealthBlockReason ?? null,
+        positionOpeningBlocked: tickSummary?.positionOpeningBlocked ?? false,
+        positionOpeningBlockReason: tickSummary?.positionOpeningBlockReason ?? null,
+        scannerMode: tickSummary?.scannerMode ?? "full",
+        tableStillGenerated: tickSummary?.tableStillGenerated ?? true,
       },
       unified_diagnostics: {
         unifiedCandidatePoolActive: tickSummary?.unifiedCandidatePoolActive ?? false,

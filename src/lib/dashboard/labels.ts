@@ -223,7 +223,11 @@ export function mapTickSkipReasonTr(skipReason?: string | null): string {
     case "daily_loss_limit":
       return "Günlük zarar limiti doldu";
     case "strategy_health_blocked":
-      return "Strateji sağlık kontrolü engelledi";
+      // Legacy path — strategy health no longer skips the tick (it now soft-passes
+      // and only blocks position opening). The mapping is kept for any historical
+      // tick summary still in the DB; the copy reflects the new behavior so users
+      // never see the old "engelledi" wording again.
+      return "Strateji sağlık skoru düşük. Tarama izleme modunda devam ediyor; yeni işlem açılmıyor.";
     case "max_positions_reached":
       return "Maksimum açık pozisyon dolu";
     case "worker_lock_not_owner":

@@ -1,13 +1,16 @@
-// Strategy health gate — Paper Learning Mode soft-pass invariants.
+// Strategy health gate — universal soft-pass invariants.
 //
-// Behavior matrix (covered below):
-//   • normal mode + score < threshold (>=10 trades) → strategyHealth.blocked=true
-//     (orchestrator hard-blocks tick — verified by source-level invariant)
-//   • Paper Learning Mode + score < threshold → tick continues (soft-pass)
-//     (verified by source-level invariant: bypass branch + new event name)
-//   • live/normal mode invariants preserved (writeSkipSummary still called)
-//   • Paper Learning trade still respects: score>=PAPER_LEARNING_MIN_SIGNAL_SCORE,
-//     score numeric & positive, valid entry, etc. (verified by helper boundaries)
+// New behavior (this test file is the source of truth):
+//   • Strategy health NEVER closes the scanner. Low score keeps tick running.
+//   • Normal/live mode + low score → positionOpeningBlocked=true (per-symbol
+//     gate just before openPaperTrade rejects each candidate with the
+//     "Strateji sağlık düşük: işlem açılmadı" reason). scanDetails populated.
+//   • Paper Learning Mode + low score → positionOpeningBlocked stays false;
+//     learning trades still open with strategy_health in bypassed_risk_gates
+//     and "Strateji sağlık skoru düşük" in risk_warnings.
+//   • Helper-level: calculateStrategyHealth.blocked still flips on the same
+//     thresholds (>=10 trades + score<min); only the orchestrator's reaction
+//     changed, not the score itself.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "node:fs";
@@ -29,39 +32,48 @@ describe("strategy-health gate — orchestrator wiring (source invariants)", () 
     expect(gateIdx).toBeGreaterThan(learningIdx);
   });
 
-  it("normal mode still hard-blocks via writeSkipSummary('strategy_health_blocked:…')", () => {
-    expect(ORCHESTRATOR).toMatch(
-      /writeSkipSummary\(\s*userId[^)]*?strategy_health_blocked:/s,
-    );
+  it("strategy health NEVER triggers writeSkipSummary or an early return", () => {
+    // The legacy hard-block path used `writeSkipSummary('strategy_health_blocked:...')`
+    // followed by `return result;`. Both are gone — the gate now keeps the tick alive.
+    expect(ORCHESTRATOR).not.toMatch(/writeSkipSummary[^)]*strategy_health_blocked/);
+    // Sanity: the only code path that still mentions strategy_health_blocked
+    // in a return-style early-exit position is gone.
+    const gateIdx = ORCHESTRATOR.indexOf("if (strategyHealth.blocked)");
+    const next500 = ORCHESTRATOR.slice(gateIdx, gateIdx + 1500);
+    expect(next500).not.toMatch(/return result;/);
   });
 
-  it("paper learning soft-pass emits paper_learning_strategy_health_bypass event", () => {
+  it("learning soft-pass emits paper_learning_strategy_health_bypass event", () => {
     expect(ORCHESTRATOR).toMatch(/eventType:\s*"paper_learning_strategy_health_bypass"/);
   });
 
-  it("paper learning soft-pass log message uses new Turkish copy", () => {
-    expect(ORCHESTRATOR).toMatch(
-      /strategy health düşük .*paper learning izleme\/öğrenme modunda devam ediyor/,
-    );
+  it("normal mode emits position_open_blocked event (per-symbol)", () => {
+    expect(ORCHESTRATOR).toMatch(/eventType:\s*"position_open_blocked"/);
   });
 
-  it("soft-pass branch sets strategyHealthBypassedByLearning + does NOT return early", () => {
-    // Find the bypass branch and confirm it does not return.
-    const idx = ORCHESTRATOR.indexOf("paper_learning_strategy_health_bypass");
-    expect(idx).toBeGreaterThan(0);
-    // The 600 chars around the event should contain the result-field set
-    // and must NOT contain a `return result;` (that would re-introduce the
-    // hard block under paper learning).
-    const window = ORCHESTRATOR.slice(Math.max(0, idx - 600), idx + 200);
-    expect(window).toMatch(/result\.strategyHealthBypassedByLearning\s*=\s*true/);
-    expect(window).toMatch(/result\.strategyHealthBlockedInNormalMode\s*=\s*true/);
-    // Sanity: the bypass branch sits inside `if (learningModeActive)` and
-    // its sibling `else` hard-blocks. The window before the bypass log
-    // must not contain a `return result` (would short-circuit the tick).
-    expect(window).not.toMatch(/paper_learning_strategy_health_bypass[\s\S]{0,200}return result/);
+  it("orchestrator sets strategyHealthBlocked + scannerMode='monitoring_only' when score is low", () => {
+    expect(ORCHESTRATOR).toMatch(/result\.strategyHealthBlocked\s*=\s*true/);
+    expect(ORCHESTRATOR).toMatch(/result\.scannerMode\s*=\s*"monitoring_only"/);
   });
 
-  it("trade-open metadata pushes 'strategy_health' onto bypassedGates when soft-passed", () => {
+  it("normal mode flags positionOpeningBlocked + reason='strategy_health'", () => {
+    expect(ORCHESTRATOR).toMatch(/result\.positionOpeningBlocked\s*=\s*true/);
+    expect(ORCHESTRATOR).toMatch(/result\.positionOpeningBlockReason\s*=\s*"strategy_health"/);
+  });
+
+  it("per-symbol gate skips openPaperTrade with 'Strateji sağlık düşük' reason", () => {
+    // Gate sits in the per-symbol loop and rejects with a localized reason
+    // BEFORE the openPaperTrade call. Scanner row still gets pushed so the
+    // table stays alive even when every candidate is gated.
+    expect(ORCHESTRATOR).toMatch(/Strateji sağlık düşük: işlem açılmadı/);
+    const gateIdx = ORCHESTRATOR.indexOf("if (result.positionOpeningBlocked && !learningModeActive)");
+    expect(gateIdx).toBeGreaterThan(0);
+    const window = ORCHESTRATOR.slice(gateIdx, gateIdx + 800);
+    expect(window).toMatch(/result\.scanDetails\.push\(detail\)/);
+    expect(window).toMatch(/continue;/);
+  });
+
+  it("trade-open metadata pushes 'strategy_health' onto bypassedGates when learning soft-passed", () => {
     expect(ORCHESTRATOR).toMatch(
       /if\s*\(\s*learningModeActive\s*&&\s*result\.strategyHealthBypassedByLearning\s*\)\s*\{\s*bypassedGates\.push\("strategy_health"\)/,
     );
@@ -77,10 +89,12 @@ describe("strategy-health gate — orchestrator wiring (source invariants)", () 
     expect(ORCHESTRATOR).toMatch(/strategy_health_blocked_in_normal_mode:/);
   });
 
-  it("lastTickSummary surfaces the bypass flag for the scanner UI", () => {
-    expect(ORCHESTRATOR).toMatch(
-      /strategyHealthBypassedByLearning:\s*result\.strategyHealthBypassedByLearning/,
-    );
+  it("lastTickSummary surfaces all strategy_health flags for the scanner UI", () => {
+    expect(ORCHESTRATOR).toMatch(/strategyHealthBlocked:\s*result\.strategyHealthBlocked/);
+    expect(ORCHESTRATOR).toMatch(/strategyHealthBypassedByLearning:\s*result\.strategyHealthBypassedByLearning/);
+    expect(ORCHESTRATOR).toMatch(/positionOpeningBlocked:\s*result\.positionOpeningBlocked/);
+    expect(ORCHESTRATOR).toMatch(/scannerMode:\s*result\.scannerMode/);
+    expect(ORCHESTRATOR).toMatch(/tableStillGenerated:\s*result\.tableStillGenerated/);
   });
 });
 
@@ -162,27 +176,59 @@ describe("calculateStrategyHealth — block thresholds", () => {
   });
 });
 
-// Scanner UI banner — verifies the new banner is rendered conditionally.
-describe("scanner UI — strategy health soft-pass banner", () => {
-  it("banner block reads strategy_health.bypassedByLearning from diagnostics", () => {
-    const SCANNER = fs.readFileSync(
-      path.join(REPO_ROOT, "src/app/scanner/page.tsx"),
-      "utf8",
-    );
-    expect(SCANNER).toMatch(/data\?\.strategy_health\?\.bypassedByLearning/);
+// Scanner UI banner — verifies the banner shows in BOTH normal and learning
+// soft-pass cases and that the UI never collapses the table on strategy health.
+describe("scanner UI — monitoring banner + table never closes", () => {
+  const SCANNER = fs.readFileSync(
+    path.join(REPO_ROOT, "src/app/scanner/page.tsx"),
+    "utf8",
+  );
+
+  it("banner renders whenever data.strategy_health.blocked is true", () => {
+    expect(SCANNER).toMatch(/data\?\.strategy_health\?\.blocked/);
+  });
+
+  it("banner shows the new bilingual variant copy (learning vs normal)", () => {
     expect(SCANNER).toMatch(/Strateji sağlık skoru düşük/);
-    expect(SCANNER).toMatch(/Tarama devam ediyor, canlı\/sıkı modda işlem açılmaz/);
+    expect(SCANNER).toMatch(/Tarama izleme modunda devam ediyor; yeni işlem açılmıyor/);
+    expect(SCANNER).toMatch(/Tarama izleme\/öğrenme modunda devam ediyor/);
+  });
+
+  it("scanner page no longer hides the table on strategy_health-related skipReason", () => {
+    // Empty-state copy is unchanged but the orchestrator no longer sets
+    // tickSkipped=true on strategy health, so this branch can never fire
+    // for that reason. The table render condition (rows.length > 0) is
+    // unaffected by the strategy_health flags.
+    expect(SCANNER).toMatch(/rows\.length > 0/);
   });
 });
 
 // Diagnostics endpoint — exposes the strategy_health block.
 describe("diagnostics route — strategy_health surface", () => {
-  it("response includes strategy_health.bypassedByLearning derived from tickSummary", () => {
-    const ROUTE = fs.readFileSync(
-      path.join(REPO_ROOT, "src/app/api/bot/diagnostics/route.ts"),
+  const ROUTE = fs.readFileSync(
+    path.join(REPO_ROOT, "src/app/api/bot/diagnostics/route.ts"),
+    "utf8",
+  );
+
+  it("response surfaces blocked + scannerMode + positionOpeningBlocked + bypassedByLearning", () => {
+    expect(ROUTE).toMatch(/strategy_health:\s*\{/);
+    expect(ROUTE).toMatch(/blocked:\s*tickSummary\?\.strategyHealthBlocked/);
+    expect(ROUTE).toMatch(/bypassedByLearning:\s*tickSummary\?\.strategyHealthBypassedByLearning/);
+    expect(ROUTE).toMatch(/positionOpeningBlocked:\s*tickSummary\?\.positionOpeningBlocked/);
+    expect(ROUTE).toMatch(/scannerMode:\s*tickSummary\?\.scannerMode/);
+    expect(ROUTE).toMatch(/tableStillGenerated:\s*tickSummary\?\.tableStillGenerated/);
+  });
+});
+
+// Labels — legacy mapping returns the new copy so any historical tick summary
+// in DB renders with the new wording instead of the old "engelledi" message.
+describe("labels — strategy_health legacy mapping", () => {
+  it("mapTickSkipReasonTr returns the new monitoring-mode copy", () => {
+    const LABELS = fs.readFileSync(
+      path.join(REPO_ROOT, "src/lib/dashboard/labels.ts"),
       "utf8",
     );
-    expect(ROUTE).toMatch(/strategy_health:\s*\{/);
-    expect(ROUTE).toMatch(/bypassedByLearning:\s*tickSummary\?\.strategyHealthBypassedByLearning/);
+    expect(LABELS).toMatch(/Strateji sağlık skoru düşük\. Tarama izleme modunda devam ediyor; yeni işlem açılmıyor\./);
+    expect(LABELS).not.toMatch(/Strateji sağlık kontrolü engelledi/);
   });
 });
