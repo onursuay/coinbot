@@ -2,13 +2,45 @@
 import { useEffect, useState } from "react";
 import { fmtNum, fmtUsd, fmtPct } from "@/lib/format";
 
+interface CloseNotice {
+  level: "error" | "warning" | "success";
+  text: string;
+}
+
+// Backend `code` → human-readable Turkish message. We never surface raw HTTP
+// statuses (e.g. "HTTP 451") to the user — those come from the exchange edge
+// and only confuse. The structured `code` field in the API response is the
+// stable contract.
+function closeMessageFor(code: string | undefined, fallback: string): string {
+  switch (code) {
+    case "BINANCE_451":
+      return "Paper pozisyon kapatılamadı: Binance fiyat verisi erişilemedi. Fallback fiyat bulunamadı.";
+    case "BINANCE_BLOCKED":
+      return "Paper pozisyon kapatılamadı: Binance erişim engellendi (403/429). Fallback fiyat bulunamadı.";
+    case "PRICE_UNAVAILABLE":
+      return "Güncel veya son bilinen fiyat bulunamadı; paper pozisyon kapatılamadı.";
+    case "TRADE_NOT_FOUND":
+      return "İşlem bulunamadı (silinmiş olabilir).";
+    case "TRADE_ALREADY_CLOSED":
+      return "Bu işlem zaten kapatılmış.";
+    case "CLOSE_FAILED":
+      return "Paper pozisyon kapatılamadı (sunucu hatası).";
+    default:
+      return fallback || "Paper pozisyon kapatılamadı.";
+  }
+}
+
 export default function PaperTradesPage() {
   const [open, setOpen] = useState<any[]>([]);
   const [closed, setClosed] = useState<any[]>([]);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [closeNotice, setCloseNotice] = useState<CloseNotice | null>(null);
+  // Per-trade loading flag — prevents double-clicks from sending a second
+  // close request while the first is in flight.
+  const [closingId, setClosingId] = useState<string | null>(null);
 
   const refresh = async () => {
-    const r = await fetch("/api/paper-trades?limit=200").then((r) => r.json());
+    const r = await fetch("/api/paper-trades?limit=200", { cache: "no-store" }).then((r) => r.json());
     if (r.ok) { setOpen(r.data.open); setClosed(r.data.closed); }
   };
 
@@ -19,13 +51,42 @@ export default function PaperTradesPage() {
   }, []);
 
   const close = async (id: string) => {
+    if (closingId) return; // ignore second click while a close is pending
     if (!confirm("Pozisyon canlı fiyattan paper olarak kapatılsın mı?")) return;
-    const res = await fetch("/api/paper-trades/close", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tradeId: id, reason: "manual" }),
-    }).then((r) => r.json());
-    if (!res.ok) alert(res.error);
-    refresh();
+    setCloseNotice(null);
+    setClosingId(id);
+    try {
+      let res: any = null;
+      try {
+        const r = await fetch("/api/paper-trades/close", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tradeId: id, reason: "manual" }),
+        });
+        res = await r.json().catch(() => ({ ok: false, error: "Sunucu yanıtı okunamadı." }));
+      } catch (e: any) {
+        res = { ok: false, error: e?.message ?? "Ağ hatası" };
+      }
+
+      if (res?.ok) {
+        if (res.closePriceSource === "fallback_signal") {
+          setCloseNotice({
+            level: "warning",
+            text: "Pozisyon kapatıldı; ancak Binance ticker erişilemedi, son bilinen fiyat (signals.entry_price) kullanıldı.",
+          });
+        } else {
+          setCloseNotice({ level: "success", text: "Pozisyon kapatıldı." });
+        }
+      } else {
+        setCloseNotice({
+          level: "error",
+          text: closeMessageFor(res?.code, res?.error ?? ""),
+        });
+      }
+      await refresh();
+    } finally {
+      setClosingId(null);
+    }
   };
 
   const deleteTrade = async (id: string) => {
@@ -44,6 +105,28 @@ export default function PaperTradesPage() {
       {deleteError && (
         <div className="text-sm text-danger bg-danger/10 border border-danger/30 rounded-lg px-3 py-2">
           {deleteError}
+        </div>
+      )}
+
+      {closeNotice && (
+        <div
+          className={
+            closeNotice.level === "error"
+              ? "text-sm text-danger bg-danger/10 border border-danger/30 rounded-lg px-3 py-2 flex items-start justify-between gap-3"
+              : closeNotice.level === "warning"
+                ? "text-sm text-warning bg-warning/10 border border-warning/30 rounded-lg px-3 py-2 flex items-start justify-between gap-3"
+                : "text-sm text-success bg-success/10 border border-success/30 rounded-lg px-3 py-2 flex items-start justify-between gap-3"
+          }
+          role="status"
+        >
+          <span>{closeNotice.text}</span>
+          <button
+            type="button"
+            onClick={() => setCloseNotice(null)}
+            className="text-xs opacity-70 hover:opacity-100 underline"
+          >
+            kapat
+          </button>
         </div>
       )}
 
@@ -70,7 +153,16 @@ export default function PaperTradesPage() {
                 <td>1:{fmtNum(t.risk_reward_ratio)}</td>
                 <td>{fmtNum(t.signal_score, 0)}</td>
                 <td className="text-xs text-muted">{new Date(t.opened_at).toLocaleString()}</td>
-                <td><button className="btn-ghost text-xs" onClick={() => close(t.id)}>Kapat</button></td>
+                <td>
+                  <button
+                    className="btn-ghost text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => close(t.id)}
+                    disabled={closingId === t.id || (closingId !== null && closingId !== t.id)}
+                    aria-busy={closingId === t.id}
+                  >
+                    {closingId === t.id ? "Kapatılıyor…" : "Kapat"}
+                  </button>
+                </td>
                 <td>
                   <button
                     className="text-muted hover:text-danger transition-colors p-1"
