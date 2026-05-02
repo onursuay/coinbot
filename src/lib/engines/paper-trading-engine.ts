@@ -31,8 +31,10 @@ export interface OpenPaperTradeInput {
   fundingRate?: number;
   signalConfidence?: number;
   riskPercent?: number;
-  // Faz 20 — risk lifecycle metadata
-  riskMetadata?: {
+  // Faz 20 — risk lifecycle metadata. Open shape so future paper-only
+  // diagnostic fields (e.g. May 2026 sizingVersion=risk_cap_v1 + sizing
+  // cap diag fields) can be attached without re-typing every site.
+  riskMetadata?: Record<string, unknown> & {
     risk_amount_usdt?: number;
     risk_per_trade_percent?: number;
     position_notional_usdt?: number;

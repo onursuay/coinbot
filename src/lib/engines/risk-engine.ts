@@ -80,6 +80,28 @@ export interface RiskCheckResult {
   riskConfigSource: "risk_settings" | "env_fallback" | "capital_missing_fallback";
   maxOpenPositionsFromRiskSettings: number;
   dynamicMaxOpenPositions?: number;
+  // May 2026 — paper position-sizing cap diagnostics (sizingVersion=risk_cap_v1).
+  // ETH/ZEC audit found tight-SL trades opened with margin >> account balance
+  // because risk-based sizing applied no upper bound. Cap enforces:
+  //   marginUsed <= accountBalanceUsd * marginCapPercent (default 10%, hard 15% ceiling).
+  // When the raw size exceeds the cap, the engine downscales positionSize so
+  // margin lands at the cap and recomputes the *actual* risk taken.
+  sizingDiagnostics: {
+    sizingVersion: "risk_cap_v1";
+    configuredRiskAmountUsdt: number;   // capital * riskPerTradePercent / 100
+    actualRiskUsdt: number;             // |entry - stopLoss| * finalQuantity (post-cap)
+    stopDistancePercent: number;
+    rawQuantity: number;
+    finalQuantity: number;
+    rawNotionalUsdt: number;
+    finalNotionalUsdt: number;
+    rawMarginUsed: number;
+    finalMarginUsed: number;
+    marginCapUsdt: number;              // accountBalance * marginCapPercent / 100
+    marginCapPercent: number;
+    marginCapApplied: boolean;
+    tightStopBlocked: boolean;          // stopDistancePercent < TIGHT_STOP_MIN_PERCENT
+  };
 }
 
 function leverageCapForScore(score: number): number {
@@ -164,16 +186,72 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
   const baseRiskPct = input.riskConfigRiskPerTradePercent ?? env.maxRiskPerTradePercent;
   const effectiveRiskPct = Math.min(baseRiskPct, input.tierMaxRiskPerTradePercent ?? 999);
   const riskAmount = (input.accountBalanceUsd * effectiveRiskPct) / 100;
+
+  // ── Raw risk-based sizing (pre-cap) ──
   let positionSize = stopDist > 0 ? riskAmount / stopDist : 0;
   if (input.exchangeStepSize) positionSize = roundDown(positionSize, input.exchangeStepSize);
-  if (input.exchangeMinOrderSize && positionSize < input.exchangeMinOrderSize) {
+  const rawQuantity = positionSize;
+  const rawNotional = positionSize * input.entryPrice;
+  const rawMarginUsed = leverage > 0 ? rawNotional / leverage : rawNotional;
+
+  // ── May 2026 — paper sizing caps (sizingVersion=risk_cap_v1) ──
+  // (a) Tight-stop guard: refuse to open a paper trade when stopDistancePercent
+  //     is below TIGHT_STOP_MIN_PERCENT. Audit (ETH 0.20% / ZEC 0.81% SL) showed
+  //     such trades blow up: tiny stop → huge position → runaway margin and a
+  //     fee/slippage bill that exceeds the intended risk_amount.
+  // (b) Margin cap: marginUsed must not exceed marginCap = accountBalance *
+  //     PAPER_SINGLE_TRADE_MARGIN_CAP_PERCENT (default 10%). Hard absolute
+  //     ceiling at PAPER_SINGLE_TRADE_MARGIN_HARD_CEILING_PERCENT (15%).
+  // When (b) trips, scale positionSize DOWN until margin lands at the cap;
+  // recompute notional/marginUsed/actualRisk. Leverage is applied exactly once
+  // (rawMargin = rawNotional / leverage); the cap step does not re-apply it.
+  const PAPER_SINGLE_TRADE_MARGIN_CAP_PERCENT = 10;
+  const PAPER_SINGLE_TRADE_MARGIN_HARD_CEILING_PERCENT = 15;
+  const TIGHT_STOP_MIN_PERCENT = 1.0;
+
+  const stopDistancePercent = input.entryPrice > 0
+    ? (stopDist / input.entryPrice) * 100
+    : 0;
+
+  const tightStopBlocked = stopDistancePercent > 0 && stopDistancePercent < TIGHT_STOP_MIN_PERCENT;
+  if (tightStopBlocked) {
+    violations.push(`STOP MESAFESİ ÇOK DAR: ${stopDistancePercent.toFixed(3)}% < ${TIGHT_STOP_MIN_PERCENT}%`);
+  }
+
+  // Margin cap percent is fixed in code (10%) with a hard ceiling at 15% — no
+  // env override path so a stale VPS env file cannot relax this safety.
+  const marginCapPercent = Math.min(
+    PAPER_SINGLE_TRADE_MARGIN_CAP_PERCENT,
+    PAPER_SINGLE_TRADE_MARGIN_HARD_CEILING_PERCENT,
+  );
+  const marginCapUsdt = (input.accountBalanceUsd * marginCapPercent) / 100;
+
+  let finalQuantity = rawQuantity;
+  let marginCapApplied = false;
+  if (rawMarginUsed > marginCapUsdt && marginCapUsdt > 0 && input.entryPrice > 0 && leverage > 0) {
+    const cappedNotional = marginCapUsdt * leverage;
+    const cappedQuantity = cappedNotional / input.entryPrice;
+    finalQuantity = input.exchangeStepSize
+      ? roundDown(cappedQuantity, input.exchangeStepSize)
+      : cappedQuantity;
+    marginCapApplied = true;
+  }
+
+  positionSize = finalQuantity;
+  if (input.exchangeMinOrderSize && positionSize > 0 && positionSize < input.exchangeMinOrderSize) {
     violations.push("Pozisyon boyutu borsa minimum emir büyüklüğünün altında");
   }
   const notional = positionSize * input.entryPrice;
   const marginUsed = leverage > 0 ? notional / leverage : notional;
+  const actualRiskUsdt = stopDist > 0 ? stopDist * positionSize : 0;
 
-  // Full balance protection
+  // Full balance protection (existing 90% rule kept as defense in depth even
+  // though the new 10% cap above is stricter).
   if (marginUsed > input.accountBalanceUsd * 0.9) violations.push("Margin gereksinimi bakiyenin %90'ını aşıyor");
+  // After the cap, marginUsed must never exceed the cap by a non-rounding margin.
+  if (marginCapUsdt > 0 && marginUsed > marginCapUsdt * 1.001) {
+    violations.push(`MARGIN CAP AŞIMI: ${marginUsed.toFixed(2)} > ${marginCapUsdt.toFixed(2)} (${marginCapPercent}% / capital)`);
+  }
 
   // Liquidation safety
   let liquidationWarning = false;
@@ -219,5 +297,22 @@ export function evaluateRisk(input: RiskCheckInput): RiskCheckResult {
     // Faz 20 diagnostics
     riskConfigSource,
     maxOpenPositionsFromRiskSettings: effectiveMaxOpenPositions,
+    // May 2026 paper sizing cap diagnostics
+    sizingDiagnostics: {
+      sizingVersion: "risk_cap_v1",
+      configuredRiskAmountUsdt: riskAmount,
+      actualRiskUsdt,
+      stopDistancePercent,
+      rawQuantity,
+      finalQuantity,
+      rawNotionalUsdt: rawNotional,
+      finalNotionalUsdt: notional,
+      rawMarginUsed,
+      finalMarginUsed: marginUsed,
+      marginCapUsdt,
+      marginCapPercent,
+      marginCapApplied,
+      tightStopBlocked,
+    },
   };
 }

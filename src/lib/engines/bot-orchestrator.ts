@@ -1677,6 +1677,83 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         continue;
       }
 
+      // ── May 2026 paper sizing backstop (sizingVersion=risk_cap_v1) ──
+      // The risk-engine now caps marginUsed at 10% of capital (hard ceiling
+      // 15%) and refuses tight-stop trades (stopDistancePercent < 1.0). This
+      // block is the final paper-side guard right before openPaperTrade so a
+      // future regression in the risk-engine cannot leak ETH/ZEC-style
+      // outsized positions through. Live execution path is untouched.
+      const sizing = risk.sizingDiagnostics;
+      const paperSizingFailures: string[] = [];
+      if (sizing.tightStopBlocked) {
+        paperSizingFailures.push(`tight_stop ${sizing.stopDistancePercent.toFixed(3)}% < 1.0%`);
+      }
+      if (sizing.marginCapUsdt > 0 && effectiveMarginUsed > sizing.marginCapUsdt * 1.001) {
+        paperSizingFailures.push(`margin_cap_exceeded ${effectiveMarginUsed.toFixed(2)} > ${sizing.marginCapUsdt.toFixed(2)}`);
+      }
+      if (effectivePositionSize <= 0 || !Number.isFinite(effectivePositionSize)) {
+        paperSizingFailures.push(`quantity_invalid ${effectivePositionSize}`);
+      }
+      if (effectiveMarginUsed <= 0 || !Number.isFinite(effectiveMarginUsed)) {
+        paperSizingFailures.push(`margin_invalid ${effectiveMarginUsed}`);
+      }
+      if (positionNotionalUsdt <= 0 || !Number.isFinite(positionNotionalUsdt)) {
+        paperSizingFailures.push(`notional_invalid ${positionNotionalUsdt}`);
+      }
+      if (sizing.actualRiskUsdt > sizing.configuredRiskAmountUsdt * 1.001 && sizing.configuredRiskAmountUsdt > 0) {
+        paperSizingFailures.push(`actual_risk_exceeds_configured ${sizing.actualRiskUsdt.toFixed(4)} > ${sizing.configuredRiskAmountUsdt.toFixed(4)}`);
+      }
+      if (typeof info?.minOrderSize === "number" && info.minOrderSize > 0 && effectivePositionSize > 0 && effectivePositionSize < info.minOrderSize) {
+        paperSizingFailures.push(`below_min_qty ${effectivePositionSize} < ${info.minOrderSize}`);
+      }
+
+      if (sizing.tightStopBlocked) {
+        const reason = "STOP MESAFESİ ÇOK DAR";
+        detail.rejectReason = reason;
+        result.rejectedSignals.push({ symbol, reason: `${reason}: ${sizing.stopDistancePercent.toFixed(3)}% < 1.0%` });
+        await botLog({
+          userId, exchange, level: "warn", eventType: "paper_trade_open_blocked_by_tight_stop",
+          message: `${symbol} ${effectiveSignalType} — ${reason} (${sizing.stopDistancePercent.toFixed(3)}% < 1.0%)`,
+          metadata: {
+            stopDistancePercent: sizing.stopDistancePercent,
+            entryPrice: effectiveEntryPrice,
+            stopLoss: effectiveStopLoss,
+            sizingVersion: sizing.sizingVersion,
+          },
+        });
+        result.scanDetails.push(detail);
+        continue;
+      }
+
+      if (paperSizingFailures.length > 0) {
+        const reason = `Sizing backstop: ${paperSizingFailures.join("; ")}`;
+        detail.rejectReason = "Pozisyon büyüklüğü güvenlik tavanını aştı";
+        result.rejectedSignals.push({ symbol, reason });
+        await botLog({
+          userId, exchange, level: "warn", eventType: "paper_trade_open_blocked_by_sizing_backstop",
+          message: `${symbol} ${effectiveSignalType} — ${reason}`,
+          metadata: {
+            failures: paperSizingFailures,
+            sizingVersion: sizing.sizingVersion,
+            configuredRiskAmountUsdt: sizing.configuredRiskAmountUsdt,
+            actualRiskUsdt: sizing.actualRiskUsdt,
+            stopDistancePercent: sizing.stopDistancePercent,
+            rawQuantity: sizing.rawQuantity,
+            finalQuantity: sizing.finalQuantity,
+            rawMarginUsed: sizing.rawMarginUsed,
+            finalMarginUsed: sizing.finalMarginUsed,
+            marginCapUsdt: sizing.marginCapUsdt,
+            marginCapApplied: sizing.marginCapApplied,
+            effectivePositionSize,
+            effectiveMarginUsed,
+            positionNotionalUsdt,
+            accountBalanceUsd: effectiveCapitalUsdt,
+          },
+        });
+        result.scanDetails.push(detail);
+        continue;
+      }
+
       const paperLearningPrefix = learningModeActive
         ? "PAPER LEARNING: risk gates bypassed for learning dataset. "
         : "";
@@ -1723,6 +1800,20 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
           stop_distance_percent: stopDistPct,
           risk_config_source: riskCapitalSource,
           risk_config_bound: true,
+          // May 2026 paper sizing cap diagnostics (sizingVersion=risk_cap_v1).
+          // Surfaces raw vs final qty / margin and whether the cap kicked in
+          // so closed-trade audits can reproduce sizing decisions.
+          sizingVersion: sizing.sizingVersion,
+          configuredRiskAmountUsdt: sizing.configuredRiskAmountUsdt,
+          actualRiskUsdt: sizing.actualRiskUsdt,
+          stopDistancePercent: sizing.stopDistancePercent,
+          rawQuantity: sizing.rawQuantity,
+          finalQuantity: sizing.finalQuantity,
+          rawMarginUsed: sizing.rawMarginUsed,
+          finalMarginUsed: sizing.finalMarginUsed,
+          marginCapUsdt: sizing.marginCapUsdt,
+          marginCapPercent: sizing.marginCapPercent,
+          marginCapApplied: sizing.marginCapApplied,
           // Force paper mode metadata
           ...(forceMode.active ? {
             force_paper_entry: !learningModeActive,
