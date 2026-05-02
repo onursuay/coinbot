@@ -44,6 +44,26 @@ const FEE_RATE = 0.0004;       // 4 bps per side (taker)
 const SLIPPAGE_RATE = 0.0005;  // 5 bps slippage assumption
 
 export async function openPaperTrade(input: OpenPaperTradeInput) {
+  // Defense-in-depth: never persist a paper trade without a finite, positive
+  // signal score. Orchestrator's hard gate is the primary guard; this catches
+  // any future caller that bypasses it. Runs BEFORE the Supabase check so the
+  // invariant holds even when Supabase isn't configured.
+  if (
+    input.signalScore === undefined ||
+    input.signalScore === null ||
+    typeof input.signalScore !== "number" ||
+    !Number.isFinite(input.signalScore) ||
+    input.signalScore <= 0
+  ) {
+    throw new Error(
+      `openPaperTrade: NO_VALID_SIGNAL_SCORE — paper trade for ${input.symbol} ${input.direction} reddedildi (signalScore=${String(input.signalScore)})`,
+    );
+  }
+  if (input.direction !== "LONG" && input.direction !== "SHORT") {
+    throw new Error(
+      `openPaperTrade: SIGNAL_TYPE_MISSING — paper trade for ${input.symbol} reddedildi (direction=${String(input.direction)})`,
+    );
+  }
   if (!supabaseConfigured()) {
     throw new Error("Supabase yapılandırılmamış — paper trade kaydedilemez");
   }

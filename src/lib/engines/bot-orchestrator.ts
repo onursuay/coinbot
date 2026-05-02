@@ -19,6 +19,7 @@ import {
 import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist, getTierPolicy } from "@/lib/risk-tiers";
 import { checkAggressivePaperMode } from "@/lib/aggressive-paper-mode";
 import { checkForcePaperEntryMode } from "@/lib/force-paper-entry-mode";
+import { validateSignalScoreGate } from "./signal-score-gate";
 import { calculateStrategyHealth } from "./strategy-health";
 import { buildRiskExecutionConfig, ensureHydrated } from "@/lib/risk-settings";
 import { ensureScanModesHydrated } from "@/lib/scan-modes";
@@ -1159,6 +1160,43 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
           result.scanDetails.push(detail);
           continue;
         }
+      }
+
+      // ── HARD SIGNAL-SCORE GATE — applies in ALL modes (force/aggressive/normal) ──
+      // Even with risk/quality bypasses active, a paper trade cannot open with a
+      // missing, zero, or sub-threshold tradeSignalScore. directionCandidate alone
+      // (without a real LONG/SHORT signalType) is not enough.
+      const activeMinSignalScore = forceMode.active
+        ? Math.max(1, forceMode.minSignalScore)
+        : aggMode.active
+          ? Math.max(1, aggMode.minSignalScore)
+          : 70;
+      const scoreGate = validateSignalScoreGate({
+        tradeSignalScore: sig.score,
+        signalType: sig.signalType,
+        effectiveSignalType,
+        directionCandidate: sig.directionCandidate,
+        minSignalScore: activeMinSignalScore,
+        modeLabel: forceMode.active ? "force_paper" : aggMode.active ? "aggressive_paper" : "normal",
+      });
+      if (!scoreGate.ok) {
+        detail.rejectReason = scoreGate.reason ?? "İşlem açılmadı: geçerli sinyal skoru yok";
+        await botLog({
+          userId, exchange, eventType: "signal_score_blocked",
+          message: `${symbol} BLOCKED ${scoreGate.code} score=${sig.score} signalType=${sig.signalType} effective=${effectiveSignalType} minRequired=${activeMinSignalScore}`,
+          metadata: {
+            code: scoreGate.code,
+            score: sig.score,
+            signalType: sig.signalType,
+            effectiveSignalType,
+            directionCandidate: sig.directionCandidate,
+            minRequired: activeMinSignalScore,
+            forcePaperActive: forceMode.active,
+            aggressivePaperActive: aggMode.active,
+          },
+        });
+        result.scanDetails.push(detail);
+        continue;
       }
 
       result.generatedSignals.push({ symbol, type: effectiveSignalType, score: sig.score });
