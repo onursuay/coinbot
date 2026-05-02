@@ -18,10 +18,11 @@ import {
 } from "@/lib/engines/unified-candidate-provider";
 import { isAutoTradeAllowed, applyDynamicDowngrade, classifyTier, getPrioritySymbols, tierWhitelist, getTierPolicy } from "@/lib/risk-tiers";
 import { checkAggressivePaperMode } from "@/lib/aggressive-paper-mode";
+import { checkForcePaperEntryMode } from "@/lib/force-paper-entry-mode";
 import { calculateStrategyHealth } from "./strategy-health";
 import { buildRiskExecutionConfig, ensureHydrated } from "@/lib/risk-settings";
 import { ensureScanModesHydrated } from "@/lib/scan-modes";
-import type { ExchangeName, Timeframe } from "@/lib/exchanges/types";
+import type { ExchangeName, Timeframe, PositionDirection } from "@/lib/exchanges/types";
 
 export type BotStatus = "running" | "paused" | "stopped" | "kill_switch";
 
@@ -220,6 +221,8 @@ export interface ScanDetail {
   displayFilterReasonText?: string;
   /** True when this trade was opened via Aggressive Paper Test Mode relaxed gates. */
   aggressivePaperOpened?: boolean;
+  /** True when this trade was opened via Force Paper Entry Mode — all risk gates bypassed. */
+  forcePaperOpened?: boolean;
 }
 
 // ── Display filter reason text mapping (Turkish, scanner SEBEP column) ──
@@ -868,13 +871,27 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     });
   }
 
-  const { data: openPos } = await sb.from("paper_trades").select("id").eq("user_id", userId).eq("status", "open");
+  // Force Paper Entry Mode — all risk gates bypassed for paper learning.
+  // Supersedes aggMode when both are active (though typically only one is set).
+  const forceMode = checkForcePaperEntryMode(settings);
+  if (forceMode.active) {
+    await botLog({
+      userId, eventType: "force_paper_mode_active",
+      message: `FORCE PAPER ENTRY MODE aktif — minSignal=${forceMode.minSignalScore} maxPos=${forceMode.maxOpenPositions} maxTrades=${forceMode.maxTradesPerDay} riskBypass=${forceMode.allowRiskBypass} rrBypass=${forceMode.allowRrBypass} qualityBypass=${forceMode.allowMarketQualityBypass}`,
+    });
+  }
+
+  const { data: openPos } = await sb.from("paper_trades").select("id, symbol").eq("user_id", userId).eq("status", "open");
   let openCount = openPos?.length ?? 0;
+  // Duplicate guard: track symbols with open positions (used by force paper mode).
+  const openSymbols = new Set<string>((openPos ?? []).map((p: any) => p.symbol as string));
 
   // Faz 20: use defaultMaxOpenPositions from risk settings, falling back to DB setting.
   // Aggressive mode overrides with its own (typically higher) open positions limit.
   const effectiveMaxOpenPositions = riskCfg.defaultMaxOpenPositions ?? settings.max_open_positions;
-  const loopMaxOpenPositions = aggMode.active ? aggMode.maxOpenPositions : effectiveMaxOpenPositions;
+  const loopMaxOpenPositions = forceMode.active
+    ? forceMode.maxOpenPositions
+    : aggMode.active ? aggMode.maxOpenPositions : effectiveMaxOpenPositions;
 
   // Populate risk config diagnostics into result
   result.riskConfigBound = true;
@@ -885,20 +902,30 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   result.riskCapitalSource = riskCapitalSource;
 
   if (openCount >= loopMaxOpenPositions) {
-    result.ok = true;
-    result.reason = "max_open_positions";
-    result.durationMs = Date.now() - start;
-    await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}/${loopMaxOpenPositions}) doldu${aggMode.active ? " [AGGRESSIVE]" : ""}` });
-    await writeSkipSummary(userId, opts?.workerContext, "max_open_positions", tickStartedAt);
-    return result;
+    if (forceMode.active) {
+      // Force paper mode: scanner continues — no new positions until a slot opens.
+      await botLog({
+        userId, eventType: "force_paper_mode_active",
+        message: `[FORCE PAPER] Tarama devam ediyor. Pozisyon limiti dolu olduğu için yeni işlem açılmıyor (${openCount}/${loopMaxOpenPositions}).`,
+      });
+    } else {
+      result.ok = true;
+      result.reason = "max_open_positions";
+      result.durationMs = Date.now() - start;
+      await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}/${loopMaxOpenPositions}) doldu${aggMode.active ? " [AGGRESSIVE]" : ""}` });
+      await writeSkipSummary(userId, opts?.workerContext, "max_open_positions", tickStartedAt);
+      return result;
+    }
   }
 
   // Faz 20: daily trade count guard from risk settings.
   // Aggressive mode uses its own (typically higher) daily trade limit.
   const maxDailyTrades = riskCfg.maxDailyTrades;
-  const loopMaxDailyTrades = aggMode.active
-    ? Math.max(maxDailyTrades, aggMode.maxTradesPerDay)
-    : maxDailyTrades;
+  const loopMaxDailyTrades = forceMode.active
+    ? Math.max(maxDailyTrades, forceMode.maxTradesPerDay)
+    : aggMode.active
+      ? Math.max(maxDailyTrades, aggMode.maxTradesPerDay)
+      : maxDailyTrades;
   const startOfDay = new Date(); startOfDay.setUTCHours(0, 0, 0, 0);
   const { data: todayTrades } = await sb
     .from("paper_trades")
@@ -1010,7 +1037,10 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
       const sig = generateSignal({
         symbol, timeframe: tf, klines, ticker, funding, btcKlines,
-        ...(aggMode.active ? {
+        ...(forceMode.active ? {
+          aggressiveMinScore: forceMode.minSignalScore,
+          aggressiveBtcBypass: forceMode.allowBtcFilterBypass,
+        } : aggMode.active ? {
           aggressiveMinScore: aggMode.minSignalScore,
           aggressiveBtcBypass: aggMode.btcBypass,
         } : {}),
@@ -1080,74 +1110,150 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         rejected_reason: sig.rejectedReason ?? null,
       });
 
+      // ── Direction resolution — force paper mode may override WAIT/NO_TRADE ──
+      let effectiveSignalType = sig.signalType;
+      let forcePaperOriginalRejectReason: string | null = null;
+
       if (sig.signalType !== "LONG" && sig.signalType !== "SHORT") {
         const rejReason = sig.rejectedReason ?? sig.reasons[0] ?? sig.signalType;
-        detail.rejectReason = rejReason;
-        result.rejectedSignals.push({ symbol, reason: rejReason });
-        await botLog({
-          userId, exchange, eventType: "signal_rejected",
-          message: `${symbol} ${sig.signalType} — ${rejReason}`,
-          metadata: { score: sig.score, features: sig.features },
-        });
 
-        // Near-miss: passed all filters except score (50-69). Informational only, never opens a trade.
-        if (sig.nearMissDirection && sig.score >= 50) {
-          const nmReason = `Skor=${sig.score}/100 — 70 eşiği geçemedi (RR=${sig.riskRewardRatio?.toFixed(2) ?? "?"}, stop=${sig.features.stopDistPct ?? "?"}%)`;
-          result.nearMissSignals.push({ symbol, direction: sig.nearMissDirection, score: sig.score, reason: nmReason });
+        // Force paper mode: use directionCandidate to override WAIT/NO_TRADE.
+        // DirectionCandidate uses LONG_CANDIDATE / SHORT_CANDIDATE — convert to LONG / SHORT.
+        const dcIsLong = sig.directionCandidate === "LONG_CANDIDATE";
+        const dcIsShort = sig.directionCandidate === "SHORT_CANDIDATE";
+        if (forceMode.active && (dcIsLong || dcIsShort)) {
+          forcePaperOriginalRejectReason = rejReason;
+          effectiveSignalType = dcIsLong ? "LONG" : "SHORT";
           await botLog({
-            userId, exchange, eventType: "near_miss_signal",
-            message: `NEAR_MISS ${sig.nearMissDirection} ${symbol} skor=${sig.score}/100 — eşik 70, mevcut ${sig.score}`,
-            metadata: { score: sig.score, direction: sig.nearMissDirection, rr: sig.riskRewardRatio, stopDistPct: sig.features.stopDistPct, trendScore: sig.features.trendScore, volConf: sig.features.volConf },
+            userId, exchange, eventType: "force_paper_candidate",
+            message: `[FORCE PAPER] ${symbol} yön override: ${sig.directionCandidate} (orijinal: ${sig.signalType} skor=${sig.score})`,
+            metadata: { score: sig.score, originalSignalType: sig.signalType, originalRejectReason: rejReason },
           });
+        } else {
+          // Normal rejection path (force mode with no direction = still rejected)
+          detail.rejectReason = rejReason;
+          if (forceMode.active) {
+            await botLog({
+              userId, exchange, eventType: "force_paper_rejected",
+              message: `[FORCE PAPER] ${symbol} reddedildi — yön belirlenemedi: ${rejReason}`,
+              metadata: { score: sig.score },
+            });
+          } else {
+            result.rejectedSignals.push({ symbol, reason: rejReason });
+            await botLog({
+              userId, exchange, eventType: "signal_rejected",
+              message: `${symbol} ${sig.signalType} — ${rejReason}`,
+              metadata: { score: sig.score, features: sig.features },
+            });
+            // Near-miss: passed all filters except score (50-69). Informational only.
+            if (sig.nearMissDirection && sig.score >= 50) {
+              const nmReason = `Skor=${sig.score}/100 — 70 eşiği geçemedi (RR=${sig.riskRewardRatio?.toFixed(2) ?? "?"}, stop=${sig.features.stopDistPct ?? "?"}%)`;
+              result.nearMissSignals.push({ symbol, direction: sig.nearMissDirection, score: sig.score, reason: nmReason });
+              await botLog({
+                userId, exchange, eventType: "near_miss_signal",
+                message: `NEAR_MISS ${sig.nearMissDirection} ${symbol} skor=${sig.score}/100 — eşik 70, mevcut ${sig.score}`,
+                metadata: { score: sig.score, direction: sig.nearMissDirection, rr: sig.riskRewardRatio, stopDistPct: sig.features.stopDistPct, trendScore: sig.features.trendScore, volConf: sig.features.volConf },
+              });
+            }
+          }
+          result.scanDetails.push(detail);
+          continue;
         }
-
-        result.scanDetails.push(detail);
-        continue;
       }
 
-      result.generatedSignals.push({ symbol, type: sig.signalType, score: sig.score });
+      result.generatedSignals.push({ symbol, type: effectiveSignalType, score: sig.score });
       await botLog({
         userId, exchange, eventType: "signal_generated",
-        message: `${symbol} ${sig.signalType} skor=${sig.score} — ${sig.reasons[0] ?? ""}`,
+        message: `${symbol} ${effectiveSignalType} skor=${sig.score} — ${sig.reasons[0] ?? ""}`,
         metadata: { score: sig.score, entryPrice: sig.entryPrice },
       });
 
-      if (!sig.entryPrice || !sig.stopLoss || !sig.takeProfit) {
+      // ── Entry price + SL/TP resolution ──
+      // Force paper mode: generate fallback SL/TP when missing.
+      // Normal modes: reject if any of entry/SL/TP is absent.
+      let effectiveEntryPrice = sig.entryPrice || ticker.lastPrice;
+      let effectiveStopLoss = sig.stopLoss;
+      let effectiveTakeProfit = sig.takeProfit;
+      let generatedFallbackSlTp = false;
+
+      if (forceMode.active && effectiveEntryPrice) {
+        if (!effectiveStopLoss || effectiveStopLoss === 0) {
+          generatedFallbackSlTp = true;
+          effectiveStopLoss = effectiveSignalType === "LONG"
+            ? effectiveEntryPrice * 0.985
+            : effectiveEntryPrice * 1.015;
+        }
+        if (!effectiveTakeProfit || effectiveTakeProfit === 0) {
+          generatedFallbackSlTp = true;
+          effectiveTakeProfit = effectiveSignalType === "LONG"
+            ? effectiveEntryPrice * 1.03
+            : effectiveEntryPrice * 0.97;
+        }
+        if (!effectiveEntryPrice) {
+          detail.rejectReason = "FORCE PAPER: entry price yok (fatal)";
+          result.scanDetails.push(detail);
+          continue;
+        }
+      } else if (!effectiveEntryPrice || !effectiveStopLoss || !effectiveTakeProfit) {
         detail.rejectReason = "entry/SL/TP eksik";
         result.scanDetails.push(detail);
         continue;
       }
 
       // ── WHITELIST + TIER GATE ──
-      if (isDynamic) {
-        // Dynamic coins: allowed in paper mode only — never live trade
-        if (settings.trading_mode === "live") {
-          const dynReason = "Dynamic: live modda işlem yok";
-          detail.rejectReason = dynReason;
-          result.rejectedSignals.push({ symbol, reason: dynReason });
-          result.scanDetails.push(detail);
-          continue;
+      // Force paper mode bypasses whitelist entirely — any symbol can be force-entered.
+      if (!forceMode.active) {
+        if (isDynamic) {
+          // Dynamic coins: allowed in paper mode only — never live trade
+          if (settings.trading_mode === "live") {
+            const dynReason = "Dynamic: live modda işlem yok";
+            detail.rejectReason = dynReason;
+            result.rejectedSignals.push({ symbol, reason: dynReason });
+            result.scanDetails.push(detail);
+            continue;
+          }
+          // Paper mode: dynamic coins proceed to risk/signal check
+        } else {
+          const allowedSymbols: string[] = Array.isArray(settings.allowed_symbols) && settings.allowed_symbols.length > 0
+            ? settings.allowed_symbols
+            : [];
+          const symbolNorm = symbol.replace("/", ""); // BTC/USDT → BTCUSDT
+          const inDbWhitelist = allowedSymbols.length === 0 || allowedSymbols.includes(symbolNorm) || allowedSymbols.includes(symbol);
+          const inTierWhitelist = isAutoTradeAllowed(symbol);
+          if (!inTierWhitelist || !inDbWhitelist) {
+            const wlReason = "Whitelist dışı (tier/db)";
+            detail.rejectReason = wlReason;
+            result.rejectedSignals.push({ symbol, reason: wlReason });
+            await botLog({
+              userId, exchange, eventType: "whitelist_blocked",
+              message: `${symbol} otomatik işlem whitelist dışı`,
+              metadata: { tier: classifyTier(symbol), dbWhitelist: allowedSymbols.length },
+            });
+            result.scanDetails.push(detail);
+            continue;
+          }
         }
-        // Paper mode: dynamic coins proceed to risk/signal check
-      } else {
-        const allowedSymbols: string[] = Array.isArray(settings.allowed_symbols) && settings.allowed_symbols.length > 0
-          ? settings.allowed_symbols
-          : [];
-        const symbolNorm = symbol.replace("/", ""); // BTC/USDT → BTCUSDT
-        const inDbWhitelist = allowedSymbols.length === 0 || allowedSymbols.includes(symbolNorm) || allowedSymbols.includes(symbol);
-        const inTierWhitelist = isAutoTradeAllowed(symbol);
-        if (!inTierWhitelist || !inDbWhitelist) {
-          const wlReason = "Whitelist dışı (tier/db)";
-          detail.rejectReason = wlReason;
-          result.rejectedSignals.push({ symbol, reason: wlReason });
-          await botLog({
-            userId, exchange, eventType: "whitelist_blocked",
-            message: `${symbol} otomatik işlem whitelist dışı`,
-            metadata: { tier: classifyTier(symbol), dbWhitelist: allowedSymbols.length },
-          });
-          result.scanDetails.push(detail);
-          continue;
-        }
+      }
+
+      // ── Duplicate position guard (force paper mode) ──
+      // Fatal: same symbol already open → skip to avoid duplicate positions.
+      if (forceMode.active && openSymbols.has(symbol)) {
+        detail.rejectReason = "FORCE PAPER: sembol zaten açık (duplicate engellendi)";
+        await botLog({
+          userId, exchange, eventType: "force_paper_rejected",
+          message: `[FORCE PAPER] ${symbol} reddedildi — sembol zaten açık pozisyona sahip`,
+        });
+        result.scanDetails.push(detail);
+        continue;
+      }
+
+      // ── Position limit check inside scan loop (force paper mode) ──
+      // In force mode the pre-loop check does not stop the scanner; check again
+      // here before attempting to insert so we skip the insert but keep scanning.
+      if (forceMode.active && openCount >= loopMaxOpenPositions) {
+        detail.rejectReason = "FORCE PAPER: pozisyon limiti dolu (tarama devam ediyor)";
+        result.scanDetails.push(detail);
+        continue;
       }
 
       // ── DYNAMIC TIER DOWNGRADE ──
@@ -1156,8 +1262,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         // Dynamic coins use TIER_3 policy; apply runtime risk gates manually
         const atrPct = detail.atrPercent;
         const fundingPct = Math.abs((funding?.rate ?? 0) * 100);
-        // Aggressive paper mode bypasses quality gates — logs but does not block.
-        if (!aggMode.active || !aggMode.qualityBypass) {
+        // Force / aggressive paper mode bypasses quality gates — logs but does not block.
+        if (!forceMode.active && (!aggMode.active || !aggMode.qualityBypass)) {
           if (atrPct > 6.0) {
             const r = `Dynamic: ATR aşırı (${atrPct.toFixed(2)}%)`;
             detail.rejectReason = r;
@@ -1180,14 +1286,14 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
             result.scanDetails.push(detail);
             continue;
           }
-        } else {
-          // Aggressive mode: log bypassed quality checks for diagnostics (error code: SPREAD_DEPTH_FATAL bypass).
-          if (atrPct > 6.0 || fundingPct > 0.04 || orderbookDepthUsdt < 150_000) {
-            await botLog({
-              userId, exchange, eventType: "aggressive_quality_bypass",
-              message: `[AGGRESSIVE PAPER] ${symbol} kalite filtresi bypass — ATR=${atrPct.toFixed(2)}% funding=${fundingPct.toFixed(3)}% depth=${(orderbookDepthUsdt / 1000).toFixed(0)}K`,
-            });
-          }
+        } else if (atrPct > 6.0 || fundingPct > 0.04 || orderbookDepthUsdt < 150_000) {
+          // Aggressive / force mode: log bypassed quality checks for diagnostics.
+          const modeTag = forceMode.active ? "FORCE PAPER" : "AGGRESSIVE PAPER";
+          const evType = forceMode.active ? "force_paper_quality_bypass" : "aggressive_quality_bypass";
+          await botLog({
+            userId, exchange, eventType: evType,
+            message: `[${modeTag}] ${symbol} kalite filtresi bypass — ATR=${atrPct.toFixed(2)}% funding=${fundingPct.toFixed(3)}% depth=${(orderbookDepthUsdt / 1000).toFixed(0)}K`,
+          });
         }
         tierResult = {
           originalTier: "REJECTED" as const,
@@ -1206,7 +1312,7 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
           volume24hUsdt: ticker.quoteVolume24h,
           btcDirectionAligned: undefined,
         });
-        if (tierResult.rejected) {
+        if (tierResult.rejected && !forceMode.active) {
           const tierReason = `Tier reject: ${tierResult.reasons.join(", ")}`;
           detail.rejectReason = tierReason;
           result.rejectedSignals.push({ symbol, reason: tierReason });
@@ -1218,20 +1324,28 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
           result.scanDetails.push(detail);
           continue;
         }
+        if (tierResult.rejected && forceMode.active) {
+          await botLog({
+            userId, exchange, eventType: "force_paper_quality_bypass",
+            message: `[FORCE PAPER] ${symbol} tier reject bypass — ${tierResult.reasons.join(", ")}`,
+          });
+          // Override to TIER_3 for force mode position sizing
+          tierResult = { ...tierResult, rejected: false, effectiveTier: "TIER_3", policy: getTierPolicy("TIER_3") };
+        }
       }
       detail.tier = tierResult.effectiveTier;
 
       const tierLeverageCap = Math.min(tierResult.policy.maxLeverage, settings.max_leverage ?? 3);
 
       const liq = await adapter.getEstimatedLiquidationPrice({
-        symbol, direction: sig.signalType, entryPrice: sig.entryPrice,
+        symbol, direction: effectiveSignalType as PositionDirection, entryPrice: effectiveEntryPrice,
         leverage: tierLeverageCap, marginMode: "isolated",
       });
 
       const risk = evaluateRisk({
         accountBalanceUsd: effectiveCapitalUsdt,
-        symbol, direction: sig.signalType,
-        entryPrice: sig.entryPrice, stopLoss: sig.stopLoss, takeProfit: sig.takeProfit,
+        symbol, direction: effectiveSignalType as PositionDirection,
+        entryPrice: effectiveEntryPrice, stopLoss: effectiveStopLoss, takeProfit: effectiveTakeProfit,
         signalScore: sig.score, marketSpread: ticker.spread,
         recentLossStreak: 0, openPositionCount: openCount,
         dailyRealizedPnlUsd: daily.realizedPnlUsd, weeklyRealizedPnlUsd: daily.realizedPnlUsd,
@@ -1261,39 +1375,81 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       detail.riskRejectReason = risk.allowed ? null : (risk.reason ?? null);
 
       if (!risk.allowed) {
-        // P0 bugfix: R:R yetersizliği ile gerçek risk reddi ayrı etiketleniyor.
-        const isRrOnly = risk.rejectKind === "rr_insufficient";
-        const riskReason = isRrOnly
-          ? `R:R YETERSİZ: ${risk.reason}`
-          : `RİSK REDDİ: ${risk.reason}`;
-        detail.rejectReason = riskReason;
-        result.rejectedSignals.push({ symbol, reason: riskReason });
-        await botLog({
-          userId, exchange, eventType: isRrOnly ? "rr_insufficient" : "risk_blocked",
-          message: `${symbol} ${sig.signalType} ${isRrOnly ? "R:R yetersiz" : "risk engine reddetti"}: ${risk.reason}`,
-          metadata: { violations: risk.ruleViolations, rejectKind: risk.rejectKind },
-        });
-        result.scanDetails.push(detail);
-        continue;
+        if (forceMode.active && forceMode.allowRiskBypass) {
+          // Force paper mode: log bypass but continue to trade opening.
+          await botLog({
+            userId, exchange, eventType: "force_paper_risk_bypass",
+            message: `[FORCE PAPER] ${symbol} risk gate bypass — ${risk.ruleViolations.join(", ")}`,
+            metadata: { violations: risk.ruleViolations },
+          });
+        } else {
+          // P0 bugfix: R:R yetersizliği ile gerçek risk reddi ayrı etiketleniyor.
+          const isRrOnly = risk.rejectKind === "rr_insufficient";
+          const riskReason = isRrOnly
+            ? `R:R YETERSİZ: ${risk.reason}`
+            : `RİSK REDDİ: ${risk.reason}`;
+          detail.rejectReason = riskReason;
+          result.rejectedSignals.push({ symbol, reason: riskReason });
+          await botLog({
+            userId, exchange, eventType: isRrOnly ? "rr_insufficient" : "risk_blocked",
+            message: `${symbol} ${effectiveSignalType} ${isRrOnly ? "R:R yetersiz" : "risk engine reddetti"}: ${risk.reason}`,
+            metadata: { violations: risk.ruleViolations, rejectKind: risk.rejectKind },
+          });
+          result.scanDetails.push(detail);
+          continue;
+        }
       }
 
       // Faz 20: compute position notional and stop distance for metadata.
-      const stopDistPct = sig.entryPrice > 0
-        ? (Math.abs(sig.entryPrice - sig.stopLoss) / sig.entryPrice) * 100
+      const stopDistPct = effectiveEntryPrice > 0
+        ? (Math.abs(effectiveEntryPrice - effectiveStopLoss) / effectiveEntryPrice) * 100
         : 0;
-      const positionNotionalUsdt = sig.entryPrice > 0 ? risk.positionSize * sig.entryPrice : 0;
 
-      const aggressiveEntryPrefix = aggMode.active
+      // Position sizing: use risk engine output.
+      // Force paper fallback: if positionSize=0 (e.g. zero capital), use 10 USDT notional.
+      const effectivePositionSize = (risk.positionSize > 0 && isFinite(risk.positionSize))
+        ? risk.positionSize
+        : (forceMode.active ? (10 / Math.max(effectiveEntryPrice, 1)) : risk.positionSize);
+      const effectiveMarginUsed = (risk.marginUsed > 0 && isFinite(risk.marginUsed))
+        ? risk.marginUsed
+        : (forceMode.active ? 10 : risk.marginUsed);
+      const effectiveRr = stopDistPct > 0
+        ? (Math.abs(effectiveTakeProfit - effectiveEntryPrice) / Math.abs(effectiveEntryPrice - effectiveStopLoss))
+        : risk.riskRewardRatio;
+      const positionNotionalUsdt = effectiveEntryPrice > 0 ? effectivePositionSize * effectiveEntryPrice : 0;
+
+      // ── Build entry reason + metadata ──
+      const bypassedGates: string[] = [];
+      if (forceMode.active) {
+        if (!risk.allowed) bypassedGates.push(...risk.ruleViolations.map(v => `risk:${v}`));
+        if (generatedFallbackSlTp) bypassedGates.push("sl_tp_fallback_generated");
+        if (effectiveSignalType !== sig.signalType) bypassedGates.push(`direction_override:${sig.signalType}→${effectiveSignalType}`);
+        if (forceMode.allowMarketQualityBypass) bypassedGates.push("market_quality_bypass");
+        if (forceMode.allowBtcFilterBypass) bypassedGates.push("btc_filter_bypass");
+      }
+
+      const forcePaperPrefix = forceMode.active
+        ? "FORCE PAPER ENTRY: risk gates bypassed for paper learning mode. "
+        : "";
+      const aggressiveEntryPrefix = !forceMode.active && aggMode.active
         ? "AGGRESSIVE PAPER TEST: normal filtreler geçilemedi ancak minimum paper test koşulları sağlandı. "
         : "";
+
       const trade = await openPaperTrade({
-        userId, exchange, symbol, direction: sig.signalType,
-        entryPrice: sig.entryPrice, stopLoss: sig.stopLoss, takeProfit: sig.takeProfit,
-        leverage: risk.leverage, positionSize: risk.positionSize, marginUsed: risk.marginUsed,
-        riskAmount: risk.riskAmount, riskRewardRatio: risk.riskRewardRatio,
-        marginMode: "isolated", estimatedLiquidationPrice: risk.estimatedLiquidationPrice ?? null,
+        userId, exchange, symbol,
+        direction: effectiveSignalType as PositionDirection,
+        entryPrice: effectiveEntryPrice,
+        stopLoss: effectiveStopLoss,
+        takeProfit: effectiveTakeProfit,
+        leverage: risk.leverage,
+        positionSize: effectivePositionSize,
+        marginUsed: effectiveMarginUsed,
+        riskAmount: risk.riskAmount,
+        riskRewardRatio: effectiveRr,
+        marginMode: "isolated",
+        estimatedLiquidationPrice: risk.estimatedLiquidationPrice ?? null,
         signalScore: sig.score,
-        entryReason: `${aggressiveEntryPrefix}${sig.reasons.join(" • ")}`,
+        entryReason: `${forcePaperPrefix}${aggressiveEntryPrefix}${sig.reasons.join(" • ")}`,
         tier: tierResult.effectiveTier,
         spreadPercent: ticker.spread * 100,
         atrPercent: detail.atrPercent,
@@ -1307,23 +1463,48 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
           stop_distance_percent: stopDistPct,
           risk_config_source: riskCapitalSource,
           risk_config_bound: true,
+          // Force paper mode metadata
+          ...(forceMode.active ? {
+            force_paper_entry: true,
+            bypassed_gates: bypassedGates,
+            original_reject_reason: forcePaperOriginalRejectReason,
+            original_signal_score: sig.score,
+            original_market_quality_score: detail.marketQualityScore,
+            generated_fallback_sl_tp: generatedFallbackSlTp,
+            force_mode_config: {
+              maxOpenPositions: forceMode.maxOpenPositions,
+              maxTradesPerDay: forceMode.maxTradesPerDay,
+              minSignalScore: forceMode.minSignalScore,
+            },
+          } : {}),
         },
       });
 
       detail.opened = true;
-      detail.aggressivePaperOpened = aggMode.active;
+      detail.aggressivePaperOpened = !forceMode.active && aggMode.active;
+      detail.forcePaperOpened = forceMode.active;
+      openSymbols.add(symbol);
       result.openedPaperTrades.push({
-        symbol, direction: sig.signalType, entryPrice: sig.entryPrice,
+        symbol, direction: effectiveSignalType, entryPrice: effectiveEntryPrice,
       });
-      const tradeOpenEvent = aggMode.active ? "aggressive_paper_trade_opened" : "paper_trade_opened";
+      const tradeOpenEvent = forceMode.active
+        ? "force_paper_opened"
+        : aggMode.active ? "aggressive_paper_trade_opened" : "paper_trade_opened";
+      const modeTag = forceMode.active ? "[FORCE PAPER]" : aggMode.active ? "[AGGRESSIVE PAPER]" : "";
       await botLog({
         userId, exchange, eventType: tradeOpenEvent,
-        message: `${aggMode.active ? "[AGGRESSIVE PAPER]" : ""} ${sig.signalType} ${symbol} @ ${sig.entryPrice} lev=${risk.leverage}x skor=${sig.score}`,
-        metadata: { tradeId: trade?.id, aggressivePaper: aggMode.active, minSignalScore: aggMode.minSignalScore },
+        message: `${modeTag} ${effectiveSignalType} ${symbol} @ ${effectiveEntryPrice} lev=${risk.leverage}x skor=${sig.score}`,
+        metadata: {
+          tradeId: trade?.id,
+          forcePaper: forceMode.active,
+          aggressivePaper: !forceMode.active && aggMode.active,
+          bypassedGates: forceMode.active ? bypassedGates : undefined,
+          openedPositionId: trade?.id,
+        },
       });
       result.scanDetails.push(detail);
       openCount++;
-      if (openCount >= loopMaxOpenPositions) break;
+      if (openCount >= loopMaxOpenPositions && !forceMode.active) break;
     } catch (e: any) {
       const msg = e?.message ?? String(e);
       detail.rejectReason = `Hata: ${msg}`;

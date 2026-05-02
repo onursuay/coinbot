@@ -18,6 +18,7 @@ import path from "node:path";
 
 import { calculatePositionSizeByRisk } from "@/lib/engines/position-sizing";
 import { evaluateRisk } from "@/lib/engines/risk-engine";
+import { checkForcePaperEntryMode } from "@/lib/force-paper-entry-mode";
 import {
   __resetRiskSettingsStoreForTests,
   buildRiskExecutionConfig,
@@ -595,5 +596,82 @@ describe("Faz 20 — position sizing formül edge cases", () => {
     });
     expect(r.valid).toBe(false);
     expect(r.reason).toMatch(/maksimum/);
+  });
+});
+
+// ── Grup 7: Force Paper Entry Mode guard ─────────────────────────────────────
+
+describe("Force Paper Entry Mode — checkForcePaperEntryMode guard", () => {
+  it("FORCE_PAPER_ENTRY_MODE=false (default) → inactive", () => {
+    // env.forcePaperEntryMode defaults to false in test env
+    const result = checkForcePaperEntryMode({ trading_mode: "paper", enable_live_trading: false });
+    expect(result.active).toBe(false);
+    expect(result.inactiveReason).toMatch(/FORCE_PAPER_ENTRY_MODE=false/);
+  });
+
+  it("codebase: FORCE_PAPER_ENTRY_MODE default is false in env.ts", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src/lib/env.ts"), "utf8");
+    expect(src).toMatch(/forcePaperEntryMode:\s*bool\(process\.env\.FORCE_PAPER_ENTRY_MODE,\s*false\)/);
+  });
+
+  it("codebase: force-paper-entry-mode.ts guards HARD_LIVE_TRADING_ALLOWED and enable_live_trading", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src/lib/force-paper-entry-mode.ts"), "utf8");
+    expect(src).toMatch(/HARD_LIVE_TRADING_ALLOWED/);
+    expect(src).toMatch(/enable_live_trading/);
+    expect(src).toMatch(/trading_mode.*paper/);
+    expect(src).toMatch(/kill_switch_active/);
+  });
+
+  it("codebase: bot-orchestrator imports checkForcePaperEntryMode", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src/lib/engines/bot-orchestrator.ts"), "utf8");
+    expect(src).toMatch(/checkForcePaperEntryMode/);
+    expect(src).toMatch(/force-paper-entry-mode/);
+  });
+
+  it("codebase: force_paper_mode_active log event present in bot-orchestrator", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src/lib/engines/bot-orchestrator.ts"), "utf8");
+    expect(src).toMatch(/force_paper_mode_active/);
+    expect(src).toMatch(/force_paper_opened/);
+    expect(src).toMatch(/force_paper_risk_bypass/);
+    expect(src).toMatch(/force_paper_candidate/);
+    expect(src).toMatch(/force_paper_rejected/);
+  });
+
+  it("codebase: scanner does not stop early in force mode (no unconditional return on max_open_positions)", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src/lib/engines/bot-orchestrator.ts"), "utf8");
+    // Force mode log message must be present
+    expect(src).toMatch(/Tarama devam ediyor.*Pozisyon limiti dolu/);
+    // forceMode.active check around the return
+    expect(src).toMatch(/forceMode\.active/);
+  });
+
+  it("codebase: force mode uses effectiveSignalType (direction override) throughout trade open", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src/lib/engines/bot-orchestrator.ts"), "utf8");
+    expect(src).toMatch(/effectiveSignalType/);
+    expect(src).toMatch(/effectiveEntryPrice/);
+    expect(src).toMatch(/effectiveStopLoss/);
+    expect(src).toMatch(/effectiveTakeProfit/);
+    expect(src).toMatch(/generatedFallbackSlTp/);
+  });
+
+  it("codebase: force paper mode stores metadata in risk_metadata (force_paper_entry field)", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src/lib/engines/bot-orchestrator.ts"), "utf8");
+    expect(src).toMatch(/force_paper_entry:\s*true/);
+    expect(src).toMatch(/bypassed_gates/);
+    expect(src).toMatch(/generated_fallback_sl_tp/);
+    expect(src).toMatch(/original_signal_score/);
+  });
+
+  it("codebase: live trading env defaults unchanged after force paper mode added", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "src/lib/env.ts"), "utf8");
+    expect(src).toMatch(/hardLiveTradingAllowed:\s*bool\(process\.env\.HARD_LIVE_TRADING_ALLOWED,\s*false\)/);
+    expect(src).toMatch(/defaultTradingMode:\s*str\(process\.env\.DEFAULT_TRADING_MODE,\s*"paper"\)/);
+  });
+
+  it("codebase: worker .env.example documents FORCE_PAPER_ENTRY_MODE=false (default off)", () => {
+    const src = fs.readFileSync(path.join(process.cwd(), "worker/.env.example"), "utf8");
+    expect(src).toMatch(/FORCE_PAPER_ENTRY_MODE=false/);
+    expect(src).toMatch(/FORCE_PAPER_MAX_OPEN_POSITIONS/);
+    expect(src).toMatch(/FORCE_PAPER_MAX_TRADES_PER_DAY/);
   });
 });

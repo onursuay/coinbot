@@ -135,6 +135,21 @@ export const env = {
   // candidate-pool snapshot endpoint cache. Default 120s (2 min).
   unifiedCandidateRefreshIntervalSec: num(process.env.UNIFIED_CANDIDATE_REFRESH_INTERVAL_SEC, 120),
 
+  // ── Force Paper Entry Mode ──
+  // Bypasses risk engine blocking for paper-mode learning. Active ONLY when:
+  // trading_mode=paper + FORCE_PAPER_ENTRY_MODE=true + HARD_LIVE_TRADING_ALLOWED=false
+  // + enable_live_trading=false + kill switch inactive.
+  // Fatal gates still apply: kill switch, duplicate position, no entry price,
+  // position/daily limits, Supabase INSERT failure.
+  forcePaperEntryMode: bool(process.env.FORCE_PAPER_ENTRY_MODE, false),
+  forcePaperMaxTradesPerDay: num(process.env.FORCE_PAPER_MAX_TRADES_PER_DAY, 50),
+  forcePaperMaxOpenPositions: num(process.env.FORCE_PAPER_MAX_OPEN_POSITIONS, 20),
+  forcePaperMinSignalScore: num(process.env.FORCE_PAPER_MIN_SIGNAL_SCORE, 1),
+  forcePaperAllowRiskBypass: bool(process.env.FORCE_PAPER_ALLOW_RISK_BYPASS, true),
+  forcePaperAllowMarketQualityBypass: bool(process.env.FORCE_PAPER_ALLOW_MARKET_QUALITY_BYPASS, true),
+  forcePaperAllowBtcFilterBypass: bool(process.env.FORCE_PAPER_ALLOW_BTC_FILTER_BYPASS, true),
+  forcePaperAllowRrBypass: bool(process.env.FORCE_PAPER_ALLOW_RR_BYPASS, true),
+
   // ── Aggressive Paper Test Mode ──
   // All flags are paper-only: HARD_LIVE_TRADING_ALLOWED=true OR trading_mode=live disables them.
   aggressivePaperTestMode: bool(process.env.AGGRESSIVE_PAPER_TEST_MODE, false),
