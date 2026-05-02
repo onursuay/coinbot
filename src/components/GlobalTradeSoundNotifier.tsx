@@ -6,12 +6,9 @@ import {
   detectNewPaperPositionAlerts,
   PAPER_POSITION_ALERT_SOUND_URL,
   readNotifiedPaperPositionIds,
-  readPaperNotificationPermission,
-  requestPaperNotificationPermission,
   saveNotifiedPaperPositionIds,
   shouldPlayPaperPositionSound,
   showPaperPositionDesktopNotification,
-  type PaperNotificationPermissionState,
 } from "@/lib/paper-position-alerts";
 
 const POLL_INTERVAL_MS = 8_000;
@@ -25,8 +22,6 @@ export default function GlobalTradeSoundNotifier() {
   const firstSyncRef = useRef(true);
   const notifiedIdsRef = useRef<Set<string>>(new Set());
   const [audioBlocked, setAudioBlocked] = useState(false);
-  const [notificationPermission, setNotificationPermission] =
-    useState<PaperNotificationPermissionState>("unsupported");
 
   useEffect(() => {
     enabledRef.current = enabled;
@@ -34,7 +29,6 @@ export default function GlobalTradeSoundNotifier() {
 
   useEffect(() => {
     notifiedIdsRef.current = readNotifiedPaperPositionIds();
-    setNotificationPermission(readPaperNotificationPermission());
 
     if (typeof Audio !== "undefined") {
       const audio = new Audio(PAPER_POSITION_ALERT_SOUND_URL);
@@ -42,22 +36,6 @@ export default function GlobalTradeSoundNotifier() {
       audio.volume = 0.7;
       audioRef.current = audio;
     }
-  }, []);
-
-  useEffect(() => {
-    const onPermissionChange = () => {
-      setNotificationPermission(readPaperNotificationPermission());
-    };
-    window.addEventListener(
-      "coinbot:paper-notification-permission",
-      onPermissionChange,
-    );
-    return () => {
-      window.removeEventListener(
-        "coinbot:paper-notification-permission",
-        onPermissionChange,
-      );
-    };
   }, []);
 
   useEffect(() => {
@@ -172,27 +150,6 @@ export default function GlobalTradeSoundNotifier() {
         </div>
       )}
 
-      {notificationPermission === "default" && (
-        <div
-          role="status"
-          className="fixed bottom-4 left-4 z-50 rounded-lg border border-accent/30 bg-bg-soft px-3 py-2 text-sm text-slate-100 shadow-lg"
-        >
-          <div className="flex items-center gap-3">
-            <span>Desktop bildirimi kapalı.</span>
-            <button
-              type="button"
-              onClick={async () => {
-                setNotificationPermission(
-                  await requestPaperNotificationPermission(),
-                );
-              }}
-              className="btn-primary text-xs"
-            >
-              Bildirimleri Aç
-            </button>
-          </div>
-        </div>
-      )}
     </>
   );
 }
