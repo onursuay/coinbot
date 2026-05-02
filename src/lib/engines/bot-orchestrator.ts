@@ -1214,11 +1214,17 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
       if (sig.signalType !== "LONG" && sig.signalType !== "SHORT") {
         const rejReason = sig.rejectedReason ?? sig.reasons[0] ?? sig.signalType;
 
-        // Force paper mode: use directionCandidate to override WAIT/NO_TRADE.
-        // DirectionCandidate uses LONG_CANDIDATE / SHORT_CANDIDATE — convert to LONG / SHORT.
+        // Stabilizasyon kuralı (mayıs 2026): directionCandidate ile yön override
+        // ederek pozisyon açma yolu KAPATILDI. Force/learning modunda olsak bile
+        // gerçek bir LONG/SHORT sinyali yoksa pozisyon açılmaz. directionCandidate
+        // bilgisi `signals` tablosuna ve learning event'ine gözlem olarak yazılır;
+        // sadece açılış branşı kapalı. Önceki override yolu düşük-skorlu agresif
+        // SHORT pozisyonlarının çoğunu açıyordu (son testte %75 SL oranı).
+        // Always-false sentinel — değişkenler downstream metadata için ayakta.
         const dcIsLong = sig.directionCandidate === "LONG_CANDIDATE";
         const dcIsShort = sig.directionCandidate === "SHORT_CANDIDATE";
-        if (forceMode.active && (dcIsLong || dcIsShort)) {
+        const directionOverrideAllowed = false; // hard-disabled, see comment above
+        if (directionOverrideAllowed && forceMode.active && (dcIsLong || dcIsShort)) {
           forcePaperOriginalRejectReason = rejReason;
           effectiveSignalType = dcIsLong ? "LONG" : "SHORT";
           await botLog({
@@ -1258,15 +1264,15 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         }
       }
 
-      // ── HARD SIGNAL-SCORE GATE — applies in ALL modes (force/aggressive/normal) ──
-      // Even with risk/quality bypasses active, a paper trade cannot open with a
-      // missing, zero, or sub-threshold tradeSignalScore. directionCandidate alone
-      // (without a real LONG/SHORT signalType) is not enough.
-      const activeMinSignalScore = forceMode.active
-        ? Math.max(1, forceMode.minSignalScore)
-        : aggMode.active
-          ? Math.max(1, aggMode.minSignalScore)
-          : 70;
+      // ── HARD SIGNAL-SCORE GATE — universal 70 floor for paper-trade opening. ──
+      //
+      // Stabilizasyon kuralı (mayıs 2026): force/aggressive/learning modlarının
+      // skor floor'unu düşürmesi yasaklandı. Bu modlar legacy olarak env'de
+      // kalabilir ve scan/diagnostics'te rapor üretmeye devam eder, ama yeni
+      // pozisyon AÇMAZLAR. Sebep: düşük skorlu (45-69) trade'ler son test
+      // periyodunda %75 stop-loss oranıyla net zarar üretti — hard 70 eşiği,
+      // hem normal modda hem de bypass-mode'larda zorunlu.
+      const activeMinSignalScore = 70;
       const scoreGate = validateSignalScoreGate({
         tradeSignalScore: sig.score,
         signalType: sig.signalType,
@@ -1588,6 +1594,37 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
             score: result.strategyHealthScore,
             threshold: result.strategyHealthMin,
             blockReason: result.positionOpeningBlockReason,
+          },
+        });
+        result.scanDetails.push(detail);
+        continue;
+      }
+
+      // Stabilizasyon backstop — son guard, openPaperTrade'den hemen önce.
+      // Yukarıdaki tüm gate'ler atlanmış olsa bile (kod regresyonu, env override,
+      // bypass mode'u) hard 70 + gerçek LONG/SHORT şartları burada zorunlu.
+      // Bu blok kaldırılırsa veya gevşetilirse skor=45-69 ile pozisyon açılma
+      // riski geri döner — düşük skorlu trade'ler net zarar üretiyor.
+      if (
+        typeof sig.score !== "number" ||
+        !Number.isFinite(sig.score) ||
+        sig.score < 70 ||
+        (effectiveSignalType !== "LONG" && effectiveSignalType !== "SHORT") ||
+        (sig.signalType !== "LONG" && sig.signalType !== "SHORT")
+      ) {
+        const reason = `Stabilizasyon backstop: skor=${sig.score} signalType=${sig.signalType} effective=${effectiveSignalType} — minimum 70 + gerçek LONG/SHORT gerekli`;
+        detail.rejectReason = "İşlem skoru düşük";
+        result.rejectedSignals.push({ symbol, reason });
+        await botLog({
+          userId, exchange, level: "warn", eventType: "stabilization_backstop_blocked",
+          message: `${symbol} ${effectiveSignalType} — ${reason}`,
+          metadata: {
+            score: sig.score,
+            signalType: sig.signalType,
+            effectiveSignalType,
+            forceModeActive: forceMode.active,
+            aggressiveModeActive: aggMode.active,
+            paperLearningModeActive: learningModeActive,
           },
         });
         result.scanDetails.push(detail);

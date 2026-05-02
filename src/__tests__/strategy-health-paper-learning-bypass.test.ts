@@ -176,29 +176,26 @@ describe("calculateStrategyHealth — block thresholds", () => {
   });
 });
 
-// Scanner UI banner — verifies the banner shows in BOTH normal and learning
-// soft-pass cases and that the UI never collapses the table on strategy health.
-describe("scanner UI — monitoring banner + table never closes", () => {
+// Scanner UI — banner removed (May 2026 stabilization, user request).
+// The diagnostics shape still surfaces strategy_health.blocked, but the page
+// MUST NOT render the warning banner. Tablo görünmeye devam eder; gerekçe
+// sadece satır bazında "Karar Gerekçesi" kolonunda gösterilir.
+describe("scanner UI — banner removed, table always shown", () => {
   const SCANNER = fs.readFileSync(
     path.join(REPO_ROOT, "src/app/scanner/page.tsx"),
     "utf8",
   );
 
-  it("banner renders whenever data.strategy_health.blocked is true", () => {
-    expect(SCANNER).toMatch(/data\?\.strategy_health\?\.blocked/);
+  it("no JSX block reads data.strategy_health.blocked", () => {
+    expect(SCANNER).not.toMatch(/data\?\.strategy_health\?\.blocked/);
   });
 
-  it("banner shows the new bilingual variant copy (learning vs normal)", () => {
-    expect(SCANNER).toMatch(/Strateji sağlık skoru düşük/);
-    expect(SCANNER).toMatch(/Tarama izleme modunda devam ediyor; yeni işlem açılmıyor/);
-    expect(SCANNER).toMatch(/Tarama izleme\/öğrenme modunda devam ediyor/);
+  it("no Turkish monitoring banner copy on the page", () => {
+    expect(SCANNER).not.toMatch(/Tarama izleme modunda devam ediyor/);
+    expect(SCANNER).not.toMatch(/Tarama izleme\/öğrenme modunda devam ediyor/);
   });
 
-  it("scanner page no longer hides the table on strategy_health-related skipReason", () => {
-    // Empty-state copy is unchanged but the orchestrator no longer sets
-    // tickSkipped=true on strategy health, so this branch can never fire
-    // for that reason. The table render condition (rows.length > 0) is
-    // unaffected by the strategy_health flags.
+  it("table render condition stays intact", () => {
     expect(SCANNER).toMatch(/rows\.length > 0/);
   });
 });
