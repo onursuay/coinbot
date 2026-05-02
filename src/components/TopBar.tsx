@@ -2,6 +2,12 @@
 import { useEffect, useState } from "react";
 import KillSwitch from "./KillSwitch";
 import { useSoundPref } from "@/lib/sound-pref";
+import {
+  PAPER_POSITION_ALERT_SOUND_URL,
+  readPaperNotificationPermission,
+  requestPaperNotificationPermission,
+  type PaperNotificationPermissionState,
+} from "@/lib/paper-position-alerts";
 
 interface Status {
   bot: any | null;
@@ -18,6 +24,8 @@ export default function TopBar() {
   const [s, setS] = useState<Status | null>(null);
   const [workerOnline, setWorkerOnline] = useState<boolean | null>(null);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
+  const [notificationPermission, setNotificationPermission] =
+    useState<PaperNotificationPermissionState>("unsupported");
   const { enabled: soundEnabled, setEnabled: setSoundEnabled } = useSoundPref();
 
   const toggleSound = () => {
@@ -25,13 +33,18 @@ export default function TopBar() {
     setSoundEnabled(next);
     if (next && typeof Audio !== "undefined") {
       // Audio unlock — happens inside a user gesture so subsequent
-      // programmatic plays from the trade-open hook are allowed.
+      // programmatic plays from the global notifier are allowed.
       try {
-        const a = new Audio("/sounds/hedef.mp3");
+        const a = new Audio(PAPER_POSITION_ALERT_SOUND_URL);
         a.volume = 0.7;
         a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => { /* ignore */ });
       } catch { /* ignore */ }
     }
+  };
+
+  const requestNotifications = async () => {
+    if (notificationPermission !== "default") return;
+    setNotificationPermission(await requestPaperNotificationPermission());
   };
 
   useEffect(() => {
@@ -57,6 +70,17 @@ export default function TopBar() {
     return () => { active = false; clearInterval(t); };
   }, []);
 
+  useEffect(() => {
+    const syncPermission = () => {
+      setNotificationPermission(readPaperNotificationPermission());
+    };
+    syncPermission();
+    window.addEventListener("coinbot:paper-notification-permission", syncPermission);
+    return () => {
+      window.removeEventListener("coinbot:paper-notification-permission", syncPermission);
+    };
+  }, []);
+
   const status = s?.bot?.bot_status ?? "stopped";
   const mode = s?.bot?.trading_mode ?? "paper";
   const exchange = s === null ? "..." : (s?.bot?.active_exchange ?? "binance");
@@ -69,6 +93,24 @@ export default function TopBar() {
     : status === "kill_switch"
       ? "bg-danger/15 text-danger"
       : "bg-slate-700/40 text-slate-300";
+
+  const notificationLabel =
+    notificationPermission === "granted" ? "AÇIK"
+      : notificationPermission === "default" ? "İZİN GEREKLİ"
+        : notificationPermission === "denied" ? "KAPALI"
+          : "DESTEK YOK";
+  const notificationClass =
+    notificationPermission === "granted" ? "bg-success/15 text-success"
+      : notificationPermission === "default" ? "bg-warning/15 text-warning"
+        : "bg-slate-700/40 text-slate-300";
+  const notificationTitle =
+    notificationPermission === "default"
+      ? "Desktop bildirimi açmak için tıkla"
+      : notificationPermission === "denied"
+        ? "Tarayıcı bildirim izni engellenmiş"
+        : notificationPermission === "granted"
+          ? "Desktop bildirimleri açık"
+          : "Tarayıcı desktop bildirimini desteklemiyor";
 
   return (
     <header className="flex items-center justify-between gap-3 px-6 py-2 border-b border-border bg-bg-soft/60 backdrop-blur">
@@ -106,6 +148,15 @@ export default function TopBar() {
         >
           <span aria-hidden>{soundEnabled ? "🔊" : "🔇"}</span>
           SES: {soundEnabled ? "AÇIK" : "KAPALI"}
+        </button>
+        <button
+          onClick={requestNotifications}
+          disabled={notificationPermission !== "default"}
+          className={`${PILL} ${notificationClass} ${notificationPermission === "default" ? "cursor-pointer hover:opacity-90" : "cursor-default"}`}
+          title={notificationTitle}
+          type="button"
+        >
+          BİLDİRİM: {notificationLabel}
         </button>
         {s && (
           <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
