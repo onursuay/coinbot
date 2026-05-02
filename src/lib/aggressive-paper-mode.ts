@@ -1,17 +1,10 @@
-// Aggressive Paper Test Mode helper.
-// Active ONLY when all five conditions hold simultaneously:
-//   1. AGGRESSIVE_PAPER_TEST_MODE=true
-//   2. trading_mode === "paper"
-//   3. enable_live_trading !== true
-//   4. HARD_LIVE_TRADING_ALLOWED !== true
-//   5. kill switch is NOT active
+// Aggressive Paper Test Mode — HARD-DISABLED at helper level (May 2026).
 //
-// Hard gates that cannot be bypassed regardless of this mode:
-//   SL/TP required, R:R ≥ 2, valid entry price, max open positions,
-//   daily aggressive trade limit, kill switch, Supabase insert success,
-//   spread/volume fatal checks, insufficient candle data.
-
-import { env } from "@/lib/env";
+// Closed-trade audit showed bypass channels were producing net-negative paper
+// trades. Per user mandate, this aggressive bypass channel is closed in code;
+// env vars (AGGRESSIVE_PAPER_TEST_MODE, AGGRESSIVE_ALLOW_*) are intentionally
+// ignored. `checkAggressivePaperMode` always returns `active=false` so the
+// orchestrator branches that bypass quality / BTC-filter gates become no-ops.
 
 export interface AggressivePaperCheck {
   active: boolean;
@@ -24,36 +17,19 @@ export interface AggressivePaperCheck {
   qualityBypass: boolean;
 }
 
-export function checkAggressivePaperMode(settings: {
+export function checkAggressivePaperMode(_settings: {
   trading_mode?: string | null;
   enable_live_trading?: boolean | null;
   kill_switch_active?: boolean | null;
 }): AggressivePaperCheck {
-  const inactive = (reason: string): AggressivePaperCheck => ({
+  return {
     active: false,
-    reason,
+    reason: "HARDDISABLED: aggressive paper test bypass channel closed in code",
     minSignalScore: 70,
     minMarketQuality: 75,
     maxTradesPerDay: 0,
     maxOpenPositions: 0,
     btcBypass: false,
     qualityBypass: false,
-  });
-
-  if (!env.aggressivePaperTestMode) return inactive("AGGRESSIVE_PAPER_TEST_MODE=false");
-  if (settings.trading_mode !== "paper") return inactive(`trading_mode=${settings.trading_mode ?? "unknown"} (paper gerekli)`);
-  if (settings.enable_live_trading === true) return inactive("enable_live_trading=true");
-  if (env.hardLiveTradingAllowed) return inactive("HARD_LIVE_TRADING_ALLOWED=true");
-  if (settings.kill_switch_active === true) return inactive("kill_switch_active=true");
-
-  return {
-    active: true,
-    reason: null,
-    minSignalScore: env.aggressiveMinSignalScore,
-    minMarketQuality: env.aggressiveMinMarketQuality,
-    maxTradesPerDay: env.aggressiveMaxTradesPerDay,
-    maxOpenPositions: env.aggressiveMaxOpenPositions,
-    btcBypass: env.aggressiveAllowBtcFilterBypass,
-    qualityBypass: env.aggressiveAllowMarketQualityBypass,
   };
 }

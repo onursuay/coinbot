@@ -46,6 +46,35 @@ describe("stabilization — min signal score gate", () => {
     expect(backstopIdx).toBeGreaterThan(0);
     expect(openIdx).toBeGreaterThan(backstopIdx);
   });
+
+  // ── May 2026 patch: bypass channels closed → backstop tightened ──
+  it("backstop additionally requires setupScore >= 70", () => {
+    expect(ORCHESTRATOR).toMatch(/setupScoreRaw === null \|\| setupScoreRaw < 70/);
+    expect(ORCHESTRATOR).toMatch(/setup_score=\$\{setupScoreRaw\} \(<70\)/);
+  });
+
+  it("backstop additionally requires marketQualityScore >= 70", () => {
+    expect(ORCHESTRATOR).toMatch(/marketQualityRaw === null \|\| marketQualityRaw < 70/);
+    expect(ORCHESTRATOR).toMatch(/market_quality_score=\$\{marketQualityRaw\} \(<70\)/);
+  });
+
+  it("backstop blocks when btcTrendRejected is true (no BTC bypass)", () => {
+    expect(ORCHESTRATOR).toMatch(/const btcMisaligned = detail\.btcTrendRejected === true/);
+    expect(ORCHESTRATOR).toMatch(/backstopFailures\.push\("btc_trend_misaligned"\)/);
+  });
+
+  it("backstop blocks when risk engine did not allow the trade", () => {
+    expect(ORCHESTRATOR).toMatch(/const riskAllowed = risk\.allowed === true/);
+    expect(ORCHESTRATOR).toMatch(/risk_engine_reject=/);
+  });
+
+  it("backstop validates SL/TP and R:R >= 2", () => {
+    expect(ORCHESTRATOR).toMatch(/const slValid = Number\.isFinite\(effectiveStopLoss\)/);
+    expect(ORCHESTRATOR).toMatch(/const tpValid = Number\.isFinite\(effectiveTakeProfit\)/);
+    expect(ORCHESTRATOR).toMatch(/const rrValid = Number\.isFinite\(effectiveRr\) && effectiveRr >= 2/);
+    expect(ORCHESTRATOR).toMatch(/sl_tp_invalid/);
+    expect(ORCHESTRATOR).toMatch(/rr_invalid/);
+  });
 });
 
 describe("safety invariants (must never regress)", () => {

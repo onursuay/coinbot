@@ -1,28 +1,24 @@
-// Paper Learning Mode — canonical learning/data-collection mode for paper.
+// Paper Learning Mode — HARD-DISABLED at helper level (May 2026).
 //
-// Active ONLY when all five conditions hold simultaneously:
-//   1. PAPER_LEARNING_MODE=true
-//   2. trading_mode === "paper"
-//   3. enable_live_trading !== true
-//   4. HARD_LIVE_TRADING_ALLOWED !== true
-//   5. kill switch is NOT active
+// Background: closed-trade audit showed every recent paper trade had
+// `paper_learning_mode=true` with `bypassed_gates ⊃ {risk, market_quality_bypass,
+// btc_filter_bypass}` — i.e. the bypass channel was opening low-quality trades
+// (setup_score<70, market_quality<70) that produced a net negative paper P&L.
+// Per user mandate the bypass channel is closed in code; env vars
+// (PAPER_LEARNING_MODE, PAPER_LEARNING_ALLOW_*) are intentionally ignored so a
+// stale VPS env file cannot reopen the channel without a code change.
 //
-// When active, the orchestrator:
-//   • bypasses market quality / DYNAMIC_MIN_QUALITY / BTC trend filter / R:R
-//     minimum / depth penalty as POSITION blockers (they become metadata only)
-//   • uses paperLearningMinSignalScore (default 1) instead of normal-mode 70
-//     as the tradeSignalScore floor (signal-score gate still enforces > 0)
-//   • generates fallback SL/TP when missing (LONG: -1.5%/+3%, SHORT: +1.5%/-3%)
-//   • records learning metadata (bypassed gates, original reject reason,
-//     normalModeWouldReject, riskWarnings, learning hypothesis) in
-//     paper_trades.risk_metadata and trade_learning_events
+// `checkPaperLearningMode` therefore always returns `active=false` with all
+// allow-bypass flags set to false. The orchestrator's existing branches that
+// guard on `paperLearning.active` / `forceMode.active` become no-ops, which:
+//   • removes `paper_learning_mode=true` from new trades' risk_metadata
+//   • leaves `bypassed_gates` / `bypassed_risk_gates` empty
+//   • restores the normal-mode min signal score floor (70) and the normal
+//     market-quality / BTC-trend / risk-engine gates
 //
-// Fatal gates that still apply regardless of this mode:
-//   kill switch active, live trading indicators present, no entry price,
-//   duplicate position, position/daily limits exceeded, Supabase INSERT failure,
-//   missing direction, missing market data, signal score not numeric / zero / negative.
-
-import { env } from "@/lib/env";
+// Live execution gates are unaffected — they were and remain locked off:
+// HARD_LIVE_TRADING_ALLOWED=false, DEFAULT_TRADING_MODE=paper,
+// enable_live_trading=false, openLiveOrder LIVE_EXECUTION_NOT_IMPLEMENTED.
 
 export interface PaperLearningCheck {
   active: boolean;
@@ -37,40 +33,22 @@ export interface PaperLearningCheck {
   autoSlTp: boolean;
 }
 
-export function checkPaperLearningMode(settings: {
+export function checkPaperLearningMode(_settings: {
   trading_mode?: string | null;
   enable_live_trading?: boolean | null;
   kill_switch_active?: boolean | null;
 }): PaperLearningCheck {
-  const inactive = (reason: string): PaperLearningCheck => ({
+  // Hard-disabled. Reason string is stable so log/test consumers can pin it.
+  return {
     active: false,
-    inactiveReason: reason,
+    inactiveReason: "HARDDISABLED: paper learning bypass channel closed in code",
     maxOpenPositions: 0,
     maxTradesPerDay: 0,
-    minSignalScore: 1,
+    minSignalScore: 70,
     allowRiskBypass: false,
     allowMarketQualityBypass: false,
     allowBtcFilterBypass: false,
     allowRrBypass: false,
     autoSlTp: false,
-  });
-
-  if (!env.paperLearningMode) return inactive("PAPER_LEARNING_MODE=false");
-  if (settings.trading_mode !== "paper") return inactive(`trading_mode=${settings.trading_mode ?? "unknown"} (paper gerekli)`);
-  if (settings.enable_live_trading === true) return inactive("enable_live_trading=true");
-  if (env.hardLiveTradingAllowed) return inactive("HARD_LIVE_TRADING_ALLOWED=true");
-  if (settings.kill_switch_active === true) return inactive("kill_switch_active=true");
-
-  return {
-    active: true,
-    inactiveReason: null,
-    maxOpenPositions: env.paperLearningMaxOpenPositions,
-    maxTradesPerDay: env.paperLearningMaxTradesPerDay,
-    minSignalScore: env.paperLearningMinSignalScore,
-    allowRiskBypass: env.paperLearningAllowRiskBypass,
-    allowMarketQualityBypass: env.paperLearningAllowMarketQualityBypass,
-    allowBtcFilterBypass: env.paperLearningAllowBtcFilterBypass,
-    allowRrBypass: env.paperLearningAllowRrBypass,
-    autoSlTp: env.paperLearningAutoSlTp,
   };
 }

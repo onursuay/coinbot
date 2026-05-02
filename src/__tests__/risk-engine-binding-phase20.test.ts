@@ -523,17 +523,18 @@ describe("Aggressive Paper Mode — max open positions override (riskConfigMaxOp
     expect(src).toMatch(/riskConfigMaxOpenPositions:\s*aggMode\.active\s*\?\s*aggMode\.maxOpenPositions\s*:\s*riskCfg\.defaultMaxOpenPositions/);
   });
 
-  it("live mode'da aggressive override uygulanmaz: aggMode.active her zaman false olur (checkAggressivePaperMode guard)", () => {
+  it("aggressive paper mode HARD-DISABLED — checkAggressivePaperMode always inactive (May 2026)", () => {
     const src = fs.readFileSync(
       path.join(process.cwd(), "src/lib/aggressive-paper-mode.ts"),
       "utf8",
     );
-    // Guard: HARD_LIVE_TRADING_ALLOWED=true ise inactive döner
-    expect(src).toMatch(/HARD_LIVE_TRADING_ALLOWED/);
-    // Guard: enable_live_trading=true ise inactive döner
-    expect(src).toMatch(/enable_live_trading/);
-    // Guard: trading_mode !== 'paper' ise inactive döner
-    expect(src).toMatch(/trading_mode.*paper/);
+    // Helper file documents the hard-disable
+    expect(src).toMatch(/HARD-DISABLED/);
+    // Helper returns active=false unconditionally (no env-driven activation)
+    expect(src).toMatch(/active:\s*false/);
+    expect(src).toMatch(/HARDDISABLED/);
+    // env imports removed — helper no longer reads from env at runtime
+    expect(src).not.toMatch(/import\s*\{\s*env\s*\}\s*from\s*"@\/lib\/env"/);
   });
 });
 
@@ -601,25 +602,25 @@ describe("Faz 20 — position sizing formül edge cases", () => {
 
 // ── Grup 7: Force Paper Entry Mode guard ─────────────────────────────────────
 
-describe("Force Paper Entry Mode — checkForcePaperEntryMode guard", () => {
-  it("FORCE_PAPER_ENTRY_MODE=false (default) → inactive", () => {
-    // env.forcePaperEntryMode defaults to false in test env
+describe("Force Paper Entry Mode — checkForcePaperEntryMode guard (HARD-DISABLED, May 2026)", () => {
+  it("checkForcePaperEntryMode returns active=false in every scenario", () => {
     const result = checkForcePaperEntryMode({ trading_mode: "paper", enable_live_trading: false });
     expect(result.active).toBe(false);
-    expect(result.inactiveReason).toMatch(/FORCE_PAPER_ENTRY_MODE=false/);
+    expect(result.inactiveReason).toMatch(/HARDDISABLED/);
   });
 
-  it("codebase: FORCE_PAPER_ENTRY_MODE default is false in env.ts", () => {
+  it("codebase: FORCE_PAPER_ENTRY_MODE env default still false in env.ts (defense in depth)", () => {
     const src = fs.readFileSync(path.join(process.cwd(), "src/lib/env.ts"), "utf8");
     expect(src).toMatch(/forcePaperEntryMode:\s*bool\(process\.env\.FORCE_PAPER_ENTRY_MODE,\s*false\)/);
   });
 
-  it("codebase: force-paper-entry-mode.ts guards HARD_LIVE_TRADING_ALLOWED and enable_live_trading", () => {
+  it("codebase: force-paper-entry-mode.ts is hard-disabled (no env import, always inactive)", () => {
     const src = fs.readFileSync(path.join(process.cwd(), "src/lib/force-paper-entry-mode.ts"), "utf8");
-    expect(src).toMatch(/HARD_LIVE_TRADING_ALLOWED/);
-    expect(src).toMatch(/enable_live_trading/);
-    expect(src).toMatch(/trading_mode.*paper/);
-    expect(src).toMatch(/kill_switch_active/);
+    expect(src).toMatch(/HARD-DISABLED/);
+    expect(src).toMatch(/HARDDISABLED/);
+    expect(src).toMatch(/active:\s*false/);
+    // env import removed so a stale VPS env file cannot reopen the channel
+    expect(src).not.toMatch(/import\s*\{\s*env\s*\}\s*from\s*"@\/lib\/env"/);
   });
 
   it("codebase: bot-orchestrator imports checkForcePaperEntryMode", () => {

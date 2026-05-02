@@ -1602,26 +1602,72 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
 
       // Stabilizasyon backstop — son guard, openPaperTrade'den hemen önce.
       // Yukarıdaki tüm gate'ler atlanmış olsa bile (kod regresyonu, env override,
-      // bypass mode'u) hard 70 + gerçek LONG/SHORT şartları burada zorunlu.
-      // Bu blok kaldırılırsa veya gevşetilirse skor=45-69 ile pozisyon açılma
-      // riski geri döner — düşük skorlu trade'ler net zarar üretiyor.
-      if (
-        typeof sig.score !== "number" ||
-        !Number.isFinite(sig.score) ||
-        sig.score < 70 ||
-        (effectiveSignalType !== "LONG" && effectiveSignalType !== "SHORT") ||
-        (sig.signalType !== "LONG" && sig.signalType !== "SHORT")
-      ) {
-        const reason = `Stabilizasyon backstop: skor=${sig.score} signalType=${sig.signalType} effective=${effectiveSignalType} — minimum 70 + gerçek LONG/SHORT gerekli`;
-        detail.rejectReason = "İşlem skoru düşük";
+      // bypass mode'u) bu blok defansif olarak çalışır. May 2026 patch:
+      // bypass kanalları kapatıldıktan sonra dahi, kapanan trade analizinde
+      // zarara yol açan tipik kombinasyonları (low setup_score / low market
+      // quality / BTC misalignment / risk reject / dar SL / R:R<2) burada
+      // teyit ederek pozisyon açılışını engeller.
+      const setupScoreRaw = typeof detail.setupScore === "number" ? detail.setupScore : null;
+      const marketQualityRaw = typeof detail.marketQualityScore === "number" ? detail.marketQualityScore : null;
+      const btcMisaligned = detail.btcTrendRejected === true;
+      const slValid = Number.isFinite(effectiveStopLoss) && effectiveStopLoss > 0
+        && Number.isFinite(effectiveEntryPrice) && effectiveEntryPrice > 0
+        && Math.abs(effectiveEntryPrice - effectiveStopLoss) > 0;
+      const tpValid = Number.isFinite(effectiveTakeProfit) && effectiveTakeProfit > 0
+        && Math.abs(effectiveTakeProfit - effectiveEntryPrice) > 0;
+      const rrValid = Number.isFinite(effectiveRr) && effectiveRr >= 2;
+      const riskAllowed = risk.allowed === true;
+
+      const backstopFailures: string[] = [];
+      if (typeof sig.score !== "number" || !Number.isFinite(sig.score) || sig.score < 70) {
+        backstopFailures.push(`signal_score=${sig.score} (<70)`);
+      }
+      if (effectiveSignalType !== "LONG" && effectiveSignalType !== "SHORT") {
+        backstopFailures.push(`effective_signalType=${effectiveSignalType}`);
+      }
+      if (sig.signalType !== "LONG" && sig.signalType !== "SHORT") {
+        backstopFailures.push(`signalType=${sig.signalType}`);
+      }
+      if (setupScoreRaw === null || setupScoreRaw < 70) {
+        backstopFailures.push(`setup_score=${setupScoreRaw} (<70)`);
+      }
+      if (marketQualityRaw === null || marketQualityRaw < 70) {
+        backstopFailures.push(`market_quality_score=${marketQualityRaw} (<70)`);
+      }
+      if (btcMisaligned) {
+        backstopFailures.push("btc_trend_misaligned");
+      }
+      if (!riskAllowed) {
+        backstopFailures.push(`risk_engine_reject=${risk.reason ?? "unspecified"}`);
+      }
+      if (!slValid || !tpValid) {
+        backstopFailures.push(`sl_tp_invalid sl=${effectiveStopLoss} tp=${effectiveTakeProfit} entry=${effectiveEntryPrice}`);
+      }
+      if (!rrValid) {
+        backstopFailures.push(`rr_invalid=${effectiveRr} (<2)`);
+      }
+
+      if (backstopFailures.length > 0) {
+        const reason = `Stabilizasyon backstop: ${backstopFailures.join("; ")}`;
+        detail.rejectReason = backstopFailures[0]?.startsWith("signal_score") ? "İşlem skoru düşük" : "Stabilizasyon backstop";
         result.rejectedSignals.push({ symbol, reason });
         await botLog({
           userId, exchange, level: "warn", eventType: "stabilization_backstop_blocked",
           message: `${symbol} ${effectiveSignalType} — ${reason}`,
           metadata: {
+            failures: backstopFailures,
             score: sig.score,
             signalType: sig.signalType,
             effectiveSignalType,
+            setupScore: setupScoreRaw,
+            marketQualityScore: marketQualityRaw,
+            btcTrendRejected: btcMisaligned,
+            riskAllowed,
+            riskRejectReason: risk.reason ?? null,
+            effectiveRr,
+            effectiveStopLoss,
+            effectiveTakeProfit,
+            effectiveEntryPrice,
             forceModeActive: forceMode.active,
             aggressiveModeActive: aggMode.active,
             paperLearningModeActive: learningModeActive,

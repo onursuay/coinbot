@@ -1,9 +1,15 @@
 // Paper Learning Mode — helper + lesson engine regression suite.
 //
 // Focus:
-//  • checkPaperLearningMode activates only under safe paper-mode conditions
-//  • lesson-engine outcome classification + bypass-warranted analysis
-//  • lesson text contains the right tags depending on bypass + outcome combo
+//  • checkPaperLearningMode is HARD-DISABLED — active=false in every scenario,
+//    even when env vars (PAPER_LEARNING_MODE=true, allow-bypass flags) say
+//    otherwise. Closed-trade audit (May 2026) showed bypass entries produced
+//    net-negative paper P&L; channel is closed in code so a stale VPS env
+//    file cannot reopen it.
+//  • All allow-bypass flags must read false; minSignalScore must surface as
+//    the normal-mode floor (70).
+//  • lesson-engine still exercises closed-trade post-mortem logic for
+//    historical / future learning trades.
 //  • summarizeByBypass produces win/loss aggregates
 
 import { describe, it, expect, vi } from "vitest";
@@ -13,6 +19,7 @@ import {
   summarizeByBypass,
   type ClosedTradeContext,
 } from "@/lib/learning/lesson-engine";
+import { checkPaperLearningMode } from "@/lib/paper-learning-mode";
 
 const baseSettings = {
   trading_mode: "paper" as const,
@@ -41,50 +48,71 @@ async function loadHelperWithEnv(envOverrides: Partial<{ paperLearningMode: bool
   return mod.checkPaperLearningMode;
 }
 
-describe("checkPaperLearningMode — gating", () => {
-  it("inactive when PAPER_LEARNING_MODE=false (default)", async () => {
+describe("checkPaperLearningMode — hard-disabled (May 2026)", () => {
+  it("inactive when PAPER_LEARNING_MODE=false (env default)", async () => {
     const fresh = await loadHelperWithEnv({ paperLearningMode: false });
     const r = fresh(baseSettings);
     expect(r.active).toBe(false);
-    expect(r.inactiveReason).toContain("PAPER_LEARNING_MODE=false");
+    expect(r.inactiveReason).toMatch(/HARDDISABLED/);
+  });
+
+  it("STILL inactive even when env vars try to enable it", async () => {
+    // Reproduces the prod misconfiguration that caused the audit incident:
+    // a stale VPS env file with PAPER_LEARNING_MODE=true. Helper must
+    // ignore the env var because the bypass channel is closed in code.
+    const fresh = await loadHelperWithEnv({ paperLearningMode: true });
+    const r = fresh(baseSettings);
+    expect(r.active).toBe(false);
+    expect(r.inactiveReason).toMatch(/HARDDISABLED/);
+  });
+
+  it("STILL inactive when both PAPER_LEARNING_MODE=true and trading_mode=paper (audit scenario)", async () => {
+    const fresh = await loadHelperWithEnv({ paperLearningMode: true });
+    const r = fresh({ ...baseSettings, trading_mode: "paper", enable_live_trading: false });
+    expect(r.active).toBe(false);
   });
 
   it("inactive when trading_mode != paper", async () => {
     const fresh = await loadHelperWithEnv({ paperLearningMode: true });
     const r = fresh({ ...baseSettings, trading_mode: "live" });
     expect(r.active).toBe(false);
-    expect(r.inactiveReason).toContain("trading_mode=live");
-  });
-
-  it("inactive when enable_live_trading=true", async () => {
-    const fresh = await loadHelperWithEnv({ paperLearningMode: true });
-    const r = fresh({ ...baseSettings, enable_live_trading: true });
-    expect(r.active).toBe(false);
-    expect(r.inactiveReason).toContain("enable_live_trading=true");
   });
 
   it("inactive when HARD_LIVE_TRADING_ALLOWED=true", async () => {
     const fresh = await loadHelperWithEnv({ paperLearningMode: true, hardLiveTradingAllowed: true });
     const r = fresh(baseSettings);
     expect(r.active).toBe(false);
-    expect(r.inactiveReason).toContain("HARD_LIVE_TRADING_ALLOWED");
   });
 
-  it("inactive when kill switch is active", async () => {
-    const fresh = await loadHelperWithEnv({ paperLearningMode: true });
-    const r = fresh({ ...baseSettings, kill_switch_active: true });
-    expect(r.active).toBe(false);
-    expect(r.inactiveReason).toContain("kill_switch");
-  });
-
-  it("active under safe paper conditions", async () => {
+  it("all allow-bypass flags surface as false regardless of env", async () => {
     const fresh = await loadHelperWithEnv({ paperLearningMode: true });
     const r = fresh(baseSettings);
-    expect(r.active).toBe(true);
-    expect(r.minSignalScore).toBe(1);
-    expect(r.maxOpenPositions).toBe(20);
-    expect(r.maxTradesPerDay).toBe(100);
-    expect(r.autoSlTp).toBe(true);
+    expect(r.allowRiskBypass).toBe(false);
+    expect(r.allowMarketQualityBypass).toBe(false);
+    expect(r.allowBtcFilterBypass).toBe(false);
+    expect(r.allowRrBypass).toBe(false);
+    expect(r.autoSlTp).toBe(false);
+  });
+
+  it("minSignalScore is the normal-mode floor (70), never the env override", async () => {
+    const fresh = await loadHelperWithEnv({ paperLearningMode: true });
+    const r = fresh(baseSettings);
+    expect(r.minSignalScore).toBe(70);
+  });
+
+  it("maxOpenPositions/maxTradesPerDay return zero (no learning batches allowed)", async () => {
+    const fresh = await loadHelperWithEnv({ paperLearningMode: true });
+    const r = fresh(baseSettings);
+    expect(r.maxOpenPositions).toBe(0);
+    expect(r.maxTradesPerDay).toBe(0);
+  });
+
+  it("statically — production export is hard-disabled (no env mock)", () => {
+    // Reads through the live env file; verifies the helper returns inactive
+    // even with whatever the deployed env says.
+    const r = checkPaperLearningMode(baseSettings);
+    expect(r.active).toBe(false);
+    expect(r.inactiveReason).toMatch(/HARDDISABLED/);
   });
 });
 

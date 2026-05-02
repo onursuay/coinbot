@@ -1,26 +1,15 @@
-// Force Paper Entry Mode helper.
-// Active ONLY when all five conditions hold simultaneously:
-//   1. FORCE_PAPER_ENTRY_MODE=true
-//   2. trading_mode === "paper"
-//   3. enable_live_trading !== true
-//   4. HARD_LIVE_TRADING_ALLOWED !== true
-//   5. kill switch is NOT active
+// Force Paper Entry Mode — HARD-DISABLED at helper level (May 2026).
 //
-// When active, risk engine blocking, market quality gates, BTC filter,
-// R:R minimum, and whitelist are bypassed for paper position insertion.
+// Closed-trade audit showed bypass channels (risk gate / market_quality_bypass /
+// btc_filter_bypass) were producing net-negative paper trades. Per user mandate,
+// the channel is closed in code; env vars (FORCE_PAPER_ENTRY_MODE,
+// FORCE_PAPER_ALLOW_*) are intentionally ignored to prevent reopening via env.
 //
-// Bypassed gates (paper-only, virtual — no real orders):
-//   market quality score, ATR/funding/depth quality checks, BTC trend filter,
-//   tier reject, risk engine rule violations (margin, spread, etc.), R:R minimum,
-//   whitelist / tier membership, signal score threshold.
+// `checkForcePaperEntryMode` always returns `active=false` so the orchestrator
+// branches that bypass risk / quality / BTC-filter / R:R gates become no-ops.
+// Paper trade entries now flow through the normal-mode gate stack.
 //
-// Fatal gates that still apply regardless of this mode:
-//   kill switch active, live trading indicators present, no entry price,
-//   same symbol already has an open position (duplicate), position count ≥
-//   FORCE_PAPER_MAX_OPEN_POSITIONS, daily trade count ≥
-//   FORCE_PAPER_MAX_TRADES_PER_DAY, Supabase INSERT failure.
-
-import { env } from "@/lib/env";
+// Live execution gates are unaffected — they were and remain locked off.
 
 export interface ForcePaperCheck {
   active: boolean;
@@ -34,38 +23,20 @@ export interface ForcePaperCheck {
   allowRrBypass: boolean;
 }
 
-export function checkForcePaperEntryMode(settings: {
+export function checkForcePaperEntryMode(_settings: {
   trading_mode?: string | null;
   enable_live_trading?: boolean | null;
   kill_switch_active?: boolean | null;
 }): ForcePaperCheck {
-  const inactive = (reason: string): ForcePaperCheck => ({
+  return {
     active: false,
-    inactiveReason: reason,
+    inactiveReason: "HARDDISABLED: force paper entry bypass channel closed in code",
     maxOpenPositions: 0,
     maxTradesPerDay: 0,
-    minSignalScore: 1,
+    minSignalScore: 70,
     allowRiskBypass: false,
     allowMarketQualityBypass: false,
     allowBtcFilterBypass: false,
     allowRrBypass: false,
-  });
-
-  if (!env.forcePaperEntryMode) return inactive("FORCE_PAPER_ENTRY_MODE=false");
-  if (settings.trading_mode !== "paper") return inactive(`trading_mode=${settings.trading_mode ?? "unknown"} (paper gerekli)`);
-  if (settings.enable_live_trading === true) return inactive("enable_live_trading=true");
-  if (env.hardLiveTradingAllowed) return inactive("HARD_LIVE_TRADING_ALLOWED=true");
-  if (settings.kill_switch_active === true) return inactive("kill_switch_active=true");
-
-  return {
-    active: true,
-    inactiveReason: null,
-    maxOpenPositions: env.forcePaperMaxOpenPositions,
-    maxTradesPerDay: env.forcePaperMaxTradesPerDay,
-    minSignalScore: env.forcePaperMinSignalScore,
-    allowRiskBypass: env.forcePaperAllowRiskBypass,
-    allowMarketQualityBypass: env.forcePaperAllowMarketQualityBypass,
-    allowBtcFilterBypass: env.forcePaperAllowBtcFilterBypass,
-    allowRrBypass: env.forcePaperAllowRrBypass,
   };
 }
