@@ -78,6 +78,13 @@ export async function GET() {
           blockers: ["Supabase env missing"],
           checks: [],
         },
+        strategy_health: {
+          score: null,
+          min: null,
+          bypassedByLearning: false,
+          blockedInNormalMode: false,
+          blockReason: null,
+        },
         supabase_configured: false,
       });
     }
@@ -278,6 +285,13 @@ export async function GET() {
       diagnosticsAgeSec,
       lastTickAt,
       diagnosticsGeneratedAt,
+      strategy_health: {
+        score: tickSummary?.strategyHealthScore ?? null,
+        min: tickSummary?.strategyHealthMin ?? null,
+        bypassedByLearning: tickSummary?.strategyHealthBypassedByLearning ?? false,
+        blockedInNormalMode: tickSummary?.strategyHealthBlockedInNormalMode ?? false,
+        blockReason: tickSummary?.strategyHealthBlockReason ?? null,
+      },
       unified_diagnostics: {
         unifiedCandidatePoolActive: tickSummary?.unifiedCandidatePoolActive ?? false,
         unifiedPoolSize: tickSummary?.unifiedPoolSize ?? null,

@@ -116,6 +116,13 @@ interface DiagData {
   tickError?: string | null;
   diagnosticsStale?: boolean;
   diagnosticsAgeSec?: number | null;
+  strategy_health?: {
+    score?: number | null;
+    min?: number | null;
+    bypassedByLearning?: boolean;
+    blockedInNormalMode?: boolean;
+    blockReason?: string | null;
+  } | null;
 }
 
 // ── Sabitler: signal threshold ─────────────────────────────────────────
@@ -468,6 +475,20 @@ export default function ScannerPage() {
           >
             Geçilenleri sıfırla
           </button>
+        </div>
+      )}
+
+      {/* Strategy health soft-pass uyarısı (Paper Learning Mode) */}
+      {data?.strategy_health?.bypassedByLearning && (
+        <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden>
+            <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3.5a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 4.5zm0 7a.875.875 0 1 1 0-1.75.875.875 0 0 1 0 1.75z"/>
+          </svg>
+          Strateji sağlık skoru düşük
+          {typeof data.strategy_health.score === "number" && typeof data.strategy_health.min === "number"
+            ? ` (${data.strategy_health.score}/${data.strategy_health.min})`
+            : ""}
+          . Tarama devam ediyor, canlı/sıkı modda işlem açılmaz.
         </div>
       )}
 

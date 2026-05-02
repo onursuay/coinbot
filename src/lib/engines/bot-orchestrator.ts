@@ -460,6 +460,14 @@ export interface TickResult {
   maxDailyTradesFromRiskSettings?: number;
   effectiveCapitalUsdt?: number;
   riskCapitalSource?: string;
+  // Strategy health diagnostics — populated every tick. The "*BypassedByLearning"
+  // flag is true only when the score was below the live/normal-mode threshold
+  // and Paper Learning Mode kept the tick alive for data collection.
+  strategyHealthScore?: number;
+  strategyHealthMin?: number;
+  strategyHealthBypassedByLearning?: boolean;
+  strategyHealthBlockedInNormalMode?: boolean;
+  strategyHealthBlockReason?: string | null;
 }
 
 const PAPER_BALANCE = 1000;
@@ -852,19 +860,48 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     return result;
   }
 
+  // Pre-compute Paper Learning Mode so the strategy health gate can soft-pass
+  // (metadata-only) instead of hard-blocking the tick. The full activation
+  // logging + forceMode promotion still happens further below; this early call
+  // is purely for gate-bypass decisions and stays consistent with that block.
+  const paperLearning = checkPaperLearningMode(settings);
+  const learningModeActive = paperLearning.active;
+
   // ── STRATEGY HEALTH GATE ── block new trades if score below threshold
+  // In Paper Learning Mode the gate becomes informational: tick continues,
+  // scanner runs, candidates are produced; the score is recorded as a risk
+  // warning / metadata on every paper-learning trade that opens.
   const strategyHealth = await calculateStrategyHealth(userId);
+  const strategyHealthMin = env.minStrategyHealthScoreToTrade;
+  result.strategyHealthScore = strategyHealth.score;
+  result.strategyHealthMin = strategyHealthMin;
   if (strategyHealth.blocked) {
-    result.ok = true;
-    result.reason = `strategy_health_blocked: ${strategyHealth.blockReason}`;
-    result.durationMs = Date.now() - start;
-    await botLog({
-      userId, level: "warn", eventType: "tick_completed",
-      message: `Tick — strateji sağlık gate reddetti: ${strategyHealth.blockReason}`,
-      metadata: { score: strategyHealth.score, totalTrades: strategyHealth.totalTrades },
-    });
-    await writeSkipSummary(userId, opts?.workerContext, `strategy_health_blocked:${strategyHealth.blockReason ?? "unknown"}`, tickStartedAt);
-    return result;
+    if (learningModeActive) {
+      result.strategyHealthBypassedByLearning = true;
+      result.strategyHealthBlockedInNormalMode = true;
+      result.strategyHealthBlockReason = strategyHealth.blockReason;
+      await botLog({
+        userId, level: "warn", eventType: "paper_learning_strategy_health_bypass",
+        message: `Tick — strategy health düşük (${strategyHealth.score}/${strategyHealthMin}), paper learning izleme/öğrenme modunda devam ediyor`,
+        metadata: {
+          score: strategyHealth.score,
+          threshold: strategyHealthMin,
+          totalTrades: strategyHealth.totalTrades,
+          blockReason: strategyHealth.blockReason,
+        },
+      });
+    } else {
+      result.ok = true;
+      result.reason = `strategy_health_blocked: ${strategyHealth.blockReason}`;
+      result.durationMs = Date.now() - start;
+      await botLog({
+        userId, level: "warn", eventType: "tick_completed",
+        message: `Tick — strateji sağlık gate reddetti: ${strategyHealth.blockReason}`,
+        metadata: { score: strategyHealth.score, totalTrades: strategyHealth.totalTrades },
+      });
+      await writeSkipSummary(userId, opts?.workerContext, `strategy_health_blocked:${strategyHealth.blockReason ?? "unknown"}`, tickStartedAt);
+      return result;
+    }
   }
 
   // Aggressive Paper Test Mode — paper-only relaxed gates.
@@ -890,8 +927,8 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   // mode is not, promote forceMode to paperLearning's settings so the existing
   // bypass path is reused; learning metadata + trade_learning_events are
   // layered on top via `learningModeActive`. Live execution gates untouched.
-  const paperLearning = checkPaperLearningMode(settings);
-  const learningModeActive = paperLearning.active;
+  // (`paperLearning` and `learningModeActive` are computed earlier — see the
+  // strategy health gate section — so they can drive the soft-pass decision.)
   if (paperLearning.active && !forceMode.active) {
     forceMode = {
       active: true,
@@ -1498,6 +1535,16 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         if (forceMode.allowMarketQualityBypass) bypassedGates.push("market_quality_bypass");
         if (forceMode.allowBtcFilterBypass) bypassedGates.push("btc_filter_bypass");
       }
+      // Strategy-health soft-pass — only marked when Paper Learning Mode kept
+      // the tick alive despite a sub-threshold score. Normal/live ticks would
+      // have hard-blocked above and never reached this point.
+      if (learningModeActive && result.strategyHealthBypassedByLearning) {
+        bypassedGates.push("strategy_health");
+      }
+      const learningRiskWarnings: string[] = [
+        ...(risk.allowed ? [] : risk.ruleViolations),
+        ...(result.strategyHealthBypassedByLearning ? ["Strateji sağlık skoru düşük"] : []),
+      ];
 
       const paperLearningPrefix = learningModeActive
         ? "PAPER LEARNING: risk gates bypassed for learning dataset. "
@@ -1566,10 +1613,14 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
             original_signal_score: sig.score,
             original_market_quality_score: detail.marketQualityScore,
             original_setup_score: detail.setupScore,
-            normal_mode_would_reject: normalModeWouldReject,
+            normal_mode_would_reject: normalModeWouldReject || (result.strategyHealthBypassedByLearning === true),
             original_reject_reason: forcePaperOriginalRejectReason ?? (risk.allowed ? null : risk.reason),
             bypassed_risk_gates: bypassedGates,
-            risk_warnings: risk.allowed ? [] : risk.ruleViolations,
+            risk_warnings: learningRiskWarnings,
+            strategy_health_score: result.strategyHealthScore ?? null,
+            strategy_health_min: result.strategyHealthMin ?? null,
+            strategy_health_blocked_in_normal_mode: result.strategyHealthBlockedInNormalMode === true,
+            strategy_health_block_reason: result.strategyHealthBlockReason ?? null,
             btc_trend_state: detail.btcTrendRejected ? "misaligned" : "aligned_or_neutral",
             spread_state: typeof ticker.spread === "number" ? `${(ticker.spread * 100).toFixed(3)}%` : null,
             depth_state: typeof detail.mqsDepthAdjustment === "number" ? `delta=${detail.mqsDepthAdjustment}` : null,
@@ -1634,9 +1685,12 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
             setupScore: detail.setupScore,
             marketQualityScore: detail.marketQualityScore,
             bypassedGates,
-            normalModeWouldReject,
+            normalModeWouldReject: normalModeWouldReject || (result.strategyHealthBypassedByLearning === true),
             originalRejectReason: forcePaperOriginalRejectReason ?? (risk.allowed ? null : risk.reason),
-            riskWarnings: risk.allowed ? [] : risk.ruleViolations,
+            riskWarnings: learningRiskWarnings,
+            strategyHealthScore: result.strategyHealthScore ?? null,
+            strategyHealthMin: result.strategyHealthMin ?? null,
+            strategyHealthBlockedInNormalMode: result.strategyHealthBlockedInNormalMode === true,
             entryPrice: effectiveEntryPrice,
             stopLoss: effectiveStopLoss,
             takeProfit: effectiveTakeProfit,
@@ -1763,6 +1817,12 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
     lastOpenedTrade: result.openedPaperTrades[0] ?? null,
     topRejectReasons: result.rejectedSignals.slice(0, 10).map((r) => `${r.symbol}: ${r.reason}`),
     topNearMiss: result.nearMissSignals.slice(0, 5).map((n) => `${n.direction} ${n.symbol} skor=${n.score}`),
+    // Strategy health diagnostics — surfaces the soft-pass banner in the scanner UI.
+    strategyHealthScore: result.strategyHealthScore ?? null,
+    strategyHealthMin: result.strategyHealthMin ?? null,
+    strategyHealthBypassedByLearning: result.strategyHealthBypassedByLearning ?? false,
+    strategyHealthBlockedInNormalMode: result.strategyHealthBlockedInNormalMode ?? false,
+    strategyHealthBlockReason: result.strategyHealthBlockReason ?? null,
   };
   if (wCtx?.isLockOwner !== false) {
     await sb.from("bot_settings").update({
