@@ -33,6 +33,11 @@ function closeMessageFor(code: string | undefined, fallback: string): string {
 export default function PaperTradesPage() {
   const [open, setOpen] = useState<any[]>([]);
   const [closed, setClosed] = useState<any[]>([]);
+  // Canonical aggregate — Panel KPI ile aynı kaynaktan (paper-stats helper).
+  // Tablo altındaki "Toplam" satırı bu değerlerden render edilir, böylece
+  // kullanıcı Panel KPI ile satır toplamının birebir eşit olduğunu ekrandan
+  // doğrulayabilir.
+  const [perf, setPerf] = useState<{ totalPnl: number; dailyPnl: number; totalTrades: number; closedToday: number } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [closeNotice, setCloseNotice] = useState<CloseNotice | null>(null);
   // Per-trade loading flag — prevents double-clicks from sending a second
@@ -40,8 +45,19 @@ export default function PaperTradesPage() {
   const [closingId, setClosingId] = useState<string | null>(null);
 
   const refresh = async () => {
-    const r = await fetch("/api/paper-trades?limit=200", { cache: "no-store" }).then((r) => r.json());
-    if (r.ok) { setOpen(r.data.open); setClosed(r.data.closed); }
+    const [r, p] = await Promise.all([
+      fetch("/api/paper-trades?limit=200", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+      fetch("/api/paper-trades/performance", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
+    ]);
+    if (r?.ok) { setOpen(r.data.open); setClosed(r.data.closed); }
+    if (p?.ok) {
+      setPerf({
+        totalPnl: Number(p.data?.totalPnl ?? 0),
+        dailyPnl: Number(p.data?.dailyPnl ?? 0),
+        totalTrades: Number(p.data?.totalTrades ?? 0),
+        closedToday: Number(p.data?.closedToday ?? 0),
+      });
+    }
   };
 
   useEffect(() => {
@@ -186,6 +202,24 @@ export default function PaperTradesPage() {
             <th>Sembol</th><th>Yön</th><th>Kaldıraç</th><th>Giriş</th><th>Çıkış</th><th>Kâr/Zarar</th><th>%</th>
             <th>Ücretler</th><th>Kayma</th><th>Fonlama</th><th>Sebep</th><th>Kapanış</th><th></th>
           </tr></thead>
+          {/* Toplam satırı — Panel KPI'ları ile aynı canonical kaynaktan
+              (/api/paper-trades/performance → getPaperTradeStats). Burada
+              gösterilen değer ile Panel "Toplam Kâr/Zarar" KPI'sı bire bir
+              eşit olmalıdır; aksi durumda invariant testi (paper-stats-canonical)
+              kırılır. */}
+          {perf && (
+            <tfoot>
+              <tr className="font-medium">
+                <td colSpan={5} className="text-right text-muted">
+                  Toplam ({perf.totalTrades} kapalı işlem, bugün {perf.closedToday})
+                </td>
+                <td className={perf.totalPnl >= 0 ? "text-success" : "text-danger"}>{fmtUsd(perf.totalPnl)}</td>
+                <td colSpan={7} className="text-xs text-muted">
+                  Günlük: <span className={perf.dailyPnl >= 0 ? "text-success" : "text-danger"}>{fmtUsd(perf.dailyPnl)}</span> — Panel KPI ile birebir aynıdır (canonical paper-stats helper).
+                </td>
+              </tr>
+            </tfoot>
+          )}
           <tbody>
             {closed.length === 0 && <tr><td colSpan={13} className="text-muted">Henüz kapanan işlem yok</td></tr>}
             {closed.map((t) => (

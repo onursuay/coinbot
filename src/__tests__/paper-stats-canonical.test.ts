@@ -163,4 +163,105 @@ describe("paper-stats canonical helper", () => {
     expect(s.breakEvenTrades).toBe(1);
     expect(s.totalPnl).toBe(0);
   });
+
+  // ── Panel ↔ Sanal İşlemler parity invariants ──────────────────────────
+  // The Panel "TOPLAM KÂR/ZARAR" KPI tile and the new "Toplam" footer row at
+  // the bottom of the Sanal İşlemler > Kapanan İşlemler table must surface
+  // the SAME number, because both render the value coming out of this
+  // helper. These tests pin that invariant.
+
+  it("Panel KPI ↔ Kapanan İşlemler footer parity: totalPnl = Σ row.pnl (closed)", () => {
+    const rows = [
+      { pnl: 10.87, status: "closed", closed_at: todayUtc },
+      { pnl: 11.07, status: "closed", closed_at: todayUtc },
+      { pnl: -5.41, status: "closed", closed_at: todayUtc },
+      { pnl: -16.94, status: "closed", closed_at: todayUtc },
+      { pnl: 11.06, status: "closed", closed_at: yesterdayUtc },
+      { pnl: -5.23, status: "closed", closed_at: yesterdayUtc },
+      // Open positions: must NEVER bleed into Panel KPI total.
+      { pnl: 999, status: "open", closed_at: null },
+      { pnl: -888, status: "open", closed_at: null },
+    ];
+    const closedRowSum = rows
+      .filter((r) => r.status === "closed")
+      .reduce((acc, r) => acc + Number(r.pnl ?? 0), 0);
+    const stats = computeStats(rows);
+    // Panel KPI tile reads stats.totalPnl; Kapanan İşlemler footer also
+    // reads stats.totalPnl (same /api/paper-trades/performance response).
+    expect(stats.totalPnl).toBeCloseTo(closedRowSum, 6);
+    expect(stats.openTrades).toBe(2);
+    expect(stats.totalTrades).toBe(6);
+  });
+
+  it("open position unrealized pnl never affects totalPnl or dailyPnl", () => {
+    // Even if an open trade has a wildly negative or positive `pnl` field
+    // populated (e.g. from an unrealized-pnl writer), the helper must skip
+    // it — KPIs are realized-only.
+    const stats = computeStats([
+      { pnl: 50, status: "closed", closed_at: todayUtc },
+      { pnl: -1000, status: "open", closed_at: null },
+      { pnl: 2000, status: "open", closed_at: todayUtc },
+    ]);
+    expect(stats.totalPnl).toBe(50);
+    expect(stats.dailyPnl).toBe(50);
+    expect(stats.openTrades).toBe(2);
+  });
+
+  it("daily/total can equal each other when all closed trades are from today (not a bug)", () => {
+    // Reproduces the live state at audit time: all 10 closed trades had
+    // closed_at on the same UTC day, so dailyPnl == totalPnl. This is
+    // expected, not a duplication.
+    const rows = [
+      { pnl: 10.87, status: "closed", closed_at: todayUtc },
+      { pnl: 11.07, status: "closed", closed_at: todayUtc },
+      { pnl: 11.11, status: "closed", closed_at: todayUtc },
+      { pnl: 11.06, status: "closed", closed_at: todayUtc },
+      { pnl: -5.41, status: "closed", closed_at: todayUtc },
+      { pnl: -5.28, status: "closed", closed_at: todayUtc },
+      { pnl: -16.94, status: "closed", closed_at: todayUtc },
+      { pnl: -6.18, status: "closed", closed_at: todayUtc },
+      { pnl: -6.35, status: "closed", closed_at: todayUtc },
+      { pnl: -5.23, status: "closed", closed_at: todayUtc },
+    ];
+    const stats = computeStats(rows);
+    expect(stats.dailyPnl).toBeCloseTo(stats.totalPnl, 6);
+    expect(stats.totalPnl).toBeCloseTo(-1.28, 1);
+  });
+
+  it("daily/total diverge correctly when older closed trades exist", () => {
+    const rows = [
+      { pnl: 10, status: "closed", closed_at: todayUtc },
+      { pnl: -3, status: "closed", closed_at: todayUtc },
+      { pnl: 100, status: "closed", closed_at: yesterdayUtc },
+      { pnl: -50, status: "closed", closed_at: yesterdayUtc },
+    ];
+    const stats = computeStats(rows);
+    expect(stats.dailyPnl).toBeCloseTo(7, 6);
+    expect(stats.totalPnl).toBeCloseTo(57, 6);
+    expect(stats.dailyPnl).not.toBe(stats.totalPnl);
+  });
+
+  it("closedToday counts trades by UTC midnight, not local midnight", () => {
+    // Just-before-UTC-midnight yesterday → must NOT count as today.
+    // Just-after-UTC-midnight today → MUST count as today, regardless of
+    // viewer's local timezone.
+    const yesterdayLastSecond = (() => {
+      const d = new Date();
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCMilliseconds(-1); // 23:59:59.999 of yesterday UTC
+      return d.toISOString();
+    })();
+    const todayFirstMinute = (() => {
+      const d = new Date();
+      d.setUTCHours(0, 1, 0, 0); // 00:01:00.000 today UTC
+      return d.toISOString();
+    })();
+    const stats = computeStats([
+      { pnl: 7, status: "closed", closed_at: yesterdayLastSecond },
+      { pnl: 5, status: "closed", closed_at: todayFirstMinute },
+    ]);
+    expect(stats.closedToday).toBe(1);
+    expect(stats.dailyPnl).toBe(5);
+    expect(stats.totalPnl).toBe(12);
+  });
 });

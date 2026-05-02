@@ -309,6 +309,10 @@ export default function HomePage() {
         <KpiTile label="KAPANAN İŞLEM" value={String(perf?.totalTrades ?? 0)} tone="muted" />
         <KpiTile label="AÇIK POZİSYON" value={String(perf?.openTrades ?? (paper.open?.length ?? 0))} tone="muted" />
       </div>
+      <p className="text-[11px] text-muted -mt-2">
+        Sadece kapanmış paper işlemler dahildir. Açık pozisyonların gerçekleşmemiş PnL&apos;i bu toplamlara katılmaz; değerler{" "}
+        <span className="font-mono">paper_trades.pnl</span> sütununun toplamıdır ve Sanal İşlemler ▸ Kapanan İşlemler tablosunun alt &quot;Toplam&quot; satırı ile birebir aynıdır.
+      </p>
 
       {/* 4. POZİSYON KARAR MERKEZİ */}
       <DecisionCenterCard rows={scanRows} exchange={status?.bot?.active_exchange ?? "binance"} />
