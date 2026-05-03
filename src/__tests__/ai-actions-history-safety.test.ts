@@ -65,18 +65,19 @@ describe("/api/ai-actions/history route — safety invariants", () => {
     expect(route).toMatch(/sinceDays/);
   });
 
-  it("event_type filtresi JS-side uygulanıyor (IN clause kaldırıldı, indeks dostu)", () => {
-    // SQL IN(event_type) clause'u (user_id, created_at) indeksini
-    // kullanmaktan kaçınıyor ve timeout veriyordu. Tüm AI event tipleri
-    // JS Set ile filtrelenir.
+  it("event_type SQL filtresi prefix LIKE ile + JS Set ile incelt", () => {
+    // SQL IN(event_type=AI...) clause'u (user_id, created_at) indeksini
+    // kullanmaktan kaçınıyor ve timeout veriyordu. Çözüm: prefix LIKE
+    // 'ai\\_%' (cardinality düşük → indeks dostu) + JS Set filtresi
+    // (yalnızca AI Aksiyon Merkezi event'leri kabul edilir).
+    expect(route).toMatch(/\.like\(["']event_type["'],\s*["']ai\\\\_%["']/);
     expect(route).toMatch(/aiEventSet/);
     expect(route).toMatch(/new Set<string>\(AI_ACTION_EVENT_TYPES\)/);
-    // SQL clause kalmamalı
+    // Eski IN clause kalmamalı
     expect(route).not.toMatch(/\.in\(["']event_type["']/);
   });
 
-  it("over-fetch + slice ile limit korunur (default 50 görünür, 600 over-fetch cap)", () => {
-    expect(route).toMatch(/overFetchLimit/);
+  it("limit slice + items.slice(0, limit) post-JS-filter koruması var", () => {
     expect(route).toMatch(/items\.slice\(0,\s*limit\)/);
   });
 

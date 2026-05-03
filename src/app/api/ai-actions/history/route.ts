@@ -100,20 +100,23 @@ export async function GET(req: Request) {
     }
 
     const sb = supabaseAdmin();
-    // Mevcut kullanıcı için bot_logs'tan tarih + LIMIT ile çek; AI event_type
-    // filtresini JS-tarafında uygula. Üretimde IN(event_type) clause'u
-    // (user_id, created_at) indeksini kullanmaktan kaçınıp Supabase 8s
-    // statement timeout'unu tetikliyordu (limit≥15 + 30 gün → timeout).
-    // Over-fetch yaparak (limit × 6, max 600 satır) AI olmayan event'leri
-    // JS'te filtreliyoruz; (user_id, created_at) indeksi tetikleniyor.
-    const overFetchLimit = Math.min(600, Math.max(limit * 6, 200));
+    // Üretimde bot_logs çok yoğun (her tick scanner event'i yazıyor); bu yüzden:
+    //   1) IN(event_type=AI...) clause'u (user_id, created_at) indeksini
+    //      kullanmaktan kaçınıp Supabase 8s timeout'unu tetikliyordu.
+    //   2) Saf user_id+created_at order ile over-fetch ise non-AI satırlarla
+    //      doluyor ve AI event'leri kaçırılıyor.
+    // Çözüm: SQL'de sadece "ai_*" prefix LIKE filtresi (tüm AI event'leri
+    // kapsıyor, IN clause'una göre çok daha az kardinaliteli) + JS Set
+    // filtresi (yalnızca AI Aksiyon Merkezi event'lerini bırak — örn.
+    // ai_decision_requested gibi eski AI yorum event'leri dışarıda kalır).
     const { data, error } = await sb
       .from("bot_logs")
       .select("id, event_type, message, metadata, created_at, level")
       .eq("user_id", userId)
       .gte("created_at", sinceCutoff)
+      .like("event_type", "ai\\_%")
       .order("created_at", { ascending: false })
-      .limit(overFetchLimit);
+      .limit(Math.min(MAX_LIMIT * 4, 800));
 
     if (error) {
       return fail("Aksiyon geçmişi alınamadı.", 500, {
@@ -121,7 +124,8 @@ export async function GET(req: Request) {
       });
     }
 
-    // AI Aksiyon Merkezi event'lerini JS-side filter ile süz, sonra limit'e indir.
+    // SQL prefix LIKE 'ai\_%' tüm ai_* event'leri yakalar; JS Set filtresi
+    // sadece AI Aksiyon Merkezi (Faz 1.0+) event'lerini bırakır.
     const aiEventSet = new Set<string>(AI_ACTION_EVENT_TYPES);
     const aiRows = (data ?? []).filter((r: { event_type?: string | null }) =>
       typeof r.event_type === "string" && aiEventSet.has(r.event_type),
