@@ -1,24 +1,30 @@
 # CoinBot — Project Instructions
 
 > **🚨 KURAL — Her işlem sonrasında otomatik yapılacaklar:**
-> **Commit + push yap. Worker kodu değiştiyse VPS deploy'u izle; UI-only değişiklikse workflow tetiklenmez, sadece Vercel'e gider.**
+> **Commit + push + GitHub Actions durumunu izle + VPS'te worker'ı yeniden deploy et.**
+> Yol filtresi eşleşmese bile (UI-only commit dahil) `gh workflow run deploy-worker.yml` ile manuel tetikle ve `gh run watch` ile sonucu doğrula.
 
 ## Her işlem sonrasında otomatik yapılacaklar
 
-**Her görev tamamlandığında**, kullanıcı ayrıca istemese bile:
+**Her görev tamamlandığında**, kullanıcı ayrıca istemese bile, sırasıyla:
 
 1. **Commit** — değişen dosyaları stage et, anlamlı bir commit mesajı yaz.
 2. **Push** — `git push origin main`.
+3. **GitHub Actions tetikle** — yol filtresi eşleşiyorsa otomatik; eşleşmiyorsa
+   `gh workflow run deploy-worker.yml --ref main` ile manuel tetikle.
+4. **Workflow'u izle** — `gh run watch <run-id> --exit-status` ile sonucu bekle.
+5. **VPS heartbeat doğrula** — `curl -s https://coin.onursuay.com/api/bot/heartbeat`
+   yanıtında `"online":true` ve `"status":"running_paper"` görünmeli.
 
 ### Değişiklik tipine göre deploy davranışı
 
-| Değişen dosyalar | GitHub Actions tetiklenir mi? | Yapılacak |
-|------------------|-------------------------------|-----------|
-| `worker/**`, `src/lib/**`, `scripts/**`, `package.json`, `tsconfig.json` | ✅ Evet — VPS deploy çalışır | `gh run watch <run-id>` ile izle, heartbeat doğrula |
-| `src/app/**`, `src/components/**`, `CLAUDE.md`, `*.md` | ❌ Hayır — sadece Vercel | Push yeterli; workflow izleme gerekmez |
-| `workflow_dispatch` ile manuel tetikle | ✅ Her zaman | Gerektiğinde `gh workflow run deploy-worker.yml` |
+| Değişen dosyalar | GitHub Actions otomatik tetiklenir mi? | Yapılacak |
+|------------------|----------------------------------------|-----------|
+| `worker/**`, `src/lib/**`, `scripts/**`, `package.json`, `tsconfig.json` | ✅ Evet — push otomatik tetikler | `gh run watch <run-id>` ile izle, heartbeat doğrula |
+| `src/app/**`, `src/components/**`, `CLAUDE.md`, `*.md` | ❌ Path otomatik tetiklemez | `gh workflow run deploy-worker.yml --ref main` ile **manuel tetikle**, izle, heartbeat doğrula |
+| `workflow_dispatch` ile manuel tetikle | ✅ Her zaman | `gh workflow run deploy-worker.yml --ref main` |
 
-**VPS deploy gerektiren değişiklikte doğrulama:**
+**Her durumda doğrulama** (UI-only dahil):
 - `gh run watch <run-id> --exit-status` ile workflow'u izle
 - Heartbeat'te `"online":true` ve `"status":"running_paper"` görünmeli
 
@@ -137,3 +143,44 @@ Canlı emir açmak için **üçü aynı anda** doğru olmalıdır:
 - BTC trend filtresi açık kalmalı.
 - Worker lock mekanizması bozulmamalı (duplicate worker önlenmeli).
 - Risk ayarları gevşetilmemeli.
+
+---
+
+## AI Aksiyon Merkezi Kuralları
+
+AI Aksiyon Merkezi `/ai-actions` sayfası altında konumlanır. CoinBot
+verilerini analiz eder, hakem kararı çıkarır ve onaylanan aksiyonları
+GitHub ana kaynak akışına hazırlar.
+
+### Mimari ilkeler
+- **GitHub ana kaynak** olacak — tüm değişiklik GitHub üzerinden yürür.
+- **Vercel deploy** GitHub `main` push'ı üzerinden tetiklenir; Aksiyon
+  Merkezi deploy'u izler.
+- **Lokal klasör sadece senkron ortamdır** — kullanıcıya `git pull origin
+  main` ile senkron kalması hatırlatılır.
+- **VPS worker** ayrı runtime olarak ayrı doğrulama akışında izlenir.
+
+### Yetki seviyeleri
+- `observe_only` — sadece analiz, prompt üretmez.
+- `prompt_only` — Claude Code / GitHub promptu üretir; uygulamaz. **Aktif
+  faz: prompt_only.**
+- `approval_required` — riskli değişikliklerde kullanıcı onayı şart
+  (worker, trade engine, risk parametreleri).
+- `blocked` — live trading açma ve tehlikeli aksiyonlar engellenir.
+
+### Sıkı kurallar
+- Live trading değişikliği ASLA otomatik uygulanmaz; her durumda
+  `blocked`.
+- `HARD_LIVE_TRADING_ALLOWED=false` korunacak.
+- Worker dosyaları (`worker/**`), trade engine (`src/lib/engines/**`) ve
+  risk-tier dosyaları `approval_required` seviyesinde değişebilir.
+- Otomatik kod değiştirme, otomatik commit, otomatik deploy bu fazda
+  YOK.
+- Panel'de sadece AI Aksiyon Merkezi özet kartı + "Merkeze Git" butonu
+  görünür; detaylı analiz `/ai-actions` sayfasındadır.
+
+### Faz takvimi
+- **Faz 1.0** (mevcut) — UI iskelet, sidebar entry, statik kartlar.
+- **Faz 2** — AI çağrısı + karar kartları + Claude Code promptu üretimi.
+- **Faz 3+** — GitHub branch/commit/PR otomasyonu, Vercel deploy
+  takibi, VPS heartbeat doğrulama.

@@ -22,12 +22,11 @@ import {
   OpportunityRadarCard,
   OpenPositionsCard,
   PerformanceDecisionCard,
-  AIDecisionAssistantCard,
   type DecisionRow,
   type OpenPositionRow,
   type PerformanceDecisionInput,
-  type AIDecisionCardInput,
 } from "@/components/dashboard/Cards";
+import { AIActionCenterCard } from "@/components/dashboard/AIActionCenterCard";
 
 interface Toast {
   id: number;
@@ -62,8 +61,9 @@ export default function HomePage() {
   const [perfDecision, setPerfDecision] = useState<PerformanceDecisionInput | null>(null);
   // Faz 21 — position management recommendations (advisory, display-only)
   const [pmRecs, setPmRecs] = useState<any[]>([]);
-  // AI Karar Asistanı — RAPORU YENİLE veya ilk yüklemede doldurulur; polling yok
-  const [aiDecision, setAiDecision] = useState<AIDecisionCardInput | null>(null);
+  // AI Aksiyon Merkezi — Faz 1.0: panelde sadece özet kart + Merkeze Git
+  // butonu görünür. Aktif analiz çağrısı /ai-actions sayfasına taşınacak
+  // (Faz 2). /api/ai-decision/interpret endpoint'i değişmedi.
 
   const addToast = useCallback((t: Omit<Toast, "id">) => {
     const id = ++toastId;
@@ -94,38 +94,11 @@ export default function HomePage() {
     if (k?.ok && Array.isArray(k.data?.recommendations)) setPmRecs(k.data.recommendations);
   }, []);
 
-  const fetchAIDecision = useCallback(async (opts?: { notify?: boolean }): Promise<{ ok: boolean; message?: string }> => {
-    try {
-      const res = await fetch("/api/ai-decision/interpret", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode: "paper" }),
-      }).then((r) => r.json()).catch(() => null);
-      if (res?.ok && res.data?.response?.data) {
-        setAiDecision(res.data.response.data);
-        if (opts?.notify) {
-          addToast({ type: "success", message: "AI raporu güncellendi" });
-        }
-        return { ok: true, message: "AI raporu güncellendi." };
-      }
-      const message = res?.error ?? "AI raporu alınamadı.";
-      if (opts?.notify) {
-        addToast({ type: "error", message: "AI raporu yenilenemedi", detail: message });
-      }
-      return { ok: false, message };
-    } catch {
-      const message = "AI raporu yenilenemedi.";
-      if (opts?.notify) {
-        addToast({ type: "error", message });
-      }
-      return { ok: false, message };
-    }
-  }, [addToast]);
-
   useAutoRefresh(refresh);
   // Initial load — useAutoRefresh başlangıçta da çağırır, ama emin olmak için.
-  // AI kararı ayrı yüklenir; auto-refresh döngüsüne dahil değil (polling yok).
-  useEffect(() => { refresh(); void fetchAIDecision(); }, [refresh, fetchAIDecision]);
+  // AI Aksiyon Merkezi çağrısı bu fazda panelden kaldırıldı; /ai-actions
+  // sayfası Faz 2'de bu çağrıyı kendi context'inde yapacak.
+  useEffect(() => { refresh(); }, [refresh]);
 
   const actWithBody = async (path: string, label: string, body?: object) => {
     if (path.endsWith("/start") && envCheck && !envCheck.ok) {
@@ -312,35 +285,8 @@ export default function HomePage() {
         }}
       />
 
-      {/* AI Karar Asistanı — ChatGPT API yorum katmanı; ayar değiştirmez, emir açmaz */}
-      <AIDecisionAssistantCard
-        data={aiDecision}
-        onAction={async (action) => {
-          if (action === "REFRESH") {
-            return fetchAIDecision({ notify: true });
-          }
-          if (action === "OBSERVE") {
-            console.info("ai_decision_observation_selected", {
-              observeDays: aiDecision?.observeDays ?? 14,
-              status: aiDecision?.status ?? "DATA_INSUFFICIENT",
-              actionType: aiDecision?.actionType ?? "DATA_INSUFFICIENT",
-            });
-            addToast({
-              type: "success",
-              message: "14 gün gözlem kararı kaydedildi",
-              detail: "Bu seçim ayar değiştirmez ve emir açmaz.",
-            });
-            return { ok: true, message: "14 gün gözlem kararı kaydedildi." };
-          }
-          if (action === "PROMPT") {
-            return { ok: true, message: "Prompt hazırlandı; otomatik uygulanmaz." };
-          }
-          if (action === "COPY_PROMPT") {
-            addToast({ type: "success", message: "Prompt kopyalandı" });
-            return { ok: true, message: "Prompt kopyalandı." };
-          }
-        }}
-      />
+      {/* AI Aksiyon Merkezi — Panel özet kartı; detaylı analiz /ai-actions sayfasında. */}
+      <AIActionCenterCard />
     </div>
   );
 }

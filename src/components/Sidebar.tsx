@@ -15,6 +15,7 @@ import {
   PanelLeftOpen,
   Bot,
   Layers,
+  Sparkles,
 } from 'lucide-react'
 import { useState, useEffect, useLayoutEffect } from 'react'
 
@@ -29,6 +30,7 @@ const NAV = [
   { href: '/api-settings', label: 'API Ayarları', icon: KeyRound },
   { href: '/strategy', label: 'Strateji', icon: Zap },
   { href: '/performance', label: 'Performans', icon: BarChart3 },
+  { href: '/ai-actions', label: 'AI Aksiyon Merkezi', icon: Sparkles },
   { href: '/logs', label: 'Loglar', icon: ScrollText },
 ]
 
