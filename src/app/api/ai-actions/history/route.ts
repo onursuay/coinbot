@@ -4,11 +4,12 @@
 // okuyup HistoryItem listesi döndürür.
 //
 // Query:
-//   • limit (default 50, max 200)
+//   • limit (default 50, max 200) — AI event filtreleme JS-tarafında.
 //   • sinceDays (default 30, max 180) — created_at >= now - sinceDays.
-//     bot_logs büyüdükçe IN(event_type) + ORDER BY created_at sorgusu
-//     timeout veriyordu; tarih cutoff'u sıralama yükünü azaltıyor ve
-//     filtreleme öncesi taranan satır sayısını sınırlıyor.
+//     bot_logs büyüdükçe IN(event_type) clause + ORDER BY created_at
+//     birleşimi (user_id, created_at) indeksini kullanmaktan kaçınıp
+//     Supabase 8s statement timeout'unu tetikliyordu. Tarih cutoff +
+//     JS-side event_type filtresi indeksi düzgün kullandırıyor.
 //   • category: action | decision | safety | observation | prompt
 //   • status: applied | blocked | failed | observed | requested | refreshed |
 //             cache_hit | cache_miss | fallback | rollback_* | prompt_*
@@ -99,18 +100,20 @@ export async function GET(req: Request) {
     }
 
     const sb = supabaseAdmin();
-    // Mevcut kullanıcı için AI event'leri çek. event_type IN (..) filtresi ile
-    // diğer event'leri (kill switch, scanner vb.) hariç tut. Tarih cutoff'u
-    // (created_at >= sinceCutoff) timeout'u önlemek için zorunlu — bot_logs
-    // tablosu büyüdükçe filtre olmadan ORDER BY çok yavaşlıyordu.
+    // Mevcut kullanıcı için bot_logs'tan tarih + LIMIT ile çek; AI event_type
+    // filtresini JS-tarafında uygula. Üretimde IN(event_type) clause'u
+    // (user_id, created_at) indeksini kullanmaktan kaçınıp Supabase 8s
+    // statement timeout'unu tetikliyordu (limit≥15 + 30 gün → timeout).
+    // Over-fetch yaparak (limit × 6, max 600 satır) AI olmayan event'leri
+    // JS'te filtreliyoruz; (user_id, created_at) indeksi tetikleniyor.
+    const overFetchLimit = Math.min(600, Math.max(limit * 6, 200));
     const { data, error } = await sb
       .from("bot_logs")
       .select("id, event_type, message, metadata, created_at, level")
       .eq("user_id", userId)
       .gte("created_at", sinceCutoff)
-      .in("event_type", AI_ACTION_EVENT_TYPES as unknown as string[])
       .order("created_at", { ascending: false })
-      .limit(limit);
+      .limit(overFetchLimit);
 
     if (error) {
       return fail("Aksiyon geçmişi alınamadı.", 500, {
@@ -118,10 +121,15 @@ export async function GET(req: Request) {
       });
     }
 
-    const rows = (data ?? []) as BotLogRow[];
-    let items = mapHistoryItems(rows);
+    // AI Aksiyon Merkezi event'lerini JS-side filter ile süz, sonra limit'e indir.
+    const aiEventSet = new Set<string>(AI_ACTION_EVENT_TYPES);
+    const aiRows = (data ?? []).filter((r: { event_type?: string | null }) =>
+      typeof r.event_type === "string" && aiEventSet.has(r.event_type),
+    ) as BotLogRow[];
+    let items = mapHistoryItems(aiRows);
     if (category) items = items.filter((i) => i.category === category);
     if (status) items = items.filter((i) => i.status === status);
+    items = items.slice(0, limit);
 
     return ok({
       items,
