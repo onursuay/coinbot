@@ -8,7 +8,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Activity, BarChart3, Bot, Copy, Eye, MessageSquare, RefreshCw } from "lucide-react";
+import { Activity, BarChart3, Bot, Copy, Crosshair, Eye, MessageSquare, RefreshCw } from "lucide-react";
 import { fmtNum, fmtUsd } from "@/lib/format";
 import { DashboardSectionTitle } from "@/components/dashboard/SectionTitle";
 import {
@@ -206,7 +206,7 @@ export function OpportunityRadarCard({ rows }: { rows: RadarRow[] }) {
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="font-semibold tracking-wide">FIRSAT RADARI</h2>
+        <DashboardSectionTitle icon={Crosshair} title="FIRSAT RADARI" />
         <span className="text-[10px] uppercase tracking-wider text-muted">
           toplam {counts.total}
         </span>

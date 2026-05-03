@@ -51,10 +51,10 @@ table.scanner-table th { @apply text-slate-200 font-semibold; }
   content: "";
   position: absolute;
   z-index: -1;
-  left: 1.25rem;
-  right: -0.55rem;
+  left: 0.8rem;
+  right: -1.2rem;
   top: 50%;
-  height: 1.55rem;
+  height: 1.7rem;
   transform: translateY(-50%) rotate(-0.6deg);
   border-radius: 999px;
   background:

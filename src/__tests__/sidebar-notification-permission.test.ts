@@ -5,7 +5,7 @@ import path from "node:path";
 const read = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), "utf-8");
 
 describe("notification permission toast and localized performance UI", () => {
-  it("sidebar bildirim kartı kaldırıldı, Loglar ve footer bilgisi korunur", () => {
+  it("sidebar bildirim kartı kaldırıldı, Loglar menüsü korunur, footer teknik alanı kaldırıldı", () => {
     const sidebar = read("src/components/Sidebar.tsx");
 
     expect(sidebar).toMatch(/label:\s*'Loglar'/);
@@ -13,9 +13,9 @@ describe("notification permission toast and localized performance UI", () => {
     expect(sidebar).not.toContain("Bildirim Açık");
     expect(sidebar).not.toContain("Bildirim Kapalı");
     expect(sidebar).not.toContain("requestPaperNotificationPermission");
-    expect(sidebar).toContain("Maks. kaldıraç");
-    expect(sidebar).toContain("Mod:");
-    expect(sidebar).toContain("Canlı:");
+    // Footer teknik alanı kaldırıldı (Strateji Merkezi konsolidasyonu)
+    expect(sidebar).not.toContain("Maks. kaldıraç");
+    expect(sidebar).not.toContain("Canlı: env ile kilitli");
   });
 
   it("bildirim izni üst orta toast component'i üzerinden yönetilir", () => {
@@ -41,16 +41,15 @@ describe("notification permission toast and localized performance UI", () => {
     expect(notifier).not.toContain("Bildirimleri Aç");
   });
 
-  it("performans sayfası KPI ve grafik başlıklarını Türkçe gösterir", () => {
-    const page = read("src/app/performance/page.tsx");
+  it("strateji merkezi performans sekmesi KPI ve grafik başlıklarını Türkçe gösterir", () => {
+    // Performans içeriği /strategy-center?tab=performance'a taşındı
+    const page = read("src/app/strategy-center/page.tsx");
 
-    expect(page).toContain("Performans");
     expect(page).toContain("Toplam Kâr/Zarar");
     expect(page).toContain("Kazanma Oranı");
     expect(page).toContain("Kâr Faktörü");
     expect(page).toContain("Maksimum Düşüş");
     expect(page).toContain("Sermaye Eğrisi (paper, kronolojik)");
-    expect(page).not.toContain("Performance</h1>");
     expect(page).not.toContain("Total PnL");
     expect(page).not.toContain("Win Rate");
     expect(page).not.toContain("Profit Factor");

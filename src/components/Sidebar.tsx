@@ -8,13 +8,11 @@ import {
   ReceiptText,
   ShieldAlert,
   KeyRound,
-  Zap,
-  BarChart3,
   ScrollText,
   PanelLeftClose,
   PanelLeftOpen,
   Bot,
-  Layers,
+  SlidersHorizontal,
   Sparkles,
 } from 'lucide-react'
 import { useState, useEffect, useLayoutEffect } from 'react'
@@ -22,15 +20,11 @@ import { useState, useEffect, useLayoutEffect } from 'react'
 const NAV = [
   { href: '/', label: 'Genel Bakış', icon: LayoutDashboard },
   { href: '/scanner', label: 'Piyasa Tarayıcı', icon: ScanLine },
-  { href: '/scan-modes', label: 'Tarama Modları', icon: Layers },
-  // Coin Detayı: piyasa/mum/sinyal verisi güvenilir hâle gelene kadar
-  // ürün arayüzünden çıkarıldı. Coin bazlı takip Piyasa Tarayıcı'dan yapılır.
   { href: '/paper-trades', label: 'Pozisyonlar', icon: ReceiptText },
-  { href: '/risk', label: 'Risk Yönetimi', icon: ShieldAlert },
-  { href: '/api-settings', label: 'API Ayarları', icon: KeyRound },
-  { href: '/strategy', label: 'Strateji', icon: Zap },
-  { href: '/performance', label: 'Performans', icon: BarChart3 },
   { href: '/ai-actions', label: 'AI Aksiyon Merkezi', icon: Sparkles },
+  { href: '/strategy-center', label: 'Strateji Merkezi', icon: SlidersHorizontal },
+  { href: '/risk', label: 'Risk Yönetimi', icon: ShieldAlert },
+  { href: '/api-settings', label: 'API Key', icon: KeyRound },
   { href: '/logs', label: 'Loglar', icon: ScrollText },
 ]
 
@@ -71,8 +65,18 @@ export default function Sidebar() {
     })
   }
 
-  const isActive = (href: string) =>
-    href === '/' ? pathname === href : pathname.startsWith(href)
+  const isActive = (href: string) => {
+    if (href === '/') return pathname === href
+    if (href === '/strategy-center') {
+      return (
+        pathname.startsWith('/strategy-center') ||
+        pathname === '/strategy' ||
+        pathname === '/performance' ||
+        pathname === '/scan-modes'
+      )
+    }
+    return pathname.startsWith(href)
+  }
 
   return (
     <div
@@ -153,14 +157,6 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Footer */}
-      {!collapsed && (
-        <div className="p-4 border-t border-border text-[10px] text-muted leading-relaxed">
-          Maks. kaldıraç: <span className="text-warning">5x</span><br />
-          Mod: <span className="text-success">PAPER</span><br />
-          Canlı: env ile kilitli
-        </div>
-      )}
     </div>
   )
 }
