@@ -6,7 +6,6 @@ import MainContent from "@/components/MainContent";
 import GlobalTradeSoundNotifier from "@/components/GlobalTradeSoundNotifier";
 import NotificationPermissionToast from "@/components/NotificationPermissionToast";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
-import PwaInstallPrompt from "@/components/PwaInstallPrompt";
 
 export const metadata: Metadata = {
   title: "CoinBot",
@@ -51,7 +50,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             açık olursa olsun çalışır (panel, scanner, paper-trades, risk, ...) */}
         <GlobalTradeSoundNotifier />
         <ServiceWorkerRegistrar />
-        <PwaInstallPrompt />
       </body>
     </html>
   );
