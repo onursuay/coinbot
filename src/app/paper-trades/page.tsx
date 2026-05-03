@@ -437,13 +437,13 @@ function LossCloseModal({
       aria-modal="true"
       aria-labelledby="loss-close-title"
     >
-      <div className="w-full max-w-md rounded-lg border border-border bg-bg-card shadow-2xl">
-        <div className="px-5 py-4 border-b border-border">
+      <div className="w-full max-w-md rounded-lg border border-border bg-bg-card shadow-2xl flex flex-col max-h-[90dvh]">
+        <div className="px-5 py-4 border-b border-border shrink-0">
           <h3 id="loss-close-title" className="text-base font-semibold text-danger">
             Zararda kapatma onayı
           </h3>
         </div>
-        <div className="px-5 py-4 space-y-3 text-sm">
+        <div className="px-5 py-4 space-y-3 text-sm overflow-y-auto">
           <p>
             Bu pozisyon zararda. Kapatırsanız zarar realize edilir. Devam etmek istiyor musunuz?
           </p>
@@ -470,7 +470,7 @@ function LossCloseModal({
             )}
           </div>
         </div>
-        <div className="px-5 py-3 border-t border-border flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-border flex items-center justify-end gap-2 shrink-0">
           <button
             type="button"
             onClick={onCancel}

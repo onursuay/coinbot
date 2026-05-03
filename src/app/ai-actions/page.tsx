@@ -1992,8 +1992,8 @@ function ApplyModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4">
-      <div className="w-full max-w-md rounded-xl border border-border bg-bg-soft shadow-2xl">
-        <div className="border-b border-border px-5 py-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-bg-soft shadow-2xl flex flex-col max-h-[90dvh]">
+        <div className="border-b border-border px-5 py-4 shrink-0">
           <h3 className="text-base font-semibold text-slate-100">
             Aksiyonu Uygula
           </h3>
@@ -2003,7 +2003,7 @@ function ApplyModal({
           </p>
         </div>
 
-        <div className="space-y-3 px-5 py-4 text-sm">
+        <div className="space-y-3 px-5 py-4 text-sm overflow-y-auto">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
               Aksiyon
@@ -2061,7 +2061,7 @@ function ApplyModal({
           )}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-3 shrink-0">
           <button
             type="button"
             onClick={onCancel}
@@ -2100,15 +2100,15 @@ function RollbackModal({
   const { item } = state;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4">
-      <div className="w-full max-w-md rounded-xl border border-border bg-bg-soft shadow-2xl">
-        <div className="border-b border-border px-5 py-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-bg-soft shadow-2xl flex flex-col max-h-[90dvh]">
+        <div className="border-b border-border px-5 py-4 shrink-0">
           <h3 className="text-base font-semibold text-slate-100">Aksiyonu Geri Al</h3>
           <p className="mt-1 text-[11px] text-muted">
             İkinci onay gerektirir. Bu işlem canlı emir açmaz.
           </p>
         </div>
 
-        <div className="space-y-3 px-5 py-4 text-sm">
+        <div className="space-y-3 px-5 py-4 text-sm overflow-y-auto">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">Aksiyon</div>
             <div className="text-sm font-semibold text-slate-100">{item.title}</div>
@@ -2145,7 +2145,7 @@ function RollbackModal({
           )}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-3 shrink-0">
           <button
             type="button"
             onClick={onCancel}
@@ -2207,10 +2207,10 @@ function PromptModal({
       aria-modal="true"
     >
       <div
-        className="w-full max-w-2xl rounded-xl border border-border bg-bg-soft shadow-2xl"
+        className="w-full max-w-2xl rounded-xl border border-border bg-bg-soft shadow-2xl flex flex-col max-h-[90dvh]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between border-b border-border px-5 py-4 gap-3">
+        <div className="flex items-start justify-between border-b border-border px-5 py-4 gap-3 shrink-0">
           <div>
             <h3 className="text-base font-semibold text-slate-100">
               Uygulama Promptu Üret
@@ -2231,7 +2231,7 @@ function PromptModal({
           </button>
         </div>
 
-        <div className="space-y-3 px-5 py-4 text-sm">
+        <div className="space-y-3 px-5 py-4 text-sm overflow-y-auto">
           <div className="rounded-md border border-border bg-bg-card px-3 py-2">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
               Aksiyon
@@ -2337,14 +2337,14 @@ function PromptModal({
                 <textarea
                   readOnly
                   value={result.prompt}
-                  className="block h-64 w-full resize-y bg-bg-card px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-200 focus:outline-none"
+                  className="block h-40 sm:h-64 w-full resize-y bg-bg-card px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-200 focus:outline-none"
                 />
               </div>
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3 shrink-0">
           <button
             type="button"
             onClick={onCancel}

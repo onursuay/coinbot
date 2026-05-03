@@ -577,7 +577,7 @@ export default function ScannerPage() {
             )}
           </div>
 
-          <table className="t t-centered scanner-table">
+          <table className="t t-centered scanner-table min-w-[640px]">
             <thead>
               <tr>
                 <th className="!text-left font-semibold text-slate-200">COIN</th>

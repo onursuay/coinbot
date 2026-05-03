@@ -142,21 +142,23 @@ function LogsContent() {
       </div>
 
       {/* Filter bar + Search */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setFilter(f.value)}
-            className={`px-3 py-1 rounded text-xs font-medium border transition-colors ${
-              filter === f.value
-                ? "bg-accent text-white border-accent"
-                : "border-border text-muted hover:text-foreground"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
-        <div className="ml-auto flex items-center gap-1.5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="flex flex-wrap gap-2">
+          {FILTERS.map((f) => (
+            <button
+              key={f.value}
+              onClick={() => setFilter(f.value)}
+              className={`px-3 py-1 rounded text-xs font-medium border transition-colors ${
+                filter === f.value
+                  ? "bg-accent text-white border-accent"
+                  : "border-border text-muted hover:text-foreground"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1.5 sm:ml-auto">
           <input
             type="text"
             value={search}
@@ -168,18 +170,18 @@ function LogsContent() {
               }
             }}
             placeholder="Loglarda ara…"
-            className="h-7 w-48 rounded border border-border bg-bg-soft px-2 text-xs text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
+            className="h-7 w-full sm:w-48 rounded border border-border bg-bg-soft px-2 text-xs text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
           />
           {search && (
             <button
               onClick={() => setSearch("")}
-              className="text-xs text-muted hover:text-foreground px-1"
+              className="text-xs text-muted hover:text-foreground px-1 shrink-0"
               title="Aramayı temizle"
             >
               ✕
             </button>
           )}
-          {loading && <span className="text-xs text-muted">…</span>}
+          {loading && <span className="text-xs text-muted shrink-0">…</span>}
         </div>
       </div>
 
