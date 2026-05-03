@@ -109,7 +109,7 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
           <CompactBox label="WEBSOCKET" value={data.websocket_status ? titleCaseStatusValue(data.websocket_status) : "—"}
             tone={data.websocket_status === "connected" ? "success" : "muted"} />
         </div>
-        <div className="rounded-lg border border-border bg-bg-soft px-3 py-2 lg:min-w-[560px]">
+        <div className="rounded-lg border border-border bg-bg-soft px-3 py-2">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="min-w-[118px]">
               <div className="text-[10px] uppercase tracking-wider text-muted">SON GÜNCELLEME</div>

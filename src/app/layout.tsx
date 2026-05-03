@@ -22,7 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <MainContent>
             <TopBar />
             <NotificationPermissionToast />
-            <main className="flex-1 overflow-y-auto p-6">{children}</main>
+            <main className="flex-1 overflow-y-auto p-3 sm:p-6">{children}</main>
           </MainContent>
         </div>
         {/* Yeni paper pozisyon açıldığında ses bildirimi — hangi sayfa

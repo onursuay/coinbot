@@ -199,7 +199,7 @@ export default function HomePage() {
   return (
     <div className="space-y-4">
       {/* Toasts */}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80 pointer-events-none">
+      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 w-[calc(100vw-2rem)] max-w-xs sm:w-80 pointer-events-none">
         {toasts.map((t) => (
           <div key={t.id} className={`pointer-events-auto rounded-xl px-4 py-3 shadow-lg border text-sm transition-all ${
             t.type === "success" ? "bg-success/20 border-success/40 text-success"
@@ -258,7 +258,7 @@ export default function HomePage() {
           tutarlıdır. perf.dailyPnl / perf.totalPnl aynı satırların net pnl
           toplamıdır (fees/slippage/funding paper_trades.pnl yazılırken zaten
           düşülmüştür — burada yeniden düşme). */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <KpiTile label="GÜNLÜK KÂR/ZARAR" value={fmtUsd(perf?.dailyPnl ?? daily?.realizedPnlUsd ?? 0)} tone={(perf?.dailyPnl ?? daily?.realizedPnlUsd ?? 0) >= 0 ? "success" : "danger"} />
         <KpiTile label="TOPLAM KÂR/ZARAR" value={fmtUsd(perf?.totalPnl ?? 0)} tone={(perf?.totalPnl ?? 0) >= 0 ? "success" : "danger"} />
         <KpiTile label="KAZANMA ORANI" value={fmtPct(perf?.winRate ?? 0)} tone="muted" />

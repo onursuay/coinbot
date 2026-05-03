@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { Menu } from "lucide-react";
 import { useSoundPref } from "@/lib/sound-pref";
 import { PAPER_POSITION_ALERT_SOUND_URL } from "@/lib/paper-position-alerts";
 
@@ -60,7 +61,16 @@ export default function TopBar() {
   const exchange = s === null ? "..." : (s?.bot?.active_exchange ?? "binance");
 
   return (
-    <header className="flex items-center gap-1.5 flex-wrap px-6 py-2 border-b border-border bg-bg-soft/60 backdrop-blur">
+    <header className="flex items-center gap-1.5 flex-wrap px-3 md:px-6 py-2 border-b border-border bg-bg-soft/60 backdrop-blur">
+      {/* Hamburger — mobile only */}
+      <button
+        type="button"
+        className="md:hidden p-1.5 -ml-0.5 rounded-lg hover:bg-bg-card text-slate-300 shrink-0"
+        onClick={() => window.dispatchEvent(new Event('sidebar:mobile-toggle'))}
+        aria-label="Menüyü aç"
+      >
+        <Menu className="w-5 h-5" />
+      </button>
       <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
         BORSA: {String(exchange).toUpperCase()}
       </span>

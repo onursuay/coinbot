@@ -5,6 +5,12 @@
 :root { color-scheme: dark; }
 
 html, body { background: #0b0e13; color: #e2e8f0; overflow-x: hidden; }
+/* Mobile: suppress tap flash */
+* { -webkit-tap-highlight-color: transparent; }
+/* Table wrappers — controlled horizontal scroll, no full-page bleed */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* Modal content scrollable on small screens */
+.modal-body { max-height: 80dvh; overflow-y: auto; }
 
 .card { @apply bg-bg-card border border-border rounded-xl p-4; }
 .btn { @apply inline-flex items-center justify-center px-3 py-2 rounded-lg text-sm font-medium transition-colors; }
