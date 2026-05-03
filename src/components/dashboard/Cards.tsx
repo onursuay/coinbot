@@ -748,7 +748,12 @@ export interface PerformanceDecisionInput {
   observeDays: number;
   /** Decision summary execution path'ine bağlı DEĞİLDİR — true beklenmez. */
   appliedToTradeEngine: false;
+  /** Opsiyonel prompt metni; yoksa fallback kullanılır. */
+  suggestedPrompt?: string | null;
 }
+
+const PERF_FALLBACK_PROMPT =
+  "CoinBot performans karar özeti risk incelemesi öneriyor. Risk Yönetimi sayfasında işlem başı risk yüzdesi, günlük maksimum zarar, açık pozisyon limiti ve stop-loss davranışını manuel incele. Otomatik ayar değiştirme; yalnızca analiz ve manuel karar için kullan.";
 
 const STATUS_LABEL: Record<DecisionStatusPretty, string> = {
   HEALTHY: "Sağlıklı",
@@ -783,12 +788,54 @@ export function PerformanceDecisionCard({
   onAction?: (action: "REVIEW_RISK" | "SKIP" | "OBSERVE" | "PROMPT", actionId: string) => void;
 }) {
   const router = useRouter();
-  const [dismissed, setDismissed] = useState(false);
+
+  // dataKey: öneri içeriği değişince dismissed/observe state'i sıfırlanır.
+  // Aynı öneri yenilemede korunur; farklı öneri gelince otomatik açılır.
+  const dataKey = data ? `${data.actionType}:${data.mainFinding}` : null;
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null);
+  const [observedFor, setObservedFor] = useState<string | null>(null);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [promptCopied, setPromptCopied] = useState(false);
+  const promptPanelRef = useRef<HTMLDivElement>(null);
+  const promptButtonRef = useRef<HTMLButtonElement>(null);
+
+  const dismissed = dismissedFor !== null && dismissedFor === dataKey;
+  const observeSelected = observedFor !== null && observedFor === dataKey;
+
   const empty = !data;
   const status = data?.status ?? "DATA_INSUFFICIENT";
   const action = data?.actionType ?? "DATA_INSUFFICIENT";
   const tradeModeLabel = data?.tradeMode === "live" ? "Canlı" : "Paper";
   const isActionable = !empty && data!.actionType !== "NO_ACTION" && data!.actionType !== "DATA_INSUFFICIENT";
+  const observeDays = data?.observeDays && data.observeDays > 0 ? data.observeDays : 14;
+  const promptText = data?.suggestedPrompt?.trim() || PERF_FALLBACK_PROMPT;
+  const actionId = `performance-decision-${data?.actionType ?? status}`;
+
+  // Prompt alanı açıkken dış tıklama veya ESC ile kapanma.
+  useEffect(() => {
+    if (!promptOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (promptPanelRef.current?.contains(t)) return;
+      if (promptButtonRef.current?.contains(t)) return;
+      setPromptOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setPromptOpen(false); };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [promptOpen]);
+
+  const handleCopyPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText(promptText);
+      setPromptCopied(true);
+      setTimeout(() => setPromptCopied(false), 1800);
+    } catch { /* manual select fallback */ }
+  };
 
   return (
     <div className="card">
@@ -797,16 +844,12 @@ export function PerformanceDecisionCard({
         <div className="flex items-center gap-2">
           <Pill tone="muted">MOD: {tradeModeLabel}</Pill>
           <Pill tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Pill>
-          {!empty && (
-            <Pill tone="accent">GÜVEN: %{Math.round(data!.confidence)}</Pill>
-          )}
+          {!empty && <Pill tone="accent">GÜVEN: %{Math.round(data!.confidence)}</Pill>}
         </div>
       </div>
 
       {empty ? (
-        <p className="text-sm text-muted">
-          Yeterli paper veri oluşmadı. Gözlem devam ediyor.
-        </p>
+        <p className="text-sm text-muted">Yeterli paper veri oluşmadı. Gözlem devam ediyor.</p>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <MiniSection label="MEVCUT DURUM" tone={STATUS_TONE[status]}>
@@ -822,45 +865,75 @@ export function PerformanceDecisionCard({
             {data!.recommendation}
           </MiniSection>
           <MiniSection label="AKSİYON DURUMU" tone={isActionable ? "warning" : "muted"}>
-            {ACTION_LABEL[action]}
-            {data!.observeDays > 0 ? ` · ${data!.observeDays} gün gözlem` : ""}
-            {data!.requiresUserApproval ? " · Kullanıcı Onayı Bekleniyor" : ""}
+            <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+              <span>{ACTION_LABEL[action]}</span>
+              {data!.observeDays > 0 && (
+                <span className="text-muted text-[11px]">· {data!.observeDays} gün gözlem</span>
+              )}
+              {data!.requiresUserApproval && (
+                <span className="pointer-events-none cursor-default text-[10px] font-medium uppercase tracking-wider px-2 py-0.5 rounded-md bg-warning/10 text-warning border border-warning/20">
+                  Kullanıcı Onayı Gerekli
+                </span>
+              )}
+            </div>
           </MiniSection>
           <MiniSection label="UYGULAMA" tone="muted">
-            Bu öneri trade engine&apos;e otomatik uygulanmaz
-            ({data!.appliedToTradeEngine ? "uygulandı?!" : "uygulanmadı"}).
+            Bu öneri trade engine&apos;e otomatik uygulanmaz.
           </MiniSection>
+        </div>
+      )}
+
+      {/* Prompt paneli */}
+      {promptOpen && (
+        <div ref={promptPanelRef} className="mt-3 rounded-md border border-accent/40 bg-slate-900 px-3 py-2.5">
+          <div className="text-[10px] uppercase tracking-wider text-accent mb-1.5">ÖNERİLEN PROMPT</div>
+          <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-words rounded-md bg-slate-950/80 p-2 text-[11px] leading-relaxed text-slate-200">{promptText}</pre>
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleCopyPrompt}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-soft px-3 py-1.5 text-[11px] font-medium text-slate-300 hover:border-accent hover:text-accent transition-colors"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {promptCopied ? "KOPYALANDI ✓" : "PROMPT'U KOPYALA"}
+            </button>
+            {promptCopied && (
+              <span className="text-[11px] font-medium text-success">Prompt kopyalandı.</span>
+            )}
+          </div>
+          <p className="mt-1.5 text-[10px] text-muted">
+            Bu prompt otomatik çalıştırılmaz; manuel olarak yapıştırabilirsiniz.
+          </p>
+        </div>
+      )}
+
+      {/* Gözlem feedback */}
+      {observeSelected && (
+        <div className="mt-3 rounded-md border border-success/40 bg-slate-900 px-3 py-2 text-[12px] font-medium text-success">
+          {observeDays} gün gözlem kaydedildi. Bu seçim risk ayarı değiştirmez.
         </div>
       )}
 
       {isActionable && (
         <div className="mt-3 border-t border-border/60 pt-3">
           {dismissed ? (
-            <p className="text-[11px] text-muted italic">
-              Öneri geçildi. Bir sonraki veri yenilemesinde tekrar görünebilir.
-            </p>
+            <div className="rounded-md border border-border bg-slate-900 px-3 py-2 text-[11px] text-slate-400">
+              Bu öneri bir sonraki veri yenilemesine kadar ertelendi.
+            </div>
           ) : (
             <div className="flex flex-wrap gap-1.5 items-center">
-              {/* RİSKİ İNCELE — /risk sayfasına yönlendirir, ayar değiştirmez */}
               <button
                 type="button"
                 data-action-kind="REVIEW_RISK"
-                onClick={() => {
-                  onAction?.("REVIEW_RISK", `performance-decision-${data!.actionType}`);
-                  router.push("/risk");
-                }}
+                onClick={() => { onAction?.("REVIEW_RISK", actionId); router.push("/risk"); }}
                 className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-warning/50 bg-warning/10 text-warning hover:bg-warning/20 hover:border-warning transition-colors"
               >
                 RİSKİ İNCELE
               </button>
-              {/* ŞİMDİLİK GEÇ — local dismiss, hiçbir ayar değişmez */}
               <button
                 type="button"
                 data-action-kind="SKIP"
-                onClick={() => {
-                  onAction?.("SKIP", `performance-decision-${data!.actionType}`);
-                  setDismissed(true);
-                }}
+                onClick={() => { onAction?.("SKIP", actionId); setDismissedFor(dataKey); }}
                 className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors"
               >
                 ŞİMDİLİK GEÇ
@@ -868,16 +941,26 @@ export function PerformanceDecisionCard({
               <button
                 type="button"
                 data-action-kind="OBSERVE"
-                onClick={() => onAction?.("OBSERVE", `performance-decision-${data!.actionType}`)}
-                className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent transition-colors"
+                onClick={() => { onAction?.("OBSERVE", actionId); setObservedFor(dataKey); }}
+                className={`text-[11px] font-medium px-3 py-1.5 rounded-md border transition-colors ${
+                  observeSelected
+                    ? "border-success/50 bg-slate-900 text-success"
+                    : "border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
+                }`}
               >
-                GÖZLEM ({data!.observeDays || 14}g)
+                {observeSelected ? "GÖZLEM KAYDEDİLDİ" : `GÖZLEM (${observeDays}g)`}
               </button>
               <button
+                ref={promptButtonRef}
                 type="button"
                 data-action-kind="PROMPT"
-                onClick={() => onAction?.("PROMPT", `performance-decision-${data!.actionType}`)}
-                className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent transition-colors"
+                aria-expanded={promptOpen}
+                onClick={() => { setPromptOpen((v) => !v); onAction?.("PROMPT", actionId); }}
+                className={`text-[11px] font-medium px-3 py-1.5 rounded-md border transition-colors ${
+                  promptOpen
+                    ? "border-accent/50 bg-slate-900 text-accent"
+                    : "border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
+                }`}
               >
                 PROMPT
               </button>
@@ -1582,18 +1665,6 @@ export function AIDecisionAssistantCard({
             </AIDecisionPanel>
           </div>
 
-          {data!.blockedBy.length > 0 && (
-            <div className="mt-3 rounded-md border border-border/70 bg-bg-soft/60 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wider text-muted">BLOKER ETİKETLERİ</div>
-              <div className="mt-1 flex flex-wrap gap-1">
-                {data!.blockedBy.map((b) => (
-                  <span key={b} className="rounded-md border border-border bg-bg px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-300">
-                    {b}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
 
           {promptOpen && (
             <div ref={promptPanelRef} className="mt-3 rounded-md border border-accent/40 bg-accent/5 px-3 py-2">
@@ -1616,23 +1687,15 @@ export function AIDecisionAssistantCard({
             </div>
           )}
 
-          {data!.safetyNotes.length > 0 && (
-            <div className="mt-3 rounded-md border border-border/70 bg-bg-soft/60 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wider text-muted">GÜVENLİK NOTLARI</div>
-              <ul className="mt-1 grid gap-1 text-[11px] leading-snug text-slate-300 sm:grid-cols-2">
-                {data!.safetyNotes.map((n, i) => <li key={i}>{n}</li>)}
-              </ul>
-            </div>
-          )}
         </>
       )}
 
       {actionNotice && (
-        <div className={`mt-3 rounded-md border px-3 py-2 text-xs ${
-          actionNotice.tone === "success" ? "border-success/30 bg-success/10 text-success" :
-          actionNotice.tone === "warning" ? "border-warning/30 bg-warning/10 text-warning" :
-          actionNotice.tone === "danger" ? "border-rose-500/30 bg-bg-soft text-danger" :
-          "border-accent/30 bg-accent/10 text-accent"
+        <div className={`mt-3 rounded-md border px-3 py-2 text-xs font-medium ${
+          actionNotice.tone === "success" ? "border-success/40 bg-slate-900 text-success" :
+          actionNotice.tone === "warning" ? "border-warning/40 bg-slate-900 text-warning" :
+          actionNotice.tone === "danger"  ? "border-rose-500/40 bg-slate-900 text-danger" :
+          "border-accent/40 bg-slate-900 text-accent"
         }`}>
           {actionNotice.text}
         </div>
