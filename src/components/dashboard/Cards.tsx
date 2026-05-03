@@ -228,7 +228,7 @@ export function OpportunityRadarCard({ rows }: { rows: RadarRow[] }) {
                 <span className={`text-lg font-semibold tabular-nums ${
                   it.tone === "success" ? "text-success" :
                   it.tone === "warning" ? "text-warning" :
-                  it.tone === "danger"  ? "text-danger"  : "text-slate-200"
+                  it.tone === "danger"  ? (it.value > 0 ? "value-negative" : "text-slate-200") : "text-slate-200"
                 }`}>{it.value}</span>
               </div>
               <div className="mt-1 h-1 w-full rounded-full bg-bg-soft overflow-hidden border border-border/60">
@@ -564,6 +564,7 @@ export function TodaysSummaryCard({ data }: { data: TodaysSummaryInput }) {
             label="TOPLAM PNL"
             value={typeof data.realizedPnlUsd === "number" ? fmtUsd(data.realizedPnlUsd) : "—"}
             tone={typeof data.realizedPnlUsd === "number" && data.realizedPnlUsd < 0 ? "danger" : "success"}
+            valueClassName={typeof data.realizedPnlUsd === "number" && data.realizedPnlUsd < 0 ? "value-negative" : undefined}
           />
         </div>
       )}
@@ -692,7 +693,17 @@ function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   );
 }
 
-function CompactBox({ label, value, tone }: { label: string; value: string; tone: Tone }) {
+function CompactBox({
+  label,
+  value,
+  tone,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  tone: Tone;
+  valueClassName?: string;
+}) {
   const cls =
     tone === "success" ? "text-success" :
     tone === "warning" ? "text-warning" :
@@ -701,7 +712,7 @@ function CompactBox({ label, value, tone }: { label: string; value: string; tone
   return (
     <div className="bg-bg-soft border border-border rounded-lg px-3 py-2">
       <div className="text-[10px] uppercase tracking-wider text-muted">{label}</div>
-      <div className={`text-sm font-semibold ${cls}`}>{value}</div>
+      <div className={`text-sm font-semibold ${valueClassName ?? cls}`}>{value}</div>
     </div>
   );
 }

@@ -27,7 +27,7 @@ html, body { background: #0b0e13; color: #e2e8f0; overflow-x: hidden; }
 .danger-pill { @apply border border-rose-500/25 bg-bg-soft text-danger; }
 .warning-pill { @apply border border-amber-500/25 bg-bg-soft text-warning; }
 .success-pill { @apply border border-emerald-400/20 bg-bg-soft text-success; }
-.value-negative { @apply text-danger; }
+.value-negative { @apply text-red-400; }
 .value-positive { @apply text-success; }
 .bar-danger { @apply bg-rose-400/70; }
 .bar-warning { @apply bg-amber-400/70; }

@@ -52,6 +52,6 @@ export default function PerformancePage() {
 }
 
 function Kpi({ label, value, accent }: { label: string; value: string; accent?: "success" | "danger" }) {
-  const cls = accent === "success" ? "text-success" : accent === "danger" ? "text-danger" : "";
+  const cls = accent === "success" ? "value-positive" : accent === "danger" ? "value-negative" : "";
   return <div className="card"><div className="label">{label}</div><div className={`kpi ${cls}`}>{value}</div></div>;
 }
