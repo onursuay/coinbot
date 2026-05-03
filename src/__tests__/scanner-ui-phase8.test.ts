@@ -231,6 +231,13 @@ describe("Bugfix 1 — TopBar heartbeat parse", () => {
     expect(TOPBAR).toMatch(/ÇEVRİMİÇİ/);
     expect(TOPBAR).toMatch(/ÇEVRİMDIŞI/);
   });
+
+  it("topbar sade: BOT, BİLDİRİM ve Acil Durdur kontrolleri gösterilmez", () => {
+    expect(TOPBAR).not.toMatch(/BOT:/);
+    expect(TOPBAR).not.toMatch(/BİLDİRİM:/);
+    expect(TOPBAR).not.toMatch(/KillSwitch/);
+    expect(TOPBAR).not.toMatch(/ACİL DURDUR/);
+  });
 });
 
 // ── 11. Diagnostics stale flag ────────────────────────────────────────
