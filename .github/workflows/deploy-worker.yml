@@ -3,6 +3,22 @@ name: Deploy Worker
 on:
   push:
     branches: [main]
+    paths:
+      # VPS worker — doğrudan çalışan process
+      - "worker/**"
+      # Worker'ın import ettiği tüm lib kodu
+      - "src/lib/**"
+      # Deploy ve başlatma scriptleri
+      - "scripts/**"
+      # Bağımlılık değişikliği → Docker rebuild gerekebilir
+      - "package.json"
+      - "package-lock.json"
+      # TypeScript derleme konfigürasyonu
+      - "tsconfig.json"
+      # Workflow dosyasının kendisi
+      - ".github/workflows/deploy-worker.yml"
+      # src/app/** ve src/components/** kasıtlı hariç tutuldu:
+      # bu dosyalar yalnızca Vercel'e deploy olur, VPS worker'ı etkilemez.
   workflow_dispatch:
     inputs:
       force_rebuild:

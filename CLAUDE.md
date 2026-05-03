@@ -1,31 +1,35 @@
 # CoinBot — Project Instructions
 
 > **🚨 KURAL — Her işlem sonrasında otomatik yapılacaklar:**
-> **GitHub Actions durumunu ve VPS deploy'unu tetikle. Commit + push + VPS'te worker yeniden deploy et.**
-> Bu kural istisnasız her tamamlanan iş için geçerlidir; kullanıcının ayrıca istemesine gerek yoktur.
+> **Commit + push yap. Worker kodu değiştiyse VPS deploy'u izle; UI-only değişiklikse workflow tetiklenmez, sadece Vercel'e gider.**
 
 ## Her işlem sonrasında otomatik yapılacaklar
 
-**Her görev tamamlandığında** (kod değişikliği içersin ya da içermesin),
-kullanıcı ayrıca istemese bile şu adımları sırayla uygula:
+**Her görev tamamlandığında**, kullanıcı ayrıca istemese bile:
 
 1. **Commit** — değişen dosyaları stage et, anlamlı bir commit mesajı yaz.
-2. **Push + GitHub Actions tetikle** — `git push origin main`.
-   Push, GitHub Actions `Deploy Worker` workflow'unu otomatik tetikler;
-   VPS'te worker yeniden deploy edilir.
-3. **VPS deploy doğrulaması** — `gh run watch <run-id> --exit-status` ile
-   workflow'u sonuna kadar izle, başarılı bittiğini ve heartbeat verification
-   adımının `online:true, status:running_paper` döndüğünü doğrula.
+2. **Push** — `git push origin main`.
+
+### Değişiklik tipine göre deploy davranışı
+
+| Değişen dosyalar | GitHub Actions tetiklenir mi? | Yapılacak |
+|------------------|-------------------------------|-----------|
+| `worker/**`, `src/lib/**`, `scripts/**`, `package.json`, `tsconfig.json` | ✅ Evet — VPS deploy çalışır | `gh run watch <run-id>` ile izle, heartbeat doğrula |
+| `src/app/**`, `src/components/**`, `CLAUDE.md`, `*.md` | ❌ Hayır — sadece Vercel | Push yeterli; workflow izleme gerekmez |
+| `workflow_dispatch` ile manuel tetikle | ✅ Her zaman | Gerektiğinde `gh workflow run deploy-worker.yml` |
+
+**VPS deploy gerektiren değişiklikte doğrulama:**
+- `gh run watch <run-id> --exit-status` ile workflow'u izle
+- Heartbeat'te `"online":true` ve `"status":"running_paper"` görünmeli
 
 ### Atlanacak durumlar
-- Sadece dokümantasyon/yorum değişikliği (kod davranışını etkilemiyorsa) → push
-  yine yapılır ama deploy izlemeye gerek yok.
 - Değişiklikler test/build'i kıracaksa → commit/push yapma, önce sorunu çöz.
 - Kullanıcı açıkça "henüz commit etme" / "lokal kalsın" dediyse → atla.
 
 ### Workflow detayları
 - Auto-deploy workflow: `.github/workflows/deploy-worker.yml`
-- Push to `main` → SSH to VPS → `git reset --hard origin/main` → `bash scripts/deploy-worker.sh`
+- Path filtresi: `worker/**`, `src/lib/**`, `scripts/**`, `package.json`, `tsconfig.json`, workflow dosyasının kendisi
+- Push (path eşleşirse) → SSH to VPS → `git reset --hard origin/main` → `bash scripts/deploy-worker.sh`
 - Heartbeat check: `https://coin.onursuay.com/api/bot/heartbeat`
 - Bilinen false-positive: workflow log'unda "WARNING: workerOnline is not true"
   görünür çünkü grep `workerOnline:true` arıyor ama endpoint `online:true`
