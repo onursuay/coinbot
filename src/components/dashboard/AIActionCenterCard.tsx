@@ -1,18 +1,80 @@
 // AI Aksiyon Merkezi — Panel özet kartı.
 //
-// Mevcut Panel'deki uzun "AI Karar Asistanı" kartının yerini alır.
-// Tüm detaylı analiz akışı `/ai-actions` sayfasında gösterilir.
+// Faz 2: Panelden canlı plan count + en yüksek risk seviyesi gösterilir.
+// Detaylı liste ve aksiyon butonları /ai-actions sayfasındadır.
 //
 // SAFETY:
-// - Bu kart yalnızca statik durum + navigasyon sunar.
-// - AI çağrısı yapmaz; trade/risk/engine ayarına dokunmaz.
+// - Bu kart yalnızca okuma yapar; ayar değiştirmez.
+// - AI çağrısı yoktur; /api/ai-actions deterministic generator kullanır.
+// - Tüm aksiyon butonları /ai-actions sayfasındadır ve hiçbiri uygulamaz.
 
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Sparkles, ArrowRight } from "lucide-react";
+import type {
+  ActionPlan,
+  ActionPlanResult,
+  ActionPlanRiskLevel,
+} from "@/lib/ai-actions";
+
+const RISK_RANK: Record<ActionPlanRiskLevel, number> = {
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+};
+
+const RISK_LABEL: Record<ActionPlanRiskLevel, string> = {
+  low: "Düşük",
+  medium: "Orta",
+  high: "Yüksek",
+  critical: "Kritik",
+};
+
+const RISK_CLASS: Record<ActionPlanRiskLevel, string> = {
+  low: "text-success",
+  medium: "text-warning",
+  high: "text-danger",
+  critical: "text-danger",
+};
+
+function topRisk(plans: ActionPlan[]): ActionPlanRiskLevel | null {
+  if (!plans.length) return null;
+  return plans.reduce<ActionPlanRiskLevel>(
+    (acc, p) => (RISK_RANK[p.riskLevel] > RISK_RANK[acc] ? p.riskLevel : acc),
+    "low",
+  );
+}
 
 export function AIActionCenterCard() {
+  const [data, setData] = useState<ActionPlanResult | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/ai-actions", { cache: "no-store" });
+        const json = await res.json();
+        if (!cancelled && json.ok) {
+          setData(json.data as ActionPlanResult);
+        }
+      } catch {
+        // sessizce geç — kart statik durum bilgilerini gösterir
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const planCount = data?.plans?.length ?? 0;
+  const highest = data ? topRisk(data.plans) : null;
+
   return (
     <section className="card">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -25,12 +87,15 @@ export function AIActionCenterCard() {
               AI Aksiyon Merkezi
             </h3>
             <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
-              Hazırlık Aşaması
+              Faz 2 · Öneri
             </span>
           </div>
           <p className="mt-1.5 text-xs text-muted">
-            Faz 2&apos;de aktif analiz sonuçları burada özetlenecek. Detaylı
-            mimari ve plan AI Aksiyon Merkezi sayfasındadır.
+            {!loaded
+              ? "Plan listesi yükleniyor…"
+              : planCount === 0
+              ? "Şu an aktif öneri yok. Detaylar Merkez sayfasında."
+              : `${planCount} aktif öneri hazır. Detaylar Merkez sayfasında.`}
           </p>
         </div>
         <Link
@@ -43,9 +108,17 @@ export function AIActionCenterCard() {
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <SummaryTile label="Durum" value="Hazırlık" tone="warning" />
+        <SummaryTile
+          label="Aktif Öneri"
+          value={loaded ? String(planCount) : "—"}
+          tone="accent"
+        />
+        <SummaryTile
+          label="En Yüksek Risk"
+          value={highest ? RISK_LABEL[highest] : "—"}
+          customClass={highest ? RISK_CLASS[highest] : "text-slate-200"}
+        />
         <SummaryTile label="Yetki Modu" value="Prompt Only" tone="accent" />
-        <SummaryTile label="Ana Kaynak" value="GitHub" tone="accent" />
         <SummaryTile label="Canlı İşlem" value="Kapalı" tone="success" />
       </div>
     </section>
@@ -56,19 +129,22 @@ function SummaryTile({
   label,
   value,
   tone,
+  customClass,
 }: {
   label: string;
   value: string;
-  tone: "success" | "warning" | "accent" | "muted";
+  tone?: "success" | "warning" | "accent" | "muted";
+  customClass?: string;
 }) {
   const cls =
-    tone === "success"
+    customClass ??
+    (tone === "success"
       ? "text-success"
       : tone === "warning"
       ? "text-warning"
       : tone === "accent"
       ? "text-accent"
-      : "text-slate-200";
+      : "text-slate-200");
   return (
     <div className="rounded-md border border-border bg-bg-soft px-2.5 py-2">
       <div className="text-[10px] uppercase tracking-wider text-muted">
