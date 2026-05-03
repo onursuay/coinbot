@@ -6,6 +6,7 @@
 // dosya yalnızca onların çıktısını render eder. Hiçbir trade kararı,
 // risk engine ayarı veya canlı trading gate'i bu kartlardan etkilenmez.
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Copy, Eye, MessageSquare, RefreshCw } from "lucide-react";
 import { fmtNum, fmtUsd } from "@/lib/format";
@@ -779,8 +780,10 @@ export function PerformanceDecisionCard({
   onAction,
 }: {
   data: PerformanceDecisionInput | null;
-  onAction?: (action: "APPROVE" | "REJECT" | "OBSERVE" | "PROMPT", actionId: string) => void;
+  onAction?: (action: "REVIEW_RISK" | "SKIP" | "OBSERVE" | "PROMPT", actionId: string) => void;
 }) {
+  const router = useRouter();
+  const [dismissed, setDismissed] = useState(false);
   const empty = !data;
   const status = data?.status ?? "DATA_INSUFFICIENT";
   const action = data?.actionType ?? "DATA_INSUFFICIENT";
@@ -831,21 +834,58 @@ export function PerformanceDecisionCard({
       )}
 
       {isActionable && (
-        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
-          {(["APPROVE", "REJECT", "OBSERVE", "PROMPT"] as const).map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => onAction?.(k, `performance-decision-${data!.actionType}`)}
-              className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent"
-              data-action-kind={k}
-            >
-              {k === "APPROVE" ? "ONAYLA" : k === "REJECT" ? "REDDET" : k === "OBSERVE" ? `GÖZLEM (${data!.observeDays || 14}g)` : "PROMPT"}
-            </button>
-          ))}
-          <span className="ml-auto text-[10px] uppercase tracking-wider text-muted">
-            Butonlar yalnızca öneri kaydeder; ayar değiştirmez.
-          </span>
+        <div className="mt-3 border-t border-border/60 pt-3">
+          {dismissed ? (
+            <p className="text-[11px] text-muted italic">
+              Öneri geçildi. Bir sonraki veri yenilemesinde tekrar görünebilir.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5 items-center">
+              {/* RİSKİ İNCELE — /risk sayfasına yönlendirir, ayar değiştirmez */}
+              <button
+                type="button"
+                data-action-kind="REVIEW_RISK"
+                onClick={() => {
+                  onAction?.("REVIEW_RISK", `performance-decision-${data!.actionType}`);
+                  router.push("/risk");
+                }}
+                className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-warning/50 bg-warning/10 text-warning hover:bg-warning/20 hover:border-warning transition-colors"
+              >
+                RİSKİ İNCELE
+              </button>
+              {/* ŞİMDİLİK GEÇ — local dismiss, hiçbir ayar değişmez */}
+              <button
+                type="button"
+                data-action-kind="SKIP"
+                onClick={() => {
+                  onAction?.("SKIP", `performance-decision-${data!.actionType}`);
+                  setDismissed(true);
+                }}
+                className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors"
+              >
+                ŞİMDİLİK GEÇ
+              </button>
+              <button
+                type="button"
+                data-action-kind="OBSERVE"
+                onClick={() => onAction?.("OBSERVE", `performance-decision-${data!.actionType}`)}
+                className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent transition-colors"
+              >
+                GÖZLEM ({data!.observeDays || 14}g)
+              </button>
+              <button
+                type="button"
+                data-action-kind="PROMPT"
+                onClick={() => onAction?.("PROMPT", `performance-decision-${data!.actionType}`)}
+                className="text-[11px] font-medium px-3 py-1.5 rounded-md border border-border bg-bg-soft text-slate-300 hover:border-accent hover:text-accent transition-colors"
+              >
+                PROMPT
+              </button>
+              <span className="ml-auto text-[10px] text-muted">
+                Bu butonlar ayar değiştirmez; yalnızca inceleme, gözlem veya prompt üretimi sağlar.
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

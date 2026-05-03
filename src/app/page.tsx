@@ -344,10 +344,9 @@ export default function HomePage() {
       <PerformanceDecisionCard
         data={perfDecision}
         onAction={(kind, actionId) => {
-          // Bu callback yalnızca öneri kaydı içindir — hiçbir trade engine
-          // ayarına, eşiğe, stop-loss kuralına veya canlı trading gate'ine
-          // bağlanmaz. Şu an toast üretmeyi tercih etmiyoruz; gelecekte
-          // PROMPT/OBSERVE durumları ayrı kayıt yoluna alınabilir.
+          // Yalnızca kayıt/log amaçlı. Hiçbir trade engine ayarına,
+          // risk parametresine veya canlı trading gate'ine bağlanmaz.
+          // Navigation (REVIEW_RISK) kart içinde router.push ile yapılır.
           void actionId;
           void kind;
         }}

@@ -458,7 +458,7 @@ describe("Faz 13 invariantları — hiçbir ayar değişmez", () => {
 // ── ActionFooter sözleşmesi ───────────────────────────────────────────────
 
 describe("ActionFooter karar entegrasyonu", () => {
-  it("ONAYLA/REDDET/GÖZLEM/PROMPT yalnızca aksiyon kartında çağrılır (sözleşme)", () => {
+  it("RİSKİ İNCELE/ŞİMDİLİK GEÇ/GÖZLEM/PROMPT yalnızca aksiyon kartında çağrılır (sözleşme)", () => {
     // Bu test sözleşmeyi belgeler: PerformanceDecisionCard kart içi
     // butonlar requiresUserApproval=false ise bile actionType≠NO_ACTION
     // olduğunda görünür; NO_ACTION/DATA_INSUFFICIENT için görünmez.
