@@ -81,16 +81,17 @@ describe("Phase 9 — gerekli kartların hepsi mevcut", () => {
     expect(PAGE).toMatch(/<OpportunityRadarCard/);
   });
 
-  it("Pozisyon Karar Merkezi kartı tanımlı ve sayfaya monte edilmiş", () => {
+  it("Pozisyon Karar Merkezi kartı bileşeni tanımlı (ana sayfa dışında kullanım için)", () => {
     expect(CARDS).toMatch(/export function DecisionCenterCard/);
     expect(CARDS).toMatch(/POZİSYON KARAR MERKEZİ/);
-    expect(PAGE).toMatch(/<DecisionCenterCard/);
+    // Ana sayfa (page.tsx) sadeleştirme kararıyla bu paneli artık göstermiyor;
+    // bileşen Cards.tsx'te export olarak korunuyor.
   });
 
-  it("Pozisyona En Yakın Coinler kartı tanımlı ve sayfaya monte edilmiş", () => {
+  it("Pozisyona En Yakın Coinler kartı bileşeni tanımlı (ana sayfa dışında kullanım için)", () => {
     expect(CARDS).toMatch(/export function NearThresholdCoinsCard/);
     expect(CARDS).toMatch(/POZİSYONA EN YAKIN COİNLER/);
-    expect(PAGE).toMatch(/<NearThresholdCoinsCard/);
+    // Ana sayfa sadeleştirme sonrası burada render edilmiyor; export korunuyor.
   });
 
   it("BlockingReasonsCard bileşeni tanımlı (ana sayfa dışında kullanım için)", () => {
@@ -100,10 +101,19 @@ describe("Phase 9 — gerekli kartların hepsi mevcut", () => {
     // bileşen Cards.tsx'te export olarak korunuyor.
   });
 
-  it("Bugünkü Özet kartı var", () => {
+  it("Bugünkü Özet kartı bileşeni tanımlı (ana sayfa dışında kullanım için)", () => {
     expect(CARDS).toMatch(/export function TodaysSummaryCard/);
     expect(CARDS).toMatch(/BUGÜNKÜ ÖZET/);
-    expect(PAGE).toMatch(/<TodaysSummaryCard/);
+    // Ana sayfa sadeleştirme sonrası burada render edilmiyor; export korunuyor.
+  });
+
+  it("AI Aksiyon Merkezi panel kartı ana sayfada render edilir", () => {
+    // Eski AIDecisionAssistantCard (panelde) yerini AIActionCenterCard'a bıraktı.
+    // Detaylı analiz /ai-actions sayfasına taşındı; panel sadece özet gösterir
+    // ve "Merkeze Git" linki sunar.
+    expect(PAGE).toMatch(/<AIActionCenterCard/);
+    // Eski büyük kart panelden çıkarıldı:
+    expect(PAGE).not.toMatch(/<AIDecisionAssistantCard/);
   });
 
   it("Açık Pozisyonlar kartı var", () => {
@@ -430,11 +440,19 @@ describe("Phase 9 — trading invariant'leri korunur", () => {
       "/api/system/env-check",
       "/api/bot/heartbeat",
       "/api/bot/diagnostics",
-      "/api/paper-trades/e2e-status",
+      "/api/trade-performance/decision-summary",
+      "/api/position-management/recommendations?mode=paper",
     ];
     for (const url of internal) {
       expect(PAGE).toContain(url);
     }
+  });
+
+  it("dashboard dış borsa/REST API çağrısı yapmaz", () => {
+    // page.tsx hiçbir external base URL'i import etmez veya çağırmaz.
+    expect(PAGE).not.toMatch(/fapi\.binance\.com/);
+    expect(PAGE).not.toMatch(/api\.binance\.com/);
+    expect(PAGE).not.toMatch(/from\s+["']axios["']/);
   });
 
   it("Piyasa Tarayıcı sayfası bu fazda değişmedi (Faz 8 imzası korundu)", () => {

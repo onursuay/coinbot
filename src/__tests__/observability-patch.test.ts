@@ -291,16 +291,15 @@ describe("AI Card — status bar", () => {
     expect(readFile(CARDS)).toContain("lastCallAt");
   });
 
-  it("AI durum çubuğu AKTİF/API KEY YOK/FALLBACK/HATA gösteriyor", () => {
+  it("AI durum çubuğu Aktif/API Key Yok/Fallback/Hata etiketlerini içerir", () => {
+    // AIDecisionCardInput temelli component artık panelde render edilmiyor
+    // (yerini AIActionCenterCard aldı), ancak Cards.tsx içindeki tip ve
+    // status-bar mantığı korunuyor — iç observability için kullanılır.
     const content = readFile(CARDS);
-    expect(content).toContain("AKTİF");
-    expect(content).toContain("API KEY YOK");
-    expect(content).toContain("FALLBACK");
-    expect(content).toContain("HATA");
-  });
-
-  it("'AI fallback çalıştı' mesajı var", () => {
-    expect(readFile(CARDS)).toContain("AI fallback çalıştı");
+    expect(content).toContain('"Aktif"');
+    expect(content).toContain('"API Key Yok"');
+    expect(content).toContain('"Fallback"');
+    expect(content).toContain('"Hata"');
   });
 
   it("ONAYLA butonu YOK (canlı açan UI yok)", () => {
@@ -308,6 +307,71 @@ describe("AI Card — status bar", () => {
     const idx = content.indexOf("export function AIDecisionAssistantCard");
     const section = content.slice(idx).split("\nexport ")[0];
     expect(section).not.toMatch(/['"]ONAYLA['"]/);
+  });
+});
+
+// ── AI Aksiyon Merkezi — yeni observability beklentileri ────────────────────
+
+describe("AI Action Center — panel + endpoint observability", () => {
+  it("Panelde eski AIDecisionAssistantCard render edilmiyor", () => {
+    const page = readFile("src/app/page.tsx");
+    expect(page).not.toMatch(/<AIDecisionAssistantCard/);
+  });
+
+  it("Panelde yeni AIActionCenterCard render ediliyor", () => {
+    const page = readFile("src/app/page.tsx");
+    expect(page).toMatch(/<AIActionCenterCard/);
+  });
+
+  it("AIActionCenterCard /api/ai-actions endpoint'ini fetch eder", () => {
+    const card = readFile("src/components/dashboard/AIActionCenterCard.tsx");
+    expect(card).toMatch(/\/api\/ai-actions/);
+  });
+
+  it("AIActionCenterCard 'Merkeze Git' linki /ai-actions'a yönlendirir", () => {
+    const card = readFile("src/components/dashboard/AIActionCenterCard.tsx");
+    expect(card).toContain("Merkeze Git");
+    expect(card).toMatch(/href=["']\/ai-actions["']/);
+  });
+
+  it("/api/ai-actions/apply audit log eventleri kod gövdesinde geçer", () => {
+    const route = readFile("src/app/api/ai-actions/apply/route.ts");
+    expect(route).toContain("ai_action_apply_requested");
+    expect(route).toContain("ai_action_apply_blocked");
+    expect(route).toContain("ai_action_apply_failed");
+    expect(route).toContain("ai_action_applied");
+    expect(route).toContain("ai_action_observation_set");
+  });
+
+  it("/api/ai-actions/apply OPENAI_API_KEY veya secret loglamaz", () => {
+    const route = readFile("src/app/api/ai-actions/apply/route.ts");
+    expect(route).not.toMatch(/OPENAI_API_KEY/);
+    expect(route).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY=/);
+    expect(route).not.toMatch(/process\.env\.SUPABASE_SERVICE_ROLE_KEY[^?]/);
+  });
+
+  it("/api/ai-actions/apply Binance private endpoint çağırmaz", () => {
+    const route = readFile("src/app/api/ai-actions/apply/route.ts");
+    expect(route).not.toMatch(/\/fapi\/v1\/order/);
+    expect(route).not.toMatch(/\/fapi\/v1\/leverage/);
+  });
+
+  it("/api/ai-actions/apply HARD_LIVE_TRADING_ALLOWED=true ataması yok", () => {
+    const route = readFile("src/app/api/ai-actions/apply/route.ts");
+    expect(route).not.toMatch(/HARD_LIVE_TRADING_ALLOWED\s*=\s*true/);
+    expect(route).not.toMatch(/enable_live_trading\s*=\s*true/);
+  });
+
+  it("/ai-actions sayfası confirmApply: true literal'i ile apply eder", () => {
+    const page = readFile("src/app/ai-actions/page.tsx");
+    expect(page).toMatch(/confirmApply:\s*true/);
+  });
+
+  it("Executor APPLICABLE whitelist + FORBIDDEN guard içerir", () => {
+    const exec = readFile("src/lib/ai-actions/executor.ts");
+    expect(exec).toContain("APPLICABLE_ACTION_TYPES");
+    expect(exec).toContain("FORBIDDEN_ACTION_TYPES");
+    expect(exec).toContain("FORBIDDEN_ACTION");
   });
 });
 
