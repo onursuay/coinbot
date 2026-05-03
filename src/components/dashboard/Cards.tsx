@@ -7,7 +7,7 @@
 // risk engine ayarı veya canlı trading gate'i bu kartlardan etkilenmez.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, Eye, MessageSquare, RefreshCw } from "lucide-react";
 import { fmtNum, fmtUsd } from "@/lib/format";
 import {
@@ -1415,6 +1415,7 @@ export function AIDecisionAssistantCard({
     actionId: string,
   ) => AIDecisionActionResult | Promise<AIDecisionActionResult>;
 }) {
+  const router = useRouter();
   const empty = !data;
   const status = data?.status ?? "DATA_INSUFFICIENT";
   const statusTone = AI_STATUS_TONE[status] ?? "muted";
@@ -1428,6 +1429,27 @@ export function AIDecisionAssistantCard({
   const [refreshing, setRefreshing] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
   const [actionNotice, setActionNotice] = useState<{ tone: Tone; text: string } | null>(null);
+  const promptPanelRef = useRef<HTMLDivElement>(null);
+  const promptButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Prompt alanı açıkken dış tıklama veya ESC ile otomatik kapanma.
+  // Kopyala butonu ve panel içi tıklamalar kapatmaz.
+  useEffect(() => {
+    if (!promptOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (promptPanelRef.current?.contains(t)) return;
+      if (promptButtonRef.current?.contains(t)) return;
+      setPromptOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setPromptOpen(false); };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [promptOpen]);
 
   // AI durum çubuğu hesabı
   const aiStatusInfo = (() => {
@@ -1551,7 +1573,11 @@ export function AIDecisionAssistantCard({
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <Pill tone={statusTone}>{actionLabel}</Pill>
                 {data!.observeDays > 0 && <Pill tone="muted">{data!.observeDays} gün gözlem</Pill>}
-                {data!.requiresUserApproval && <Pill tone="warning">Kullanıcı onayı gerekli</Pill>}
+                {data!.requiresUserApproval && (
+                  <span className="pointer-events-none cursor-default text-[10px] font-medium uppercase tracking-wider px-2 py-1 rounded-md bg-warning/10 text-warning border border-warning/20">
+                    Kullanıcı Onayı Gerekli
+                  </span>
+                )}
               </div>
             </AIDecisionPanel>
           </div>
@@ -1570,7 +1596,7 @@ export function AIDecisionAssistantCard({
           )}
 
           {promptOpen && (
-            <div className="mt-3 rounded-md border border-accent/40 bg-accent/5 px-3 py-2">
+            <div ref={promptPanelRef} className="mt-3 rounded-md border border-accent/40 bg-accent/5 px-3 py-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-[10px] uppercase tracking-wider text-accent">ÖNERİLEN PROMPT</div>
                 {!data!.suggestedPrompt && <span className="text-[10px] text-muted">Fallback prompt</span>}
@@ -1615,6 +1641,16 @@ export function AIDecisionAssistantCard({
       {/* Aksiyon butonları — ONAYLA YOK; AI canlıyı açan UI içermez */}
       <div className="mt-3 flex flex-col gap-2 border-t border-border/60 pt-3 lg:flex-row lg:items-center">
         <div className="flex flex-col gap-1.5 sm:flex-row">
+          {/* RİSKİ İNCELE — /risk sayfasına yönlendirir, hiçbir ayar değiştirmez */}
+          <button
+            type="button"
+            onClick={() => router.push("/risk")}
+            className={`${actionButtonCls} border-warning/50 bg-warning/10 text-warning hover:bg-warning/20 hover:border-warning disabled:opacity-50`}
+            data-action-kind="REVIEW_RISK"
+            disabled={empty}
+          >
+            RİSKİ İNCELE
+          </button>
           <button
             type="button"
             onClick={handleObserve}
@@ -1627,9 +1663,10 @@ export function AIDecisionAssistantCard({
             disabled={empty}
           >
             <Eye className="h-3.5 w-3.5" />
-            {observeSelected ? "GÖZLEM KAYDEDİLDİ" : `GÖZLEM (${observeDays}g)`}
+            {observeSelected ? "GÖZLEM KAYDEDİLDİ" : `${observeDays} GÜN GÖZLEM`}
           </button>
           <button
+            ref={promptButtonRef}
             type="button"
             onClick={handlePrompt}
             className={`${actionButtonCls} ${
@@ -1655,8 +1692,8 @@ export function AIDecisionAssistantCard({
             {refreshing ? "YENİLENİYOR" : "RAPORU YENİLE"}
           </button>
         </div>
-        <span className="text-[10px] uppercase tracking-wider text-muted lg:ml-auto lg:text-right">
-          AI yorumlayıcıdır; ayar değiştirmez, emir açmaz.
+        <span className="text-[10px] text-muted lg:ml-auto lg:text-right">
+          AI yorumlayıcıdır; ayar değiştirmez, emir açmaz. Onay gereken işlemler manuel yapılır.
         </span>
       </div>
     </div>
