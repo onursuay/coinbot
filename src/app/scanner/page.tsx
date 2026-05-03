@@ -496,6 +496,16 @@ export default function ScannerPage() {
         </div>
       )}
 
+      {/* Position limit full — scan continues, no new trades */}
+      {data?.strategy_health?.positionOpeningBlockReason === "max_open_positions" && (
+        <div className="flex items-center gap-2 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-400">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden>
+            <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3.5a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 4.5zm0 7a.875.875 0 1 1 0-1.75.875.875 0 0 1 0 1.75z"/>
+          </svg>
+          Maksimum açık pozisyon dolu — tarama devam ediyor, yeni işlem açılmıyor.
+        </div>
+      )}
+
       {/* Candidate pool empty / provider error notice */}
       {poolEmpty && poolEmptyMessage && (
         <div className="rounded-md border border-border bg-bg-soft px-3 py-2 text-xs text-slate-400">

@@ -999,20 +999,18 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
   result.riskCapitalSource = riskCapitalSource;
 
   if (openCount >= loopMaxOpenPositions) {
-    if (forceMode.active) {
-      // Force paper mode: scanner continues — no new positions until a slot opens.
-      await botLog({
-        userId, eventType: "force_paper_mode_active",
-        message: `[FORCE PAPER] Tarama devam ediyor. Pozisyon limiti dolu olduğu için yeni işlem açılmıyor (${openCount}/${loopMaxOpenPositions}).`,
-      });
-    } else {
-      result.ok = true;
-      result.reason = "max_open_positions";
-      result.durationMs = Date.now() - start;
-      await botLog({ userId, eventType: "tick_completed", message: `Tick — maks açık pozisyon (${openCount}/${loopMaxOpenPositions}) doldu${aggMode.active ? " [AGGRESSIVE]" : ""}` });
-      await writeSkipSummary(userId, opts?.workerContext, "max_open_positions", tickStartedAt);
-      return result;
-    }
+    // Scanner always continues when position limit is full — only openPaperTrade
+    // calls are blocked (inside the scan loop below). This preserves market
+    // visibility and scanner table data regardless of open-position count.
+    // Previously the non-forceMode branch did an early return here, leaving the
+    // scanner table empty. That was incorrect: trade-open gate ≠ scan gate.
+    result.positionOpeningBlocked = true;
+    result.positionOpeningBlockReason = "max_open_positions";
+    const modeTag = forceMode.active ? " [FORCE PAPER]" : aggMode.active ? " [AGGRESSIVE]" : "";
+    await botLog({
+      userId, eventType: "tick_scan_position_limit_full",
+      message: `Tarama devam ediyor${modeTag}. Pozisyon limiti dolu — yeni işlem açılmıyor (${openCount}/${loopMaxOpenPositions}).`,
+    });
   }
 
   // Faz 20: daily trade count guard from risk settings.
@@ -1387,11 +1385,13 @@ export async function tickBot(userId: string, opts?: { timeframe?: Timeframe; sy
         continue;
       }
 
-      // ── Position limit check inside scan loop (force paper mode) ──
-      // In force mode the pre-loop check does not stop the scanner; check again
-      // here before attempting to insert so we skip the insert but keep scanning.
-      if (forceMode.active && openCount >= loopMaxOpenPositions) {
-        detail.rejectReason = "FORCE PAPER: pozisyon limiti dolu (tarama devam ediyor)";
+      // ── Position limit check inside scan loop ──
+      // Applies to every mode: skip openPaperTrade but keep scanning so the
+      // scanner table stays populated when the position limit is full.
+      if (openCount >= loopMaxOpenPositions) {
+        detail.rejectReason = forceMode.active
+          ? "FORCE PAPER: pozisyon limiti dolu (tarama devam ediyor)"
+          : `İşlem açılmaz: pozisyon limiti dolu (${openCount}/${loopMaxOpenPositions})`;
         result.scanDetails.push(detail);
         continue;
       }

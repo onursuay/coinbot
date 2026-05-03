@@ -385,11 +385,16 @@ describe("Bugfix 1.1 — tickBot early return path'ler", () => {
     expect(ORCHESTRATOR).toMatch(/result\.positionOpeningBlocked\s*=\s*true/);
   });
 
-  it("max_open_positions path summary yazıyor", () => {
+  it("max_open_positions path ARTIK scan'ı skip etmiyor — positionOpeningBlocked set edilir", () => {
+    // max_open_positions dolu olduğunda writeSkipSummary çağrılmamalı; sadece
+    // positionOpeningBlocked=true set edilmeli ve scan döngüsü devam etmeli.
+    // Eski davranış (early return + writeSkipSummary) scanner'ı boş bırakıyordu.
     const idx = ORCHESTRATOR.lastIndexOf('"max_open_positions"');
     expect(idx).toBeGreaterThan(0);
-    const nearbyCtx = ORCHESTRATOR.slice(Math.max(0, idx - 100), idx + 100);
-    expect(nearbyCtx).toMatch(/writeSkipSummary/);
+    const nearbyCtx = ORCHESTRATOR.slice(Math.max(0, idx - 300), idx + 300);
+    expect(nearbyCtx).not.toMatch(/writeSkipSummary/);
+    expect(nearbyCtx).toMatch(/positionOpeningBlocked\s*=\s*true/);
+    expect(nearbyCtx).toMatch(/tick_scan_position_limit_full/);
   });
 
   it("bot_not_running path summary yazıyor", () => {
