@@ -57,57 +57,36 @@ export default function TopBar() {
     return () => { active = false; clearInterval(t); };
   }, []);
 
-  const mode = s?.bot?.trading_mode ?? "paper";
   const exchange = s === null ? "..." : (s?.bot?.active_exchange ?? "binance");
 
-  const modeLabel = mode === "paper" ? "SANAL" : mode === "live" ? "CANLI" : mode.toUpperCase();
-
   return (
-    <header className="flex flex-wrap items-center justify-between gap-2 px-6 py-2 border-b border-border bg-bg-soft/60 backdrop-blur">
-      {/* Left: status pills */}
-      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-        <span className={`${PILL} bg-accent/15 text-accent`}>MOD: {modeLabel}</span>
-        <span className={`${PILL} bg-slate-700/40 text-slate-300`}>BORSA: {String(exchange).toUpperCase()}</span>
-        {s?.liveTrading
-          ? <span className={`${PILL} bg-warning/15 text-warning`}>CANLI: AÇIK</span>
-          : <span className={`${PILL} bg-success/15 text-success`}>CANLI: KAPALI</span>}
-        <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-          YENİLEME: AÇIK
+    <header className="flex items-center gap-1.5 flex-wrap px-6 py-2 border-b border-border bg-bg-soft/60 backdrop-blur">
+      <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
+        BORSA: {String(exchange).toUpperCase()}
+      </span>
+      <span className={`${PILL} ${lastFetch ? "bg-slate-700/40 text-slate-300" : "bg-danger/15 text-danger"}`}>
+        <span className={`inline-block w-1.5 h-1.5 rounded-full ${lastFetch ? "bg-success animate-pulse" : "bg-danger"}`} />
+        YENİLEME/{lastFetch
+          ? lastFetch.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+          : "--:--:--"}
+      </span>
+      {workerOnline !== null && (
+        <span className={`${PILL} ${workerOnline ? "success-pill" : "danger-pill"}`}>
+          SUNUCU: {workerOnline ? "ÇEVRİMİÇİ" : "ÇEVRİMDIŞI"}
         </span>
-        {lastFetch && (
-          <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
-            SON: {lastFetch.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-          </span>
-        )}
-        {workerOnline !== null && (
-          <span className={`${PILL} ${workerOnline ? "success-pill" : "danger-pill"}`}>
-            SUNUCU: {workerOnline ? "ÇEVRİMİÇİ" : "ÇEVRİMDIŞI"}
-          </span>
-        )}
-      </div>
-
-      {/* Right: sound toggle + P&L */}
-      <div className="flex items-center gap-1.5 flex-wrap shrink-0">
-        <button
-          onClick={toggleSound}
-          className={`${PILL} ${soundEnabled ? "bg-success/15 text-success" : "bg-slate-700/40 text-slate-300"} cursor-pointer hover:opacity-90`}
-          title={soundEnabled ? "Sesli bildirim açık — kapatmak için tıkla" : "Sesli bildirim kapalı — açmak için tıkla"}
-          type="button"
-        >
-          <span aria-hidden>{soundEnabled ? "🔊" : "🔇"}</span>
-          SES: {soundEnabled ? "AÇIK" : "KAPALI"}
-        </button>
-        {s && (
-          <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
-            K/Z:&nbsp;
-            <span className={s.daily.realizedPnlUsd >= 0 ? "value-positive" : "value-negative"}>
-              ${s.daily.realizedPnlUsd.toFixed(2)}
-            </span>
-            <span className="text-muted">&nbsp;/&nbsp;${s.daily.dailyTargetUsd}</span>
-          </span>
-        )}
-      </div>
+      )}
+      {s?.liveTrading
+        ? <span className={`${PILL} bg-warning/15 text-warning`}>CANLI: AÇIK</span>
+        : <span className={`${PILL} bg-success/15 text-success`}>CANLI: KAPALI</span>}
+      <button
+        onClick={toggleSound}
+        className={`${PILL} ${soundEnabled ? "bg-success/15 text-success" : "bg-slate-700/40 text-slate-300"} cursor-pointer hover:opacity-90`}
+        title={soundEnabled ? "Sesli bildirim açık — kapatmak için tıkla" : "Sesli bildirim kapalı — açmak için tıkla"}
+        type="button"
+      >
+        <span aria-hidden>{soundEnabled ? "🔊" : "🔇"}</span>
+        SES: {soundEnabled ? "AÇIK" : "KAPALI"}
+      </button>
     </header>
   );
 }
