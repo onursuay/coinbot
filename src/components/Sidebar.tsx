@@ -15,15 +15,8 @@ import {
   PanelLeftOpen,
   Bot,
   Layers,
-  Bell,
-  BellOff,
 } from 'lucide-react'
 import { useState, useEffect, useLayoutEffect } from 'react'
-import {
-  readPaperNotificationPermission,
-  requestPaperNotificationPermission,
-  type PaperNotificationPermissionState,
-} from '@/lib/paper-position-alerts'
 
 const NAV = [
   { href: '/', label: 'Panel', icon: LayoutDashboard },
@@ -44,8 +37,6 @@ export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
   const [animate, setAnimate] = useState(false)
   const [showHintButton, setShowHintButton] = useState(false)
-  const [notificationPermission, setNotificationPermission] =
-    useState<PaperNotificationPermissionState | null>(null)
 
   useLayoutEffect(() => {
     try {
@@ -68,17 +59,6 @@ export default function Sidebar() {
     const timers = loop()
     return () => timers.forEach(clearTimeout)
   }, [collapsed])
-
-  useEffect(() => {
-    const syncPermission = () => {
-      setNotificationPermission(readPaperNotificationPermission())
-    }
-    syncPermission()
-    window.addEventListener('coinbot:paper-notification-permission', syncPermission)
-    return () => {
-      window.removeEventListener('coinbot:paper-notification-permission', syncPermission)
-    }
-  }, [])
 
   const toggleCollapse = () => {
     setCollapsed((prev) => {
@@ -169,13 +149,6 @@ export default function Sidebar() {
             </Link>
           )
         })}
-        <SidebarNotificationPermissionControl
-          collapsed={collapsed}
-          permission={notificationPermission}
-          onRequest={async () => {
-            setNotificationPermission(await requestPaperNotificationPermission())
-          }}
-        />
       </nav>
 
       {/* Footer */}
@@ -186,76 +159,6 @@ export default function Sidebar() {
           Canlı: env ile kilitli
         </div>
       )}
-    </div>
-  )
-}
-
-function SidebarNotificationPermissionControl({
-  collapsed,
-  permission,
-  onRequest,
-}: {
-  collapsed: boolean
-  permission: PaperNotificationPermissionState | null
-  onRequest: () => Promise<void>
-}) {
-  if (permission === null) return null
-
-  const granted = permission === 'granted'
-  const needsPermission = permission === 'default'
-  const denied = permission === 'denied'
-  const unsupported = permission === 'unsupported'
-  const Icon = granted ? Bell : BellOff
-  const label = granted ? 'Bildirim Açık' : unsupported ? 'Destek Yok' : 'Bildirim Kapalı'
-  const detail = needsPermission
-    ? 'İzin gerekli'
-    : denied
-      ? 'Tarayıcıdan engelli'
-      : unsupported
-        ? 'Tarayıcı desteklemiyor'
-        : 'Aktif'
-  const toneClass = granted
-    ? 'border-success/20 bg-success/10 text-success'
-    : needsPermission
-      ? 'border-warning/25 bg-warning/10 text-warning'
-      : 'border-border bg-bg-card text-slate-300'
-
-  if (collapsed) {
-    return (
-      <button
-        type="button"
-        onClick={needsPermission ? onRequest : undefined}
-        disabled={!needsPermission}
-        title={label}
-        className={`mt-2 flex h-10 w-full items-center justify-center rounded-lg border transition-colors ${toneClass} ${
-          needsPermission ? 'hover:bg-warning/15' : 'cursor-default'
-        }`}
-      >
-        <Icon className="h-4 w-4" />
-      </button>
-    )
-  }
-
-  return (
-    <div className={`mt-2 w-full min-w-0 rounded-lg border px-3 py-2 ${toneClass}`}>
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Icon className="h-4 w-4 shrink-0" />
-          <div className="min-w-0">
-            <div className="truncate text-xs font-semibold leading-tight">{label}</div>
-            <div className="truncate text-[10px] leading-tight opacity-80">{detail}</div>
-          </div>
-        </div>
-        {needsPermission && (
-          <button
-            type="button"
-            onClick={onRequest}
-            className="shrink-0 rounded-md bg-accent px-2 py-1 text-[10px] font-semibold leading-none text-black hover:bg-accent-strong"
-          >
-            Aç
-          </button>
-        )}
-      </div>
     </div>
   )
 }

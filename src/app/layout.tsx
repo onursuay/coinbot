@@ -4,6 +4,7 @@ import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
 import MainContent from "@/components/MainContent";
 import GlobalTradeSoundNotifier from "@/components/GlobalTradeSoundNotifier";
+import NotificationPermissionToast from "@/components/NotificationPermissionToast";
 
 export const metadata: Metadata = {
   title: "Multi-Exchange Futures Trading Bot",
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Sidebar />
           <MainContent>
             <TopBar />
+            <NotificationPermissionToast />
             <main className="flex-1 overflow-y-auto p-6">{children}</main>
           </MainContent>
         </div>

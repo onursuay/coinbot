@@ -21,16 +21,16 @@ export default function PerformancePage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Performance</h1>
+      <h1 className="text-xl font-semibold">Performans</h1>
       <div className="grid md:grid-cols-4 gap-3">
-        <Kpi label="Total PnL" value={fmtUsd(perf?.totalPnl ?? 0)} accent={(perf?.totalPnl ?? 0) >= 0 ? "success" : "danger"} />
-        <Kpi label="Win Rate" value={fmtPct(perf?.winRate ?? 0)} />
-        <Kpi label="Profit Factor" value={fmtNum(perf?.profitFactor ?? 0)} />
-        <Kpi label="Max Drawdown" value={fmtUsd(perf?.maxDrawdown ?? 0)} accent="danger" />
+        <Kpi label="Toplam Kâr/Zarar" value={fmtUsd(perf?.totalPnl ?? 0)} accent={(perf?.totalPnl ?? 0) >= 0 ? "success" : "danger"} />
+        <Kpi label="Kazanma Oranı" value={fmtPct(perf?.winRate ?? 0)} />
+        <Kpi label="Kâr Faktörü" value={fmtNum(perf?.profitFactor ?? 0)} />
+        <Kpi label="Maksimum Düşüş" value={fmtUsd(perf?.maxDrawdown ?? 0)} accent="danger" />
       </div>
       <div className="card">
-        <h2 className="font-semibold mb-2">Equity (paper, kronolojik)</h2>
-        {points.length === 0 ? <div className="text-muted text-sm">veri yok</div> : (
+        <h2 className="font-semibold mb-2">Sermaye Eğrisi (paper, kronolojik)</h2>
+        {points.length === 0 ? <div className="text-muted text-sm">Veri yok</div> : (
           <svg viewBox={`0 0 ${Math.max(200, points.length * 6)} 120`} className="w-full h-32">
             {(() => {
               const w = Math.max(200, points.length * 6), h = 120, pad = 6;
