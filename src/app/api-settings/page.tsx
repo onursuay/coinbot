@@ -199,9 +199,9 @@ export default function ApiSettings() {
             {(["withdrawPermissionDisabled", "ipRestrictionConfigured", "futuresPermissionConfirmed", "extraPermissionsReviewed"] as const).map((k) => {
               const v = credStatus.checklist[k];
               return (
-                <div key={k} className="flex items-center justify-between gap-3 border border-white/5 rounded p-2">
-                  <div className="text-sm">{CHECKLIST_LABELS[k]}</div>
-                  <div className="flex gap-1">
+                <div key={k} className="flex flex-wrap items-center gap-2 border border-white/5 rounded p-2">
+                  <div className="text-sm flex-1 min-w-[140px]">{CHECKLIST_LABELS[k]}</div>
+                  <div className="flex flex-wrap gap-1">
                     <button
                       className={v === "confirmed" ? "btn-primary text-xs" : "btn-ghost text-xs"}
                       onClick={() => setChecklist(k, "confirmed")}
@@ -292,9 +292,9 @@ export default function ApiSettings() {
         </div>
       </section>
 
-      <section className="card">
+      <section className="card overflow-x-auto">
         <h2 className="font-semibold mb-2">Bağlı Borsalar</h2>
-        <table className="t">
+        <table className="t min-w-[560px]">
           <thead><tr><th>Exchange</th><th>API Key</th><th>Active</th><th>Last Validated</th><th></th></tr></thead>
           <tbody>
             {connected.length === 0 && <tr><td colSpan={5} className="text-muted">henüz bağlı borsa yok</td></tr>}

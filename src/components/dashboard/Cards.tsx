@@ -460,7 +460,7 @@ export function OpenPositionsCard({ rows }: { rows: OpenPositionRow[] }) {
         <h2 className="font-semibold tracking-wide">AÇIK POZİSYONLAR ({rows.length})</h2>
         <Link href="/paper-trades" className="text-xs text-accent">Tüm işlemler →</Link>
       </div>
-      <table className="t t-centered">
+      <table className="t t-centered min-w-[520px]">
         <thead>
           <tr>
             <th>COIN</th>
