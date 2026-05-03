@@ -62,3 +62,22 @@ export {
   type RollbackErrorCode,
   type RollbackSuccessCode,
 } from "./rollback";
+
+export {
+  buildCodePrompt,
+  recommendPromptTarget,
+  validatePromptRequest,
+  defaultScopeForPlan,
+  getCodePromptScopeLabel,
+  getCodePromptTargetLabel,
+  CODE_PROMPT_SCOPES,
+  CODE_PROMPT_TARGETS,
+  PROMPT_SAFETY_CHECKLIST,
+  PROMPT_DEPLOY_CHECKLIST,
+  type CodePromptTarget,
+  type CodePromptScope,
+  type CodePromptRequest,
+  type CodePromptResult,
+  type PromptValidation,
+  type PromptValidationCode,
+} from "./code-prompt";

@@ -40,6 +40,7 @@ const VALID_CATEGORIES: readonly HistoryCategory[] = [
   "decision",
   "safety",
   "observation",
+  "prompt",
 ];
 const VALID_STATUSES: readonly HistoryStatus[] = [
   "applied",
@@ -54,6 +55,9 @@ const VALID_STATUSES: readonly HistoryStatus[] = [
   "rollback_applied",
   "rollback_blocked",
   "rollback_failed",
+  "prompt_generated",
+  "prompt_blocked",
+  "prompt_failed",
 ];
 
 export async function GET(req: Request) {

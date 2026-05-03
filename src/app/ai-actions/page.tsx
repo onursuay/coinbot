@@ -25,8 +25,17 @@ import type {
   HistoryItem,
   HistoryCategory,
   HistoryStatus,
+  CodePromptScope,
+  CodePromptTarget,
 } from "@/lib/ai-actions";
-import { buildActionPrompt } from "@/lib/ai-actions/prompt-builder";
+import {
+  recommendPromptTarget,
+  defaultScopeForPlan,
+  getCodePromptScopeLabel,
+  getCodePromptTargetLabel,
+  CODE_PROMPT_SCOPES,
+  CODE_PROMPT_TARGETS,
+} from "@/lib/ai-actions/code-prompt";
 // Runtime label'ları doğrudan history modülünden al — index üzerinden
 // gitmek decision-cache'in node:crypto bağımlılığını client bundle'a sızdırır.
 import {
@@ -114,6 +123,22 @@ interface ApplyResult {
   message: string;
   oldValue?: string | null;
   newValue?: string | null;
+}
+
+interface PromptModalState {
+  plan: ActionPlan;
+  target: CodePromptTarget;
+  scope: CodePromptScope;
+}
+
+interface PromptResultData {
+  promptId: string;
+  target: CodePromptTarget;
+  scope: CodePromptScope;
+  title: string;
+  prompt: string;
+  applicabilityNote: string | null;
+  generatedAt: string;
 }
 
 interface RollbackNotice {
@@ -213,6 +238,12 @@ export default function AIActionCenterPage() {
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applyResults, setApplyResults] = useState<Record<string, ApplyResult>>({});
+  // Faz 6 — Prompt modal
+  const [promptModal, setPromptModal] = useState<PromptModalState | null>(null);
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [promptError, setPromptError] = useState<string | null>(null);
+  const [promptResult, setPromptResult] = useState<PromptResultData | null>(null);
+  const [promptCopied, setPromptCopied] = useState(false);
   // Pasif entegrasyon — sistem sağlığı OTOMATİK fetch (LLM çağrısı yok).
   const [health, setHealth] = useState<SystemHealth | null>(null);
   // AI Karar Özeti — sayfa açıldığında otomatik /api/ai-actions/decision
@@ -304,7 +335,13 @@ export default function AIActionCenterPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState<
-    "all" | "applied" | "blocked" | "observation" | "decision" | "rollback"
+    | "all"
+    | "applied"
+    | "blocked"
+    | "observation"
+    | "decision"
+    | "rollback"
+    | "prompt"
   >("all");
   // Rollback state
   const [rollbackTarget, setRollbackTarget] = useState<RollbackModalState | null>(null);
@@ -408,18 +445,89 @@ export default function AIActionCenterPage() {
     if (openId === id) setOpenId(null);
   };
 
-  const copyPrompt = async (plan: ActionPlan) => {
-    const prompt = buildActionPrompt(plan);
+  // Faz 6 — Prompt modal akışı.
+  // Buton, modal'ı açar; modal /api/ai-actions/prompt'a confirmGenerate=true
+  // ile POST atar. Tam prompt UI'da gösterilir, kullanıcı kopyalar.
+  const openPromptModal = (plan: ActionPlan) => {
+    const scope = defaultScopeForPlan(plan);
+    const target = recommendPromptTarget(plan, scope);
+    setPromptModal({ plan, target, scope });
+    setPromptResult(null);
+    setPromptError(null);
+    setPromptCopied(false);
+    setCopyState(null);
+  };
+
+  const closePromptModal = useCallback(() => {
+    if (promptLoading) return;
+    setPromptModal(null);
+    setPromptResult(null);
+    setPromptError(null);
+    setPromptCopied(false);
+  }, [promptLoading]);
+
+  const generatePrompt = useCallback(async () => {
+    if (!promptModal) return;
+    setPromptLoading(true);
+    setPromptError(null);
+    setPromptResult(null);
+    setPromptCopied(false);
+    try {
+      const res = await fetch("/api/ai-actions/prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planId: promptModal.plan.id,
+          target: promptModal.target,
+          scope: promptModal.scope,
+          confirmGenerate: true,
+        }),
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        setPromptError(json.error ?? "Prompt üretilemedi.");
+        return;
+      }
+      setPromptResult({
+        promptId: json.data.promptId,
+        target: json.data.target,
+        scope: json.data.scope,
+        title: json.data.title,
+        prompt: json.data.prompt,
+        applicabilityNote: json.data.applicabilityNote,
+        generatedAt: json.data.generatedAt,
+      });
+      // History yenile (yeni prompt event'leri için).
+      void fetchHistory();
+    } catch (e) {
+      setPromptError(e instanceof Error ? e.message : "Prompt üretilemedi.");
+    } finally {
+      setPromptLoading(false);
+    }
+  }, [promptModal, fetchHistory]);
+
+  const copyGeneratedPrompt = useCallback(async () => {
+    if (!promptResult) return;
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard) {
-        await navigator.clipboard.writeText(prompt);
+        await navigator.clipboard.writeText(promptResult.prompt);
       }
-      setCopyState({ id: plan.id, copied: true });
-      setTimeout(() => setCopyState(null), 2000);
+      setPromptCopied(true);
+      setTimeout(() => setPromptCopied(false), 2000);
     } catch {
-      setCopyState({ id: plan.id, copied: false });
+      setPromptCopied(false);
     }
-  };
+  }, [promptResult]);
+
+  // ESC ile kapatma.
+  useEffect(() => {
+    if (!promptModal) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closePromptModal();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [promptModal, closePromptModal]);
 
   const restoreDismissed = () => {
     setDismissed(new Set());
@@ -622,7 +730,7 @@ export default function AIActionCenterPage() {
                   setApplyTarget(plan);
                 }}
                 onDismiss={() => dismissPlan(plan.id)}
-                onPrompt={() => copyPrompt(plan)}
+                onPrompt={() => openPromptModal(plan)}
                 copyState={copyState}
               />
             ))}
@@ -879,6 +987,26 @@ export default function AIActionCenterPage() {
           error={rollbackError}
           onCancel={() => { setRollbackTarget(null); setRollbackError(null); }}
           onConfirm={submitRollback}
+        />
+      )}
+
+      {/* Prompt Modal — Faz 6 */}
+      {promptModal && (
+        <PromptModal
+          state={promptModal}
+          loading={promptLoading}
+          error={promptError}
+          result={promptResult}
+          copied={promptCopied}
+          onTargetChange={(target) =>
+            setPromptModal((cur) => (cur ? { ...cur, target } : cur))
+          }
+          onScopeChange={(scope) =>
+            setPromptModal((cur) => (cur ? { ...cur, scope } : cur))
+          }
+          onGenerate={generatePrompt}
+          onCopy={copyGeneratedPrompt}
+          onCancel={closePromptModal}
         />
       )}
     </div>
@@ -1147,7 +1275,8 @@ type HistoryFilterKey =
   | "blocked"
   | "observation"
   | "decision"
-  | "rollback";
+  | "rollback"
+  | "prompt";
 
 const HISTORY_STATUS_TONE: Record<HistoryStatus, StatusTone> = {
   applied: "success",
@@ -1162,6 +1291,9 @@ const HISTORY_STATUS_TONE: Record<HistoryStatus, StatusTone> = {
   rollback_applied: "accent",
   rollback_blocked: "danger",
   rollback_failed: "danger",
+  prompt_generated: "accent",
+  prompt_blocked: "danger",
+  prompt_failed: "danger",
 };
 
 function applyHistoryFilter(items: HistoryItem[], f: HistoryFilterKey): HistoryItem[] {
@@ -1180,6 +1312,7 @@ function applyHistoryFilter(items: HistoryItem[], f: HistoryFilterKey): HistoryI
         i.status === "rollback_failed" ||
         i.eventType === "ai_action_rollback_requested",
     );
+  if (f === "prompt") return items.filter((i) => i.category === "prompt");
   return items;
 }
 
@@ -1216,6 +1349,7 @@ function HistorySection({
     { key: "observation", label: "Gözlem" },
     { key: "decision", label: "AI Yorum" },
     { key: "rollback", label: "Geri Alınanlar" },
+    { key: "prompt", label: "Prompt" },
   ];
 
   return (
@@ -2038,4 +2172,197 @@ function fmtUsd(n: number): string {
   if (!Number.isFinite(n)) return "$0.00";
   const sign = n < 0 ? "-" : "";
   return `${sign}$${Math.abs(n).toFixed(2)}`;
+}
+
+function PromptModal({
+  state,
+  loading,
+  error,
+  result,
+  copied,
+  onTargetChange,
+  onScopeChange,
+  onGenerate,
+  onCopy,
+  onCancel,
+}: {
+  state: PromptModalState;
+  loading: boolean;
+  error: string | null;
+  result: PromptResultData | null;
+  copied: boolean;
+  onTargetChange: (target: CodePromptTarget) => void;
+  onScopeChange: (scope: CodePromptScope) => void;
+  onGenerate: () => void;
+  onCopy: () => void;
+  onCancel: () => void;
+}) {
+  const recommendedTarget = recommendPromptTarget(state.plan, state.scope);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4"
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="w-full max-w-2xl rounded-xl border border-border bg-bg-soft shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between border-b border-border px-5 py-4 gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-slate-100">
+              Uygulama Promptu Üret
+            </h3>
+            <p className="mt-1 text-[11px] text-muted">
+              Üretilen prompt sadece manuel inceleme/uygulama içindir. Kod
+              değişikliği bu fazda otomatik yapılmaz; live trading açılmaz.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="text-xs text-muted hover:text-danger disabled:opacity-50"
+            aria-label="Kapat"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="space-y-3 px-5 py-4 text-sm">
+          <div className="rounded-md border border-border bg-bg-card px-3 py-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+              Aksiyon
+            </div>
+            <div className="text-sm font-semibold text-slate-100">
+              {state.plan.title}
+            </div>
+            <div className="mt-0.5 font-mono text-[10px] text-muted">
+              {state.plan.type}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                Hedef Araç
+              </span>
+              <select
+                value={state.target}
+                onChange={(e) =>
+                  onTargetChange(e.target.value as CodePromptTarget)
+                }
+                disabled={loading}
+                className="mt-1 w-full rounded-md border border-border bg-bg-card px-2 py-1.5 text-xs text-slate-100"
+              >
+                {CODE_PROMPT_TARGETS.map((t) => (
+                  <option key={t} value={t}>
+                    {getCodePromptTargetLabel(t)}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-[10px] text-muted">
+                Önerilen: {getCodePromptTargetLabel(recommendedTarget)}
+              </span>
+            </label>
+
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                Kapsam
+              </span>
+              <select
+                value={state.scope}
+                onChange={(e) =>
+                  onScopeChange(e.target.value as CodePromptScope)
+                }
+                disabled={loading}
+                className="mt-1 w-full rounded-md border border-border bg-bg-card px-2 py-1.5 text-xs text-slate-100"
+              >
+                {CODE_PROMPT_SCOPES.map((s) => (
+                  <option key={s} value={s}>
+                    {getCodePromptScopeLabel(s)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {!result && !error && (
+            <p className="rounded-md border border-border bg-bg-card px-3 py-2 text-[11px] text-muted">
+              Hedef aracı ve kapsamı seçtikten sonra &quot;Prompt Üret&quot;
+              butonuna tıkla. Prompt yalnızca üretilir; otomatik bir aksiyon
+              alınmaz.
+            </p>
+          )}
+
+          {error && (
+            <p className="rounded-md border border-rose-500/30 bg-bg-card px-3 py-2 text-[11px] text-danger">
+              {error}
+            </p>
+          )}
+
+          {result && (
+            <div className="space-y-2">
+              {result.applicabilityNote && (
+                <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning">
+                  {result.applicabilityNote}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">
+                  {getCodePromptTargetLabel(result.target)}
+                </span>
+                <span className="rounded-full border border-border bg-bg-card px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                  {getCodePromptScopeLabel(result.scope)}
+                </span>
+                <span className="font-mono text-[10px] text-muted">
+                  {result.promptId}
+                </span>
+              </div>
+              <div className="rounded-md border border-border bg-bg-card">
+                <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                    Üretilen Prompt
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onCopy}
+                    className="rounded-md border border-accent/40 bg-accent/10 px-2 py-0.5 text-[11px] font-semibold text-accent transition hover:border-accent/70"
+                  >
+                    {copied ? "Kopyalandı ✓" : "Kopyala"}
+                  </button>
+                </div>
+                <textarea
+                  readOnly
+                  value={result.prompt}
+                  className="block h-64 w-full resize-y bg-bg-card px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-200 focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="rounded-lg border border-border bg-bg-card px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500 disabled:opacity-50"
+          >
+            Kapat
+          </button>
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={loading}
+            className="rounded-lg border border-accent/40 bg-accent/15 px-3 py-1.5 text-xs font-semibold text-accent transition hover:border-accent/70 disabled:opacity-50"
+          >
+            {loading ? "Üretiliyor…" : result ? "Yeniden Üret" : "Prompt Üret"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

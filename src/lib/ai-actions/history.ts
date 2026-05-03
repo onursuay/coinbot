@@ -28,6 +28,11 @@ export const AI_ACTION_EVENT_TYPES: readonly string[] = [
   "ai_decision_cache_miss",
   "ai_decision_refreshed",
   "ai_decision_fallback_cached",
+  // Faz 6 — Prompt center
+  "ai_action_prompt_requested",
+  "ai_action_prompt_generated",
+  "ai_action_prompt_blocked",
+  "ai_action_prompt_failed",
 ] as const;
 
 /** Rollback için uygun aksiyon tipleri — yalnızca bu 4 downward tipi geri alınabilir. */
@@ -38,7 +43,12 @@ export const ROLLBACK_ELIGIBLE_TYPES: readonly string[] = [
   "UPDATE_MAX_DAILY_TRADES_DOWN",
 ] as const;
 
-export type HistoryCategory = "action" | "decision" | "safety" | "observation";
+export type HistoryCategory =
+  | "action"
+  | "decision"
+  | "safety"
+  | "observation"
+  | "prompt";
 
 export type HistoryStatus =
   | "applied"
@@ -52,7 +62,10 @@ export type HistoryStatus =
   | "fallback"
   | "rollback_applied"
   | "rollback_blocked"
-  | "rollback_failed";
+  | "rollback_failed"
+  | "prompt_generated"
+  | "prompt_blocked"
+  | "prompt_failed";
 
 export interface HistoryItem {
   id: string;
@@ -174,6 +187,30 @@ function categoryAndStatus(eventType: string): MappedMeta {
         status: "fallback",
         title: "AI Fallback Yorumu",
       };
+    case "ai_action_prompt_requested":
+      return {
+        category: "prompt",
+        status: "requested",
+        title: "Prompt İstendi",
+      };
+    case "ai_action_prompt_generated":
+      return {
+        category: "prompt",
+        status: "prompt_generated",
+        title: "Prompt Üretildi",
+      };
+    case "ai_action_prompt_blocked":
+      return {
+        category: "prompt",
+        status: "prompt_blocked",
+        title: "Prompt Engellendi",
+      };
+    case "ai_action_prompt_failed":
+      return {
+        category: "prompt",
+        status: "prompt_failed",
+        title: "Prompt Başarısız",
+      };
     default:
       return { category: "decision", status: "refreshed", title: eventType };
   }
@@ -270,6 +307,9 @@ export const HISTORY_STATUS_LABEL: Record<HistoryStatus, string> = {
   rollback_applied: "Geri Alındı",
   rollback_blocked: "Geri Alma Bloke",
   rollback_failed: "Geri Alma Başarısız",
+  prompt_generated: "Prompt Üretildi",
+  prompt_blocked: "Prompt Engellendi",
+  prompt_failed: "Prompt Başarısız",
 };
 
 export const HISTORY_CATEGORY_LABEL: Record<HistoryCategory, string> = {
@@ -277,4 +317,5 @@ export const HISTORY_CATEGORY_LABEL: Record<HistoryCategory, string> = {
   decision: "AI Yorum",
   safety: "Güvenlik",
   observation: "Gözlem",
+  prompt: "Prompt",
 };
