@@ -18,11 +18,24 @@ export const AI_ACTION_EVENT_TYPES: readonly string[] = [
   "ai_action_apply_failed",
   "ai_action_applied",
   "ai_action_observation_set",
+  // Rollback pipeline
+  "ai_action_rollback_requested",
+  "ai_action_rollback_blocked",
+  "ai_action_rollback_applied",
+  "ai_action_rollback_failed",
   // Decision cache
   "ai_decision_cache_hit",
   "ai_decision_cache_miss",
   "ai_decision_refreshed",
   "ai_decision_fallback_cached",
+] as const;
+
+/** Rollback için uygun aksiyon tipleri — yalnızca bu 4 downward tipi geri alınabilir. */
+export const ROLLBACK_ELIGIBLE_TYPES: readonly string[] = [
+  "UPDATE_RISK_PER_TRADE_DOWN",
+  "UPDATE_MAX_DAILY_LOSS_DOWN",
+  "UPDATE_MAX_OPEN_POSITIONS_DOWN",
+  "UPDATE_MAX_DAILY_TRADES_DOWN",
 ] as const;
 
 export type HistoryCategory = "action" | "decision" | "safety" | "observation";
@@ -36,7 +49,10 @@ export type HistoryStatus =
   | "refreshed"
   | "cache_hit"
   | "cache_miss"
-  | "fallback";
+  | "fallback"
+  | "rollback_applied"
+  | "rollback_blocked"
+  | "rollback_failed";
 
 export interface HistoryItem {
   id: string;
@@ -138,6 +154,14 @@ function categoryAndStatus(eventType: string): MappedMeta {
         status: "observed",
         title: "Gözlem Kararı Kaydedildi",
       };
+    case "ai_action_rollback_applied":
+      return { category: "action", status: "rollback_applied", title: "Aksiyon Geri Alındı" };
+    case "ai_action_rollback_blocked":
+      return { category: "action", status: "rollback_blocked", title: "Geri Alma Bloke Edildi" };
+    case "ai_action_rollback_failed":
+      return { category: "action", status: "rollback_failed", title: "Geri Alma Başarısız" };
+    case "ai_action_rollback_requested":
+      return { category: "action", status: "requested", title: "Geri Alma İstendi" };
     case "ai_decision_refreshed":
       return { category: "decision", status: "refreshed", title: "AI Yorum Yenilendi" };
     case "ai_decision_cache_hit":
@@ -243,6 +267,9 @@ export const HISTORY_STATUS_LABEL: Record<HistoryStatus, string> = {
   cache_hit: "Cache",
   cache_miss: "Cache Kaçırdı",
   fallback: "Fallback",
+  rollback_applied: "Geri Alındı",
+  rollback_blocked: "Geri Alma Bloke",
+  rollback_failed: "Geri Alma Başarısız",
 };
 
 export const HISTORY_CATEGORY_LABEL: Record<HistoryCategory, string> = {

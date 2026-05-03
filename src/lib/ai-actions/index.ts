@@ -15,6 +15,7 @@ export type {
 export {
   ALLOWED_ACTION_TYPES,
   FORBIDDEN_ACTION_TYPES,
+  ROLLBACK_ELIGIBLE_TYPES,
 } from "./types";
 
 export { generateActionPlans } from "./generator";
@@ -42,6 +43,7 @@ export {
 } from "./decision-cache";
 export {
   AI_ACTION_EVENT_TYPES,
+  ROLLBACK_ELIGIBLE_TYPES as ROLLBACK_ELIGIBLE_HISTORY_TYPES,
   HISTORY_STATUS_LABEL,
   HISTORY_CATEGORY_LABEL,
   mapHistoryItem,
@@ -52,3 +54,11 @@ export {
   type HistoryStatus,
   type BotLogRow,
 } from "./history";
+
+export {
+  executeRollback,
+  type RollbackRequest,
+  type RollbackResult,
+  type RollbackErrorCode,
+  type RollbackSuccessCode,
+} from "./rollback";

@@ -40,6 +40,14 @@ export type ActionPlanType =
   /** Claude Code / GitHub uygulama promptu üret (manuel uygulanır) */
   | "CREATE_IMPLEMENTATION_PROMPT";
 
+/** Rollback kapsamındaki aksiyon tipleri — yalnızca bu 4 downward tipi geri alınabilir. */
+export const ROLLBACK_ELIGIBLE_TYPES: readonly ActionPlanType[] = [
+  "UPDATE_RISK_PER_TRADE_DOWN",
+  "UPDATE_MAX_DAILY_LOSS_DOWN",
+  "UPDATE_MAX_OPEN_POSITIONS_DOWN",
+  "UPDATE_MAX_DAILY_TRADES_DOWN",
+] as const;
+
 export const ALLOWED_ACTION_TYPES: readonly ActionPlanType[] = [
   "UPDATE_RISK_PER_TRADE_DOWN",
   "UPDATE_MAX_DAILY_LOSS_DOWN",

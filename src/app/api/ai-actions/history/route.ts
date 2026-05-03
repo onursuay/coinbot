@@ -51,6 +51,9 @@ const VALID_STATUSES: readonly HistoryStatus[] = [
   "cache_hit",
   "cache_miss",
   "fallback",
+  "rollback_applied",
+  "rollback_blocked",
+  "rollback_failed",
 ];
 
 export async function GET(req: Request) {

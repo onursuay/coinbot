@@ -75,6 +75,14 @@ const APPLICABLE_TYPES: readonly ActionPlanType[] = [
   "SET_OBSERVATION_MODE",
 ] as const;
 
+/** Faz 5'te rollback edilebilir tipler (yalnızca downward 4 tip). */
+const ROLLBACK_ELIGIBLE_TYPES_UI: readonly string[] = [
+  "UPDATE_RISK_PER_TRADE_DOWN",
+  "UPDATE_MAX_DAILY_LOSS_DOWN",
+  "UPDATE_MAX_OPEN_POSITIONS_DOWN",
+  "UPDATE_MAX_DAILY_TRADES_DOWN",
+] as const;
+
 const DISMISS_KEY = "ai-actions:dismissed:v1";
 
 function loadIdSet(key: string): Set<string> {
@@ -106,6 +114,15 @@ interface ApplyResult {
   message: string;
   oldValue?: string | null;
   newValue?: string | null;
+}
+
+interface RollbackNotice {
+  ok: boolean;
+  message: string;
+}
+
+interface RollbackModalState {
+  item: HistoryItem;
 }
 
 interface AIDecisionSnapshot {
@@ -287,8 +304,13 @@ export default function AIActionCenterPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState<
-    "all" | "applied" | "blocked" | "observation" | "decision"
+    "all" | "applied" | "blocked" | "observation" | "decision" | "rollback"
   >("all");
+  // Rollback state
+  const [rollbackTarget, setRollbackTarget] = useState<RollbackModalState | null>(null);
+  const [rollingBack, setRollingBack] = useState(false);
+  const [rollbackError, setRollbackError] = useState<string | null>(null);
+  const [rollbackNotice, setRollbackNotice] = useState<RollbackNotice | null>(null);
 
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -346,6 +368,35 @@ export default function AIActionCenterPage() {
     if (!data?.plans) return [];
     return data.plans.filter((p) => !dismissed.has(p.id));
   }, [data, dismissed]);
+
+  const submitRollback = useCallback(async () => {
+    if (!rollbackTarget) return;
+    setRollingBack(true);
+    setRollbackError(null);
+    try {
+      const res = await fetch("/api/ai-actions/rollback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          historyItemId: rollbackTarget.item.id,
+          confirmRollback: true,
+        }),
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        setRollbackError(json.error ?? "Geri alma başarısız.");
+        return;
+      }
+      setRollbackTarget(null);
+      setRollbackNotice({ ok: true, message: json.data?.message ?? "Aksiyon geri alındı." });
+      await fetchHistory();
+      await fetchPlans();
+    } catch (e) {
+      setRollbackError(e instanceof Error ? e.message : "Geri alma başarısız.");
+    } finally {
+      setRollingBack(false);
+    }
+  }, [rollbackTarget, fetchHistory, fetchPlans]);
 
   const dismissPlan = (id: string) => {
     setDismissed((prev) => {
@@ -626,6 +677,27 @@ export default function AIActionCenterPage() {
         )}
       </section>
 
+      {/* Rollback notice */}
+      {rollbackNotice && (
+        <div
+          className={`rounded-md border px-3 py-2 text-sm flex items-start justify-between gap-3 ${
+            rollbackNotice.ok
+              ? "border-success/30 bg-success/10 text-success"
+              : "border-rose-500/30 bg-bg-soft text-danger"
+          }`}
+          role="status"
+        >
+          <span>{rollbackNotice.message}</span>
+          <button
+            type="button"
+            onClick={() => setRollbackNotice(null)}
+            className="text-xs opacity-70 hover:opacity-100 underline shrink-0"
+          >
+            kapat
+          </button>
+        </div>
+      )}
+
       {/* Karar ve Aksiyon Geçmişi */}
       <HistorySection
         items={historyItems}
@@ -634,6 +706,10 @@ export default function AIActionCenterPage() {
         filter={historyFilter}
         onFilterChange={setHistoryFilter}
         onRefresh={fetchHistory}
+        onRollback={(item) => {
+          setRollbackError(null);
+          setRollbackTarget({ item });
+        }}
       />
 
       {/* B) Proje Kaynakları */}
@@ -792,6 +868,17 @@ export default function AIActionCenterPage() {
           error={applyError}
           onCancel={closeModal}
           onConfirm={submitApply}
+        />
+      )}
+
+      {/* Geri Alma Modal — Faz 5 */}
+      {rollbackTarget && (
+        <RollbackModal
+          state={rollbackTarget}
+          rollingBack={rollingBack}
+          error={rollbackError}
+          onCancel={() => { setRollbackTarget(null); setRollbackError(null); }}
+          onConfirm={submitRollback}
         />
       )}
     </div>
@@ -1059,7 +1146,8 @@ type HistoryFilterKey =
   | "applied"
   | "blocked"
   | "observation"
-  | "decision";
+  | "decision"
+  | "rollback";
 
 const HISTORY_STATUS_TONE: Record<HistoryStatus, StatusTone> = {
   applied: "success",
@@ -1071,6 +1159,9 @@ const HISTORY_STATUS_TONE: Record<HistoryStatus, StatusTone> = {
   cache_hit: "muted",
   cache_miss: "muted",
   fallback: "warning",
+  rollback_applied: "accent",
+  rollback_blocked: "danger",
+  rollback_failed: "danger",
 };
 
 function applyHistoryFilter(items: HistoryItem[], f: HistoryFilterKey): HistoryItem[] {
@@ -1081,6 +1172,14 @@ function applyHistoryFilter(items: HistoryItem[], f: HistoryFilterKey): HistoryI
   if (f === "observation")
     return items.filter((i) => i.category === "observation");
   if (f === "decision") return items.filter((i) => i.category === "decision");
+  if (f === "rollback")
+    return items.filter(
+      (i) =>
+        i.status === "rollback_applied" ||
+        i.status === "rollback_blocked" ||
+        i.status === "rollback_failed" ||
+        i.eventType === "ai_action_rollback_requested",
+    );
   return items;
 }
 
@@ -1091,6 +1190,7 @@ function HistorySection({
   filter,
   onFilterChange,
   onRefresh,
+  onRollback,
 }: {
   items: HistoryItem[];
   loading: boolean;
@@ -1098,7 +1198,16 @@ function HistorySection({
   filter: HistoryFilterKey;
   onFilterChange: (f: HistoryFilterKey) => void;
   onRefresh: () => void;
+  onRollback?: (item: HistoryItem) => void;
 }) {
+  // Build set of already-rolled-back event IDs from history.
+  const rolledBackIds = new Set<string>(
+    items
+      .filter((i) => i.eventType === "ai_action_rollback_applied")
+      .map((i) => String((i.metadataSafe as Record<string, unknown>).rollbackOfEventId ?? ""))
+      .filter(Boolean),
+  );
+
   const filtered = applyHistoryFilter(items, filter).slice(0, 20);
   const filters: { key: HistoryFilterKey; label: string }[] = [
     { key: "all", label: "Tümü" },
@@ -1106,6 +1215,7 @@ function HistorySection({
     { key: "blocked", label: "Engellenen" },
     { key: "observation", label: "Gözlem" },
     { key: "decision", label: "AI Yorum" },
+    { key: "rollback", label: "Geri Alınanlar" },
   ];
 
   return (
@@ -1157,16 +1267,42 @@ function HistorySection({
 
       {!error && filtered.length > 0 && (
         <ul className="mt-3 space-y-2">
-          {filtered.map((it) => (
-            <HistoryRow key={it.id} item={it} />
-          ))}
+          {filtered.map((it) => {
+            const rollbackEligible =
+              onRollback != null &&
+              it.eventType === "ai_action_applied" &&
+              it.actionType != null &&
+              ROLLBACK_ELIGIBLE_TYPES_UI.includes(it.actionType) &&
+              it.oldValue != null &&
+              it.newValue != null;
+            const alreadyRolledBack = rolledBackIds.has(it.id);
+            return (
+              <HistoryRow
+                key={it.id}
+                item={it}
+                rollbackEligible={rollbackEligible && !alreadyRolledBack}
+                alreadyRolledBack={rollbackEligible && alreadyRolledBack}
+                onRollback={onRollback ? () => onRollback(it) : undefined}
+              />
+            );
+          })}
         </ul>
       )}
     </section>
   );
 }
 
-function HistoryRow({ item }: { item: HistoryItem }) {
+function HistoryRow({
+  item,
+  rollbackEligible = false,
+  alreadyRolledBack = false,
+  onRollback,
+}: {
+  item: HistoryItem;
+  rollbackEligible?: boolean;
+  alreadyRolledBack?: boolean;
+  onRollback?: () => void;
+}) {
   const tone = HISTORY_STATUS_TONE[item.status] ?? "muted";
   const time = new Date(item.createdAt);
   const timeStr = isNaN(time.getTime())
@@ -1193,6 +1329,11 @@ function HistoryRow({ item }: { item: HistoryItem }) {
                 {item.actionType}
               </span>
             )}
+            {alreadyRolledBack && (
+              <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">
+                Geri Alındı
+              </span>
+            )}
           </div>
           {item.summary && (
             <p className="mt-1 truncate text-[12px] text-slate-300">
@@ -1216,13 +1357,28 @@ function HistoryRow({ item }: { item: HistoryItem }) {
             </div>
           )}
         </div>
-        <div className="flex shrink-0 flex-col items-end text-right">
+        <div className="flex shrink-0 flex-col items-end gap-1.5 text-right">
           <span className="text-[10px] uppercase tracking-wider text-muted">
             {timeStr}
           </span>
           {item.source && (
-            <span className="mt-0.5 font-mono text-[10px] text-muted">
+            <span className="font-mono text-[10px] text-muted">
               {item.source}
+            </span>
+          )}
+          {rollbackEligible && onRollback && (
+            <button
+              type="button"
+              onClick={onRollback}
+              className="rounded-md border border-warning/40 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold text-warning transition hover:border-warning/70 hover:bg-warning/20"
+              title="Bu aksiyonu önceki değere geri al"
+            >
+              Geri Al
+            </button>
+          )}
+          {alreadyRolledBack && (
+            <span className="rounded-md border border-border bg-bg-card px-2 py-0.5 text-[10px] font-semibold text-muted cursor-default">
+              Geri Alındı
             </span>
           )}
         </div>
@@ -1787,6 +1943,90 @@ function ApplyModal({
             className="rounded-lg border border-success/40 bg-success/15 px-3 py-1.5 text-xs font-semibold text-success transition hover:border-success/70 disabled:opacity-50"
           >
             {applying ? "Uygulanıyor…" : "Onayla ve Uygula"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RollbackModal({
+  state,
+  rollingBack,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  state: RollbackModalState;
+  rollingBack: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { item } = state;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-bg-soft shadow-2xl">
+        <div className="border-b border-border px-5 py-4">
+          <h3 className="text-base font-semibold text-slate-100">Aksiyonu Geri Al</h3>
+          <p className="mt-1 text-[11px] text-muted">
+            İkinci onay gerektirir. Bu işlem canlı emir açmaz.
+          </p>
+        </div>
+
+        <div className="space-y-3 px-5 py-4 text-sm">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">Aksiyon</div>
+            <div className="text-sm font-semibold text-slate-100">{item.title}</div>
+            {item.actionType && (
+              <div className="mt-0.5 font-mono text-[10px] text-muted">{item.actionType}</div>
+            )}
+          </div>
+
+          {(item.oldValue || item.newValue) && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-md border border-border bg-bg-card px-2.5 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-muted">Geri Dönülecek Değer</div>
+                <div className="font-mono text-sm text-slate-200">{item.oldValue ?? "—"}</div>
+              </div>
+              <div className="rounded-md border border-border bg-bg-card px-2.5 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-muted">Mevcut Değer</div>
+                <div className="font-mono text-sm text-slate-300">{item.newValue ?? "—"}</div>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning">
+            Bu değer önceki ayardır; risk seviyesini artırabilir. Canlı emir açmaz.
+          </div>
+
+          <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-[11px] text-success">
+            Sadece bu aksiyonla değişen risk ayarını eski değere döndürür. Audit log&apos;a yazılır.
+          </div>
+
+          {error && (
+            <div className="rounded-md border border-rose-500/30 bg-bg-card px-3 py-2 text-[11px] text-danger">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={rollingBack}
+            className="rounded-lg border border-border bg-bg-card px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500 disabled:opacity-50"
+          >
+            Vazgeç
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={rollingBack}
+            className="rounded-lg border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-semibold text-warning transition hover:border-warning/70 disabled:opacity-50"
+          >
+            {rollingBack ? "Geri Alınıyor…" : "Onayla ve Geri Al"}
           </button>
         </div>
       </div>
