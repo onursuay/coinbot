@@ -1,7 +1,11 @@
 import { ok } from "@/lib/api-helpers";
 import { supabaseAdmin, supabaseConfigured } from "@/lib/supabase/server";
 import { getCurrentUserId } from "@/lib/auth";
-import { evaluateOpenTrades } from "@/lib/engines/paper-trading-engine";
+import {
+  evaluateOpenTrades,
+  estimateNetUnrealizedPnl,
+  fetchOpenTradeMarkPrices,
+} from "@/lib/engines/paper-trading-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,10 +44,51 @@ export async function GET(req: Request) {
   if (openErr) diag.openError = openErr.message ?? String(openErr);
   diag.openCount = openData?.length ?? 0;
 
+  // Enrich open rows with mark price + unrealized net PnL preview. The UI uses
+  // these to colour the manual close button (green/red/blue) and the close
+  // route uses the same formula via estimateNetUnrealizedPnl to enforce the
+  // loss-close confirmation gate. If price lookup fails for a row, fields are
+  // null and the UI shows a disabled neutral button with a tooltip.
+  let enrichedOpen = openData ?? [];
+  if (enrichedOpen.length > 0) {
+    try {
+      const priceMap = await fetchOpenTradeMarkPrices(userId);
+      enrichedOpen = enrichedOpen.map((t: Record<string, unknown>) => {
+        const resolved = priceMap[t.id as string] ?? null;
+        if (resolved == null) {
+          return {
+            ...t,
+            current_price: null,
+            current_price_source: null,
+            net_unrealized_pnl: null,
+            net_unrealized_pnl_pct: null,
+          };
+        }
+        const { netPnl, pnlPct } = estimateNetUnrealizedPnl({
+          direction: t.direction as "LONG" | "SHORT",
+          entryPrice: Number(t.entry_price),
+          positionSize: Number(t.position_size),
+          marginUsed: Number(t.margin_used),
+          openedAt: String(t.opened_at),
+          currentPrice: resolved.price,
+        });
+        return {
+          ...t,
+          current_price: resolved.price,
+          current_price_source: resolved.source,
+          net_unrealized_pnl: netPnl,
+          net_unrealized_pnl_pct: pnlPct,
+        };
+      });
+    } catch (e) {
+      diag.markPriceError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   const { data: closedData, error: closedErr } = await sb.from("paper_trades")
     .select("*").eq("user_id", userId).eq("status", "closed").order("closed_at", { ascending: false }).limit(limit);
   if (closedErr) diag.closedError = closedErr.message ?? String(closedErr);
   diag.closedCount = closedData?.length ?? 0;
 
-  return ok({ open: openData ?? [], closed: closedData ?? [], ...(debug ? { _diag: diag } : {}) });
+  return ok({ open: enrichedOpen, closed: closedData ?? [], ...(debug ? { _diag: diag } : {}) });
 }

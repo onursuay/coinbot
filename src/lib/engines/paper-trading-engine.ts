@@ -47,6 +47,177 @@ export interface OpenPaperTradeInput {
 const FEE_RATE = 0.0004;       // 4 bps per side (taker)
 const SLIPPAGE_RATE = 0.0005;  // 5 bps slippage assumption
 
+// Pure unrealized PnL preview — same fees/slippage/funding model as
+// closePaperTrade. Used by /api/paper-trades GET to enrich open rows and by
+// /api/paper-trades/close POST to evaluate the loss-close confirmation gate.
+// Keeping this as a single source of truth ensures the UI button color and
+// the server guard see the same number.
+export function estimateNetUnrealizedPnl(args: {
+  direction: "LONG" | "SHORT";
+  entryPrice: number;
+  positionSize: number;
+  marginUsed: number;
+  openedAt: string;
+  currentPrice: number;
+}): { netPnl: number; pnlPct: number } {
+  const sign = args.direction === "LONG" ? 1 : -1;
+  const grossPnl = sign * (args.currentPrice - args.entryPrice) * args.positionSize;
+  const fees = (args.entryPrice + args.currentPrice) * args.positionSize * FEE_RATE;
+  const slippage = (args.entryPrice + args.currentPrice) * args.positionSize * SLIPPAGE_RATE * 0.5;
+  const hoursOpen = Math.max(0, (Date.now() - new Date(args.openedAt).getTime()) / 3_600_000);
+  const fundingEst = args.positionSize * args.entryPrice * 0.0001 * (hoursOpen / 8);
+  const netPnl = grossPnl - fees - slippage - fundingEst;
+  const pnlPct = args.marginUsed > 0 ? (netPnl / args.marginUsed) * 100 : 0;
+  return { netPnl, pnlPct };
+}
+
+// Stable label set for the close-price fallback chain. Returned as
+// `closePriceSource` from the close API and used by the GET route to tag the
+// `current_price_source` field on each enriched open row.
+//
+// Chain order (most reliable → last resort):
+//   binance  — exchange ticker call succeeded
+//   scanner  — signals.entry_price ≤5 minutes old (very fresh, from worker tick)
+//   signal   — signals.entry_price ≤60 minutes old (less fresh)
+//   metadata — trade.risk_metadata.{currentPrice|lastPrice|mark_price|last_price}
+//   log      — bot_logs metadata.entryPrice on a recent signal_generated event
+//              for the same symbol (≤60 minutes)
+//
+// Guardrails enforced by the resolver:
+//   • Entry price (paper_trades.entry_price) is NEVER auto-substituted — using
+//     it would zero the unrealized PnL and mislead the loss-close gate.
+//   • Anything older than 60 minutes is rejected outright.
+//   • If every source fails, the resolver returns null and the close API
+//     returns PRICE_UNAVAILABLE / BINANCE_451 / BINANCE_BLOCKED so no
+//     position is closed against a stale or made-up price.
+export type ClosePriceSource = "binance" | "scanner" | "signal" | "metadata" | "log";
+
+export interface ResolvedClosePrice {
+  price: number;
+  source: ClosePriceSource;
+  ageMs?: number;
+}
+
+/** Numeric coercion that filters out NaN, ±Infinity, zero and negative values. */
+function safePositive(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Resolve the close price using the full fallback chain (no exchange ticker —
+ *  the caller does that separately and only delegates here when the ticker
+ *  failed). Used by both the close API and the GET enrichment so the button
+ *  colour and the server gate see the same number. */
+export async function resolveClosePriceFallback(
+  userId: string,
+  trade: { id: string; symbol: string; risk_metadata?: Record<string, unknown> | null },
+): Promise<ResolvedClosePrice | null> {
+  if (!supabaseConfigured()) return null;
+  const sb = supabaseAdmin();
+  const now = Date.now();
+
+  // 2. scanner / signal — signals.entry_price within 60 minutes.
+  // Tag as "scanner" if ≤5 min old, otherwise "signal".
+  try {
+    const sinceIso = new Date(now - 60 * 60 * 1000).toISOString();
+    const { data } = await sb
+      .from("signals")
+      .select("entry_price, created_at")
+      .eq("user_id", userId)
+      .eq("symbol", trade.symbol)
+      .gte("created_at", sinceIso)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const px = safePositive(data?.[0]?.entry_price);
+    const createdAt = data?.[0]?.created_at ? new Date(String(data[0].created_at)).getTime() : null;
+    if (px != null && createdAt != null) {
+      const ageMs = now - createdAt;
+      const source: ClosePriceSource = ageMs <= 5 * 60 * 1000 ? "scanner" : "signal";
+      return { price: px, source, ageMs };
+    }
+  } catch {
+    /* ignore — try next source */
+  }
+
+  // 3. metadata — fields the orchestrator may have stamped on the trade row
+  // (paper_learning, force_paper, manual edits). Never fall back to entry_price.
+  const meta = (trade.risk_metadata ?? null) as Record<string, unknown> | null;
+  if (meta) {
+    for (const key of ["currentPrice", "lastPrice", "mark_price", "last_price", "markPrice", "current_price"]) {
+      const px = safePositive(meta[key]);
+      if (px != null) return { price: px, source: "metadata" };
+    }
+  }
+
+  // 4. log — most recent signal_generated event for the symbol that captured
+  // entryPrice in its metadata (see bot-orchestrator.ts: signal_generated log).
+  try {
+    const sinceIso = new Date(now - 60 * 60 * 1000).toISOString();
+    const { data } = await sb
+      .from("bot_logs")
+      .select("metadata, created_at, event_type")
+      .eq("user_id", userId)
+      .eq("event_type", "signal_generated")
+      .gte("created_at", sinceIso)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    for (const row of data ?? []) {
+      const md = (row?.metadata ?? null) as Record<string, unknown> | null;
+      if (!md) continue;
+      // The signal_generated log is summary-level (no symbol field). To keep
+      // this useful we only accept it as a *generic* market-stamp source when
+      // the metadata explicitly names the same symbol; otherwise skip.
+      const sym = String(md.symbol ?? "");
+      if (sym !== trade.symbol) continue;
+      const px = safePositive(md.entryPrice ?? md.entry_price ?? md.lastPrice ?? md.price);
+      if (px != null) {
+        const createdAt = row.created_at ? new Date(String(row.created_at)).getTime() : null;
+        return { price: px, source: "log", ageMs: createdAt ? now - createdAt : undefined };
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return null;
+}
+
+/** Mark-price fetcher for the GET /api/paper-trades enrichment. Tries the
+ *  exchange ticker first, then falls through to the unified fallback chain.
+ *  Returns a map of trade id → { price, source } (or null if every source
+ *  failed). */
+export async function fetchOpenTradeMarkPrices(
+  userId: string,
+): Promise<Record<string, ResolvedClosePrice | null>> {
+  if (!supabaseConfigured()) return {};
+  const sb = supabaseAdmin();
+  const { data: open } = await sb
+    .from("paper_trades")
+    .select("id, exchange_name, symbol, risk_metadata")
+    .eq("user_id", userId)
+    .eq("status", "open");
+  const result: Record<string, ResolvedClosePrice | null> = {};
+  await Promise.all(
+    (open ?? []).map(
+      async (t: { id: string; exchange_name: ExchangeName; symbol: string; risk_metadata?: Record<string, unknown> | null }) => {
+        let resolved: ResolvedClosePrice | null = null;
+        try {
+          const tk = await getAdapter(t.exchange_name).getTicker(t.symbol);
+          const px = safePositive(tk.lastPrice);
+          if (px != null) resolved = { price: px, source: "binance" };
+        } catch {
+          /* ignore — fall through */
+        }
+        if (resolved == null) {
+          resolved = await resolveClosePriceFallback(userId, t);
+        }
+        result[t.id] = resolved;
+      },
+    ),
+  );
+  return result;
+}
+
 export async function openPaperTrade(input: OpenPaperTradeInput) {
   // Defense-in-depth: never persist a paper trade without a finite, positive
   // signal score. Orchestrator's hard gate is the primary guard; this catches

@@ -24,7 +24,7 @@ const NAV = [
   { href: '/scan-modes', label: 'Tarama Modları', icon: Layers },
   // Coin Detayı: piyasa/mum/sinyal verisi güvenilir hâle gelene kadar
   // ürün arayüzünden çıkarıldı. Coin bazlı takip Piyasa Tarayıcı'dan yapılır.
-  { href: '/paper-trades', label: 'Sanal İşlemler', icon: ReceiptText },
+  { href: '/paper-trades', label: 'Pozisyonlar', icon: ReceiptText },
   { href: '/risk', label: 'Risk Yönetimi', icon: ShieldAlert },
   { href: '/api-settings', label: 'API Ayarları', icon: KeyRound },
   { href: '/strategy', label: 'Strateji', icon: Zap },

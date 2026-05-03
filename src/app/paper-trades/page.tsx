@@ -23,6 +23,8 @@ function closeMessageFor(code: string | undefined, fallback: string): string {
       return "İşlem bulunamadı (silinmiş olabilir).";
     case "TRADE_ALREADY_CLOSED":
       return "Bu işlem zaten kapatılmış.";
+    case "POSITION_UNDER_OBSERVATION":
+      return "Pozisyon izleme sürecinde; kapatma devre dışı.";
     case "CLOSE_FAILED":
       return "Paper pozisyon kapatılamadı (sunucu hatası).";
     default:
@@ -30,19 +32,75 @@ function closeMessageFor(code: string | undefined, fallback: string): string {
   }
 }
 
+// Mirrors the server-side bands in src/app/api/paper-trades/close/route.ts.
+// netPnl in USDT.
+const PROFIT_THRESHOLD = 0.25;
+const LOSS_THRESHOLD = -0.25;
+
+type AgeBucket = "fresh" | "monitoring" | "stale";
+type PnlBucket = "profit" | "loss" | "break_even" | "unknown";
+
+function ageBucketFor(openedAt: string): AgeBucket {
+  const ageH = (Date.now() - new Date(openedAt).getTime()) / 3_600_000;
+  if (ageH < 12) return "fresh";
+  if (ageH < 24) return "monitoring";
+  return "stale";
+}
+
+function pnlBucketFor(netPnl: number | null | undefined): PnlBucket {
+  if (netPnl == null || !Number.isFinite(Number(netPnl))) return "unknown";
+  const v = Number(netPnl);
+  if (v >= PROFIT_THRESHOLD) return "profit";
+  if (v <= LOSS_THRESHOLD) return "loss";
+  return "break_even";
+}
+
+function buttonLabelFor(age: AgeBucket): "KAPAT" | "İZLENİYOR" | "SÜRE AŞIMI" {
+  if (age === "fresh") return "KAPAT";
+  if (age === "monitoring") return "İZLENİYOR";
+  return "SÜRE AŞIMI";
+}
+
+// Tone classes — map to the existing utility palette. Disabled state lowers
+// opacity but keeps the same hue so the colour stays readable.
+function buttonClassFor(pnl: PnlBucket, disabled: boolean, priceUnavailable: boolean): string {
+  const base = "px-2 py-1 rounded text-xs font-semibold border transition-colors min-w-[88px]";
+  if (priceUnavailable) {
+    return `${base} bg-slate-800 text-slate-400 border-slate-700 cursor-not-allowed`;
+  }
+  const palette =
+    pnl === "profit"
+      ? "bg-success/15 text-success border-success/30 hover:bg-success/25"
+      : pnl === "loss"
+        ? "bg-danger/15 text-danger border-danger/30 hover:bg-danger/25"
+        : pnl === "break_even"
+          ? "bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/25"
+          : "bg-slate-800 text-slate-400 border-slate-700";
+  if (disabled) {
+    return `${base} ${palette} opacity-60 cursor-not-allowed`;
+  }
+  return `${base} ${palette}`;
+}
+
+interface LossModalState {
+  trade: any;
+  netPnl: number;
+  pnlPct: number | null;
+  currentPrice: number | null;
+  age: AgeBucket;
+}
+
 export default function PaperTradesPage() {
   const [open, setOpen] = useState<any[]>([]);
   const [closed, setClosed] = useState<any[]>([]);
-  // Canonical aggregate — Panel KPI ile aynı kaynaktan (paper-stats helper).
-  // Tablo altındaki "Toplam" satırı bu değerlerden render edilir, böylece
-  // kullanıcı Panel KPI ile satır toplamının birebir eşit olduğunu ekrandan
-  // doğrulayabilir.
   const [perf, setPerf] = useState<{ totalPnl: number; dailyPnl: number; totalTrades: number; closedToday: number } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [closeNotice, setCloseNotice] = useState<CloseNotice | null>(null);
-  // Per-trade loading flag — prevents double-clicks from sending a second
-  // close request while the first is in flight.
   const [closingId, setClosingId] = useState<string | null>(null);
+  // Loss-close modal — only shown after the user clicks a clickable red button
+  // (fresh+loss or stale+loss). Per spec, no banner, toast, or always-on
+  // warning is shown — the modal is the single user-visible warning.
+  const [lossModal, setLossModal] = useState<LossModalState | null>(null);
 
   const refresh = async () => {
     const [r, p] = await Promise.all([
@@ -66,9 +124,10 @@ export default function PaperTradesPage() {
     return () => clearInterval(t);
   }, []);
 
-  const close = async (id: string) => {
-    if (closingId) return; // ignore second click while a close is pending
-    if (!confirm("Pozisyon canlı fiyattan paper olarak kapatılsın mı?")) return;
+  // Single send-close helper — used both by the direct "KAPAT/SÜRE AŞIMI"
+  // happy path (profit / break_even) and by the modal "Zararı Onayla ve Kapat"
+  // path (confirmLossClose=true).
+  const sendClose = async (id: string, confirmLossClose: boolean) => {
     setCloseNotice(null);
     setClosingId(id);
     try {
@@ -77,7 +136,7 @@ export default function PaperTradesPage() {
         const r = await fetch("/api/paper-trades/close", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ tradeId: id, reason: "manual" }),
+          body: JSON.stringify({ tradeId: id, reason: "manual", confirmLossClose }),
         });
         res = await r.json().catch(() => ({ ok: false, error: "Sunucu yanıtı okunamadı." }));
       } catch (e: any) {
@@ -85,13 +144,30 @@ export default function PaperTradesPage() {
       }
 
       if (res?.ok) {
-        if (res.closePriceSource === "fallback_signal") {
+        const src = res.closePriceSource as string | undefined;
+        if (src && src !== "binance") {
           setCloseNotice({
             level: "warning",
-            text: "Pozisyon kapatıldı; ancak Binance ticker erişilemedi, son bilinen fiyat (signals.entry_price) kullanıldı.",
+            text: `Pozisyon kapatıldı; Binance ticker erişilemedi, fallback fiyat kullanıldı (kaynak: ${src}).`,
           });
         } else {
           setCloseNotice({ level: "success", text: "Pozisyon kapatıldı." });
+        }
+      } else if (res?.code === "LOSS_CLOSE_CONFIRMATION_REQUIRED") {
+        // Server detected a loss the client didn't yet flag — open the modal
+        // with the server's authoritative numbers. (Should be rare: the UI
+        // already opens the modal client-side for loss buckets.)
+        const trade = open.find((o) => o.id === id);
+        if (trade) {
+          setLossModal({
+            trade,
+            netPnl: Number(res.netUnrealizedPnl ?? 0),
+            pnlPct: res.netUnrealizedPnlPct == null ? null : Number(res.netUnrealizedPnlPct),
+            currentPrice: res.currentPrice == null ? null : Number(res.currentPrice),
+            age: (res.ageBucket as AgeBucket) ?? "fresh",
+          });
+        } else {
+          setCloseNotice({ level: "error", text: closeMessageFor(res?.code, res?.error ?? "") });
         }
       } else {
         setCloseNotice({
@@ -103,6 +179,31 @@ export default function PaperTradesPage() {
     } finally {
       setClosingId(null);
     }
+  };
+
+  const onCloseClick = (t: any) => {
+    if (closingId) return;
+    const age = ageBucketFor(t.opened_at);
+    if (age === "monitoring") return; // disabled — defensive
+    const pnl = pnlBucketFor(t.net_unrealized_pnl);
+    if (pnl === "loss") {
+      setLossModal({
+        trade: t,
+        netPnl: Number(t.net_unrealized_pnl ?? 0),
+        pnlPct: t.net_unrealized_pnl_pct == null ? null : Number(t.net_unrealized_pnl_pct),
+        currentPrice: t.current_price == null ? null : Number(t.current_price),
+        age,
+      });
+      return;
+    }
+    void sendClose(t.id, false);
+  };
+
+  const confirmLossModal = async () => {
+    if (!lossModal) return;
+    const id = lossModal.trade.id;
+    setLossModal(null);
+    await sendClose(id, true);
   };
 
   const deleteTrade = async (id: string) => {
@@ -118,6 +219,8 @@ export default function PaperTradesPage() {
 
   return (
     <div className="space-y-6">
+      <h1 className="text-xl font-semibold">Pozisyonlar</h1>
+
       {deleteError && (
         <div className="alert-danger px-3 py-2 text-sm">
           {deleteError}
@@ -155,42 +258,62 @@ export default function PaperTradesPage() {
           </tr></thead>
           <tbody>
             {open.length === 0 && <tr><td colSpan={14} className="text-muted">Açık pozisyon yok</td></tr>}
-            {open.map((t) => (
-              <tr key={t.id}>
-                <td className="font-medium">{t.symbol}</td>
-                <td><span className={`tag-${t.direction === "LONG" ? "success" : "danger"}`}>{t.direction}</span></td>
-                <td>{t.leverage}x</td>
-                <td>{fmtUsd(t.margin_used)}</td>
-                <td>{fmtNum(t.position_size, 4)}</td>
-                <td>{fmtNum(t.entry_price, 4)}</td>
-                <td>{fmtNum(t.stop_loss, 4)}</td>
-                <td>{fmtNum(t.take_profit, 4)}</td>
-                <td>{t.estimated_liquidation_price ? fmtNum(t.estimated_liquidation_price, 4) : "—"}</td>
-                <td>1:{fmtNum(t.risk_reward_ratio)}</td>
-                <td>{fmtNum(t.signal_score, 0)}</td>
-                <td className="text-xs text-muted">{new Date(t.opened_at).toLocaleString()}</td>
-                <td>
-                  <button
-                    className="btn-ghost text-xs disabled:opacity-50 disabled:cursor-not-allowed"
-                    onClick={() => close(t.id)}
-                    disabled={closingId === t.id || (closingId !== null && closingId !== t.id)}
-                    aria-busy={closingId === t.id}
-                  >
-                    {closingId === t.id ? "Kapatılıyor…" : "Kapat"}
-                  </button>
-                </td>
-                <td>
-                  <button
-                    className="text-muted hover:text-danger transition-colors p-1"
-                    title="Kaydı sil"
-                    onClick={() => deleteTrade(t.id)}
-                    aria-label="Kaydı sil"
-                  >
-                    <TrashIcon />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {open.map((t) => {
+              const age = ageBucketFor(t.opened_at);
+              const pnl = pnlBucketFor(t.net_unrealized_pnl);
+              const priceUnavailable = t.current_price == null;
+              const isMonitoring = age === "monitoring";
+              const label = closingId === t.id ? "Kapatılıyor…" : buttonLabelFor(age);
+              const disabled =
+                closingId === t.id ||
+                (closingId !== null && closingId !== t.id) ||
+                isMonitoring ||
+                priceUnavailable;
+              const cls = buttonClassFor(pnl, disabled, priceUnavailable);
+              const title = priceUnavailable
+                ? "Güncel fiyat yok; güvenli kapatma hesaplanamıyor."
+                : isMonitoring
+                  ? "Pozisyon izleme sürecinde (12-24s); kapatma devre dışı."
+                  : undefined;
+              return (
+                <tr key={t.id}>
+                  <td className="font-medium">{t.symbol}</td>
+                  <td><span className={`tag-${t.direction === "LONG" ? "success" : "danger"}`}>{t.direction}</span></td>
+                  <td>{t.leverage}x</td>
+                  <td>{fmtUsd(t.margin_used)}</td>
+                  <td>{fmtNum(t.position_size, 4)}</td>
+                  <td>{fmtNum(t.entry_price, 4)}</td>
+                  <td>{fmtNum(t.stop_loss, 4)}</td>
+                  <td>{fmtNum(t.take_profit, 4)}</td>
+                  <td>{t.estimated_liquidation_price ? fmtNum(t.estimated_liquidation_price, 4) : "—"}</td>
+                  <td>1:{fmtNum(t.risk_reward_ratio)}</td>
+                  <td>{fmtNum(t.signal_score, 0)}</td>
+                  <td className="text-xs text-muted">{new Date(t.opened_at).toLocaleString()}</td>
+                  <td>
+                    <button
+                      className={cls}
+                      onClick={() => onCloseClick(t)}
+                      disabled={disabled}
+                      aria-busy={closingId === t.id}
+                      aria-disabled={disabled}
+                      title={title}
+                    >
+                      {label}
+                    </button>
+                  </td>
+                  <td>
+                    <button
+                      className="text-muted hover:text-danger transition-colors p-1"
+                      title="Kaydı sil"
+                      onClick={() => deleteTrade(t.id)}
+                      aria-label="Kaydı sil"
+                    >
+                      <TrashIcon />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </section>
@@ -251,6 +374,89 @@ export default function PaperTradesPage() {
           </tbody>
         </table>
       </section>
+
+      {lossModal && (
+        <LossCloseModal
+          state={lossModal}
+          busy={closingId !== null}
+          onCancel={() => setLossModal(null)}
+          onConfirm={confirmLossModal}
+        />
+      )}
+    </div>
+  );
+}
+
+function LossCloseModal({
+  state,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  state: LossModalState;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="loss-close-title"
+    >
+      <div className="w-full max-w-md rounded-lg border border-border bg-bg-card shadow-2xl">
+        <div className="px-5 py-4 border-b border-border">
+          <h3 id="loss-close-title" className="text-base font-semibold text-danger">
+            Zararda kapatma onayı
+          </h3>
+        </div>
+        <div className="px-5 py-4 space-y-3 text-sm">
+          <p>
+            Bu pozisyon zararda. Kapatırsanız zarar realize edilir. Devam etmek istiyor musunuz?
+          </p>
+          <div className="rounded-md border border-border bg-bg-soft px-3 py-2 text-xs text-muted space-y-1">
+            <div>
+              <span className="text-slate-400">Sembol:</span>{" "}
+              <span className="text-slate-200 font-medium">{state.trade.symbol}</span>{" "}
+              <span className={`tag-${state.trade.direction === "LONG" ? "success" : "danger"} ml-1`}>
+                {state.trade.direction}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-400">Tahmini net K/Z:</span>{" "}
+              <span className="text-danger font-medium">
+                {fmtUsd(state.netPnl)}
+                {state.pnlPct != null ? ` (${fmtPct(state.pnlPct)})` : ""}
+              </span>
+            </div>
+            {state.currentPrice != null && (
+              <div>
+                <span className="text-slate-400">Güncel fiyat:</span>{" "}
+                <span className="text-slate-200">{fmtNum(state.currentPrice, 6)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t border-border flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="px-3 py-1.5 text-xs rounded border border-border text-slate-300 hover:bg-bg-soft disabled:opacity-50"
+          >
+            Vazgeç
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="px-3 py-1.5 text-xs rounded border border-danger/40 bg-danger/15 text-danger font-semibold hover:bg-danger/25 disabled:opacity-50"
+          >
+            {busy ? "Kapatılıyor…" : "Zararı Onayla ve Kapat"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

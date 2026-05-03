@@ -54,12 +54,16 @@ describe("paper-trades close — source invariants (live-safety)", () => {
     expect(ROUTE_SRC).not.toMatch(/return new Response\(['"]<html/);
   });
 
-  it("route emits the four close-flow log events", () => {
+  it("route emits the close-flow log events (request/price-fetch-failed/fallback-used/success/manual-close-failed)", () => {
     expect(ROUTE_SRC).toMatch(/eventType:\s*"paper_trade_close_requested"/);
     expect(ROUTE_SRC).toMatch(/eventType:\s*"paper_trade_close_price_fetch_failed"/);
     expect(ROUTE_SRC).toMatch(/eventType:\s*"paper_trade_close_price_fallback_used"/);
     expect(ROUTE_SRC).toMatch(/eventType:\s*"paper_trade_close_success"/);
-    expect(ROUTE_SRC).toMatch(/eventType:\s*"paper_trade_close_failed"/);
+    // The terminal-failure event was renamed from `paper_trade_close_failed`
+    // to `paper_trade_manual_close_failed` when the manual-close gates were
+    // added. Both unsuccessful-path branches (price unavailable / close
+    // helper threw) emit this same event.
+    expect(ROUTE_SRC).toMatch(/eventType:\s*"paper_trade_manual_close_failed"/);
   });
 
   it("frontend never alerts the raw HTTP status string", () => {
@@ -78,8 +82,13 @@ describe("paper-trades close — source invariants (live-safety)", () => {
   });
 
   it("frontend disables the Kapat button while a close is in flight", () => {
+    // The button is now stateful (KAPAT/İZLENİYOR/SÜRE AŞIMI) and `disabled`
+    // is computed from a combined predicate, but the in-flight guard remains:
+    // when closingId matches the current row OR another row is already
+    // closing, the button is disabled.
     expect(PAGE_SRC).toMatch(/closingId/);
-    expect(PAGE_SRC).toMatch(/disabled=\{closingId === t\.id/);
+    expect(PAGE_SRC).toMatch(/closingId === t\.id/);
+    expect(PAGE_SRC).toMatch(/closingId !== null && closingId !== t\.id/);
   });
 
   it("frontend maps backend `code` field to a localized message", () => {
@@ -232,7 +241,12 @@ describe("paper-trades close — functional", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(body.closePriceSource).toBe("fallback_signal");
+    // The fallback chain now emits one of the structured source labels
+    // ("scanner"|"signal"|"metadata"|"log") rather than the legacy
+    // "fallback_signal" tag. Anything other than "binance" implies a fallback
+    // path was taken — that's the invariant this test locks.
+    expect(body.closePriceSource).toMatch(/^(scanner|signal|metadata|log)$/);
+    expect(body.closePriceSource).not.toBe("binance");
     expect(body.warning).toMatch(/Fallback fiyat/);
     // Fallback log was emitted
     const fallbackLog = shape.inserts.find(
