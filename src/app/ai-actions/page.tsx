@@ -1,13 +1,17 @@
-// AI Aksiyon Merkezi — Faz 2.
+// AI Aksiyon Merkezi — Faz 3.
 //
-// Faz 1.0'daki statik mimari kartları korunur; "Aktif Aksiyonlar" bölümü
-// /api/ai-actions endpoint'inden canlı plan listesi çeker.
+// Faz 2'deki statik mimari kartları korunur; "Aktif Aksiyonlar" bölümü
+// /api/ai-actions endpoint'inden canlı plan listesi çeker. Faz 3'te
+// "Uygula" butonu yalnızca APPLICABLE_ACTION_TYPES için aktiftir ve
+// ikinci onay modalı sonrası /api/ai-actions/apply endpoint'ine POST
+// eder. Diğer aksiyon tipleri "Sadece İnceleme" / "Engelli" olarak
+// disabled görünür.
 //
 // SAFETY:
-// - Bu sayfada hiçbir buton ayar değiştirmez.
-// - "Uygula" butonu DISABLED — Faz 3'te aktifleşecek.
-// - Gözlem / dismiss butonları yalnızca localStorage'a yazar.
-// - Prompt butonu plan'dan markdown üretir, clipboard'a kopyalar.
+// - Apply butonu sadece güvenli, düşürücü aksiyonlarda aktif.
+// - Onay modalı olmadan POST gönderilmez (confirmApply=true zorunlu).
+// - Server-side validator UI'dan gelen değerleri yeniden doğrular.
+// - Live trading değişikliği, leverage artırma, Binance order yoktur.
 
 "use client";
 
@@ -17,6 +21,7 @@ import type {
   ActionPlan,
   ActionPlanResult,
   ActionPlanRiskLevel,
+  ActionPlanType,
 } from "@/lib/ai-actions";
 import { buildActionPrompt } from "@/lib/ai-actions/prompt-builder";
 
@@ -52,8 +57,16 @@ const RISK_LABEL: Record<ActionPlanRiskLevel, string> = {
   critical: "Kritik",
 };
 
+/** Faz 3'te apply edilebilir tipler. */
+const APPLICABLE_TYPES: readonly ActionPlanType[] = [
+  "UPDATE_RISK_PER_TRADE_DOWN",
+  "UPDATE_MAX_DAILY_LOSS_DOWN",
+  "UPDATE_MAX_OPEN_POSITIONS_DOWN",
+  "UPDATE_MAX_DAILY_TRADES_DOWN",
+  "SET_OBSERVATION_MODE",
+] as const;
+
 const DISMISS_KEY = "ai-actions:dismissed:v1";
-const OBSERVE_KEY = "ai-actions:observed:v1";
 
 function loadIdSet(key: string): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -77,20 +90,31 @@ function saveIdSet(key: string, ids: Set<string>) {
   }
 }
 
+interface ApplyResult {
+  planId: string;
+  ok: boolean;
+  status: "applied" | "observed" | "blocked" | "failed";
+  message: string;
+  oldValue?: string | null;
+  newValue?: string | null;
+}
+
 export default function AIActionCenterPage() {
   const [data, setData] = useState<ActionPlanResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const [observed, setObserved] = useState<Set<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<{ id: string; copied: boolean } | null>(
     null,
   );
+  const [applyTarget, setApplyTarget] = useState<ActionPlan | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [applyResults, setApplyResults] = useState<Record<string, ApplyResult>>({});
 
   useEffect(() => {
     setDismissed(loadIdSet(DISMISS_KEY));
-    setObserved(loadIdSet(OBSERVE_KEY));
   }, []);
 
   const fetchPlans = useCallback(async () => {
@@ -122,16 +146,6 @@ export default function AIActionCenterPage() {
     return data.plans.filter((p) => !dismissed.has(p.id));
   }, [data, dismissed]);
 
-  const toggleObserve = (id: string) => {
-    setObserved((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      saveIdSet(OBSERVE_KEY, next);
-      return next;
-    });
-  };
-
   const dismissPlan = (id: string) => {
     setDismissed((prev) => {
       const next = new Set(prev);
@@ -160,6 +174,68 @@ export default function AIActionCenterPage() {
     saveIdSet(DISMISS_KEY, new Set());
   };
 
+  const submitApply = useCallback(async () => {
+    if (!applyTarget) return;
+    setApplying(true);
+    setApplyError(null);
+    try {
+      const res = await fetch("/api/ai-actions/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planId: applyTarget.id,
+          actionType: applyTarget.type,
+          recommendedValue: applyTarget.recommendedValue ?? "",
+          confirmApply: true,
+        }),
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        const message = json.error ?? "Aksiyon uygulanamadı.";
+        setApplyError(message);
+        setApplyResults((prev) => ({
+          ...prev,
+          [applyTarget.id]: {
+            planId: applyTarget.id,
+            ok: false,
+            status: (json.status as ApplyResult["status"]) ?? "failed",
+            message,
+            oldValue: json.oldValue ?? null,
+            newValue: json.newValue ?? null,
+          },
+        }));
+        return;
+      }
+      const status = json.data?.status as ApplyResult["status"];
+      const message = json.data?.message ?? "Aksiyon uygulandı.";
+      setApplyResults((prev) => ({
+        ...prev,
+        [applyTarget.id]: {
+          planId: applyTarget.id,
+          ok: true,
+          status,
+          message,
+          oldValue: json.data?.oldValue ?? null,
+          newValue: json.data?.newValue ?? null,
+        },
+      }));
+      setApplyTarget(null);
+      // Plan listesini yenile — yeni snapshot uygulanan değişikliği
+      // sourceSnapshot.riskSettingsSummary'de yansıtmalı.
+      await fetchPlans();
+    } catch (e) {
+      setApplyError(e instanceof Error ? e.message : "Aksiyon uygulanamadı.");
+    } finally {
+      setApplying(false);
+    }
+  }, [applyTarget, fetchPlans]);
+
+  const closeModal = () => {
+    if (applying) return;
+    setApplyTarget(null);
+    setApplyError(null);
+  };
+
   return (
     <div className="space-y-4">
       {/* Sayfa başlığı */}
@@ -174,12 +250,12 @@ export default function AIActionCenterPage() {
             </p>
           </div>
           <span className="self-start rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-warning">
-            Faz 2 · Öneri Üretimi
+            Faz 3 · Onaylı Uygulama
           </span>
         </div>
         <p className="mt-2 rounded-md border border-border bg-bg-soft px-3 py-2 text-[11px] text-muted">
           {data?.phaseBanner ??
-            "Faz 2: Sadece öneri üretir, ayar değiştirmez. Hiçbir aksiyon otomatik uygulanmaz."}
+            "Faz 3: Sadece güvenli düşürücü aksiyonlar kullanıcı onayı ile uygulanabilir."}
         </p>
       </div>
 
@@ -187,14 +263,14 @@ export default function AIActionCenterPage() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatusTile
           label="Sistem Durumu"
-          value="Faz 2 · Öneri Üretimi"
-          hint="Plan üretir, uygulamaz"
+          value="Faz 3 · Onaylı Uygulama"
+          hint="Düşürücü aksiyonlar uygulanabilir"
           tone="warning"
         />
         <StatusTile
           label="Yetki Modu"
-          value="Prompt Only"
-          hint="Sadece prompt üretir, uygulamaz"
+          value="Approval Required"
+          hint="İkinci onay modalı zorunlu"
           tone="accent"
         />
         <StatusTile
@@ -211,12 +287,12 @@ export default function AIActionCenterPage() {
         />
       </div>
 
-      {/* F) Aktif Aksiyonlar (canlı) — sayfanın üstüne taşındı */}
+      {/* Aktif Aksiyonlar (canlı) */}
       <section className="card">
         <SectionHeader
           eyebrow="Aktif Aksiyonlar"
           title="Üretilen plan listesi"
-          subtitle="Generator deterministiktir. Her plan kullanıcı onayı gerektirir; bu fazda uygulama kapalı."
+          subtitle="Generator deterministiktir. Apply yalnızca güvenli düşürücü tiplerde aktiftir; her uygulama ikinci onay gerektirir."
         />
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -269,11 +345,14 @@ export default function AIActionCenterPage() {
                 key={plan.id}
                 plan={plan}
                 isOpen={openId === plan.id}
-                isObserved={observed.has(plan.id)}
+                applyResult={applyResults[plan.id]}
                 onToggleDetail={() =>
                   setOpenId((cur) => (cur === plan.id ? null : plan.id))
                 }
-                onObserve={() => toggleObserve(plan.id)}
+                onApplyClick={() => {
+                  setApplyError(null);
+                  setApplyTarget(plan);
+                }}
                 onDismiss={() => dismissPlan(plan.id)}
                 onPrompt={() => copyPrompt(plan)}
                 copyState={copyState}
@@ -296,14 +375,8 @@ export default function AIActionCenterPage() {
                 k="Açık Pozisyon"
                 v={String(data.sourceSnapshot.openPositions)}
               />
-              <SnapItem
-                k="Toplam P&L"
-                v={fmtUsd(data.sourceSnapshot.totalPnl)}
-              />
-              <SnapItem
-                k="Günlük P&L"
-                v={fmtUsd(data.sourceSnapshot.dailyPnl)}
-              />
+              <SnapItem k="Toplam P&L" v={fmtUsd(data.sourceSnapshot.totalPnl)} />
+              <SnapItem k="Günlük P&L" v={fmtUsd(data.sourceSnapshot.dailyPnl)} />
               <SnapItem
                 k="Kazanma Oranı"
                 v={`%${data.sourceSnapshot.winRate.toFixed(1)}`}
@@ -354,7 +427,7 @@ export default function AIActionCenterPage() {
               { k: "URL", v: "https://github.com/onursuay/coinbot" },
               { k: "Branch", v: "main" },
             ]}
-            futureRole="Branch / commit / PR aksiyon akışı (Faz 3)"
+            futureRole="Branch / commit / PR aksiyon akışı (Faz 4+)"
           />
           <ResourceCard
             code="VC"
@@ -403,7 +476,7 @@ export default function AIActionCenterPage() {
         <SectionHeader
           eyebrow="D · Yetki Modeli"
           title="Her aksiyon bir yetki seviyesinde çalışır"
-          subtitle="Aktif faz: Prompt Only. Diğer seviyeler ileriki fazlarda devreye girer."
+          subtitle="Aktif faz: Approval Required. observe_only ve prompt_only koruma altında."
         />
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <AuthorityCard
@@ -417,15 +490,15 @@ export default function AIActionCenterPage() {
             level="prompt_only"
             title="Prompt Üretir"
             tone="accent"
-            active={true}
+            active={false}
             scope="Claude Code / GitHub promptu üretir. Kullanıcı manuel uygular."
           />
           <AuthorityCard
             level="approval_required"
             title="Onay Gerekir"
             tone="warning"
-            active={false}
-            scope="Riskli değişiklikler için kullanıcı onayı şart. Worker / risk / engine."
+            active={true}
+            scope="Düşürücü risk ayarları için kullanıcı onayı şart. Apply ikinci onay sonrası DB'ye yazılır."
           />
           <AuthorityCard
             level="blocked"
@@ -452,8 +525,8 @@ export default function AIActionCenterPage() {
               "Kâr/Zarar kök neden analizi",
               "Scanner engel analizi",
               "Risk öneri kartları",
-              "Claude Code prompt üretimi",
-              "Aksiyon geçmişi",
+              "Kullanıcı onaylı düşürücü aksiyon uygulama",
+              "Aksiyon geçmişi (bot_logs)",
             ]}
           />
           <ScopeColumn
@@ -465,7 +538,7 @@ export default function AIActionCenterPage() {
               "Otomatik Vercel deploy",
               "Otomatik VPS deploy",
               "Live trading değişikliği",
-              "Onaysız risk parametre değişikliği",
+              "Risk parametre artırma",
             ]}
           />
         </div>
@@ -480,6 +553,17 @@ export default function AIActionCenterPage() {
           ← Panel&apos;e dön
         </Link>
       </div>
+
+      {/* Onay Modal — Faz 3 ikinci onay */}
+      {applyTarget && (
+        <ApplyModal
+          plan={applyTarget}
+          applying={applying}
+          error={applyError}
+          onCancel={closeModal}
+          onConfirm={submitApply}
+        />
+      )}
     </div>
   );
 }
@@ -568,12 +652,8 @@ function ResourceCard({
             key={row.k}
             className="flex items-start justify-between gap-3 text-[11px]"
           >
-            <dt className="shrink-0 uppercase tracking-wider text-muted">
-              {row.k}
-            </dt>
-            <dd className="truncate text-right font-mono text-slate-300">
-              {row.v}
-            </dd>
+            <dt className="shrink-0 uppercase tracking-wider text-muted">{row.k}</dt>
+            <dd className="truncate text-right font-mono text-slate-300">{row.v}</dd>
           </div>
         ))}
       </dl>
@@ -663,18 +743,18 @@ function ScopeColumn({
 function PlanRow({
   plan,
   isOpen,
-  isObserved,
+  applyResult,
   onToggleDetail,
-  onObserve,
+  onApplyClick,
   onDismiss,
   onPrompt,
   copyState,
 }: {
   plan: ActionPlan;
   isOpen: boolean;
-  isObserved: boolean;
+  applyResult?: ApplyResult;
   onToggleDetail: () => void;
-  onObserve: () => void;
+  onApplyClick: () => void;
   onDismiss: () => void;
   onPrompt: () => void;
   copyState: { id: string; copied: boolean } | null;
@@ -682,12 +762,54 @@ function PlanRow({
   const riskTone = RISK_TONE[plan.riskLevel];
   const isCopied = copyState?.id === plan.id && copyState.copied;
   const blocked = !plan.allowed;
+  const isApplied = applyResult?.ok && applyResult.status === "applied";
+  const isObserved = applyResult?.ok && applyResult.status === "observed";
+  const applyFailed = applyResult && !applyResult.ok;
+
+  const isApplicable = (APPLICABLE_TYPES as readonly string[]).includes(plan.type);
+
+  let applyBtnLabel: string;
+  let applyBtnDisabled: boolean;
+  let applyBtnTitle: string | undefined;
+  let applyBtnClasses: string;
+  if (blocked) {
+    applyBtnLabel = "Engelli";
+    applyBtnDisabled = true;
+    applyBtnTitle = "Plan generator tarafından bloke edildi.";
+    applyBtnClasses =
+      "cursor-not-allowed border-rose-500/30 bg-bg-card text-danger opacity-70";
+  } else if (!isApplicable) {
+    applyBtnLabel = "Sadece İnceleme";
+    applyBtnDisabled = true;
+    applyBtnTitle = "Bu aksiyon tipi sadece inceleme/prompt amaçlıdır; uygulanmaz.";
+    applyBtnClasses =
+      "cursor-not-allowed border-border bg-bg-card text-muted opacity-70";
+  } else if (isApplied) {
+    applyBtnLabel = "Uygulandı";
+    applyBtnDisabled = true;
+    applyBtnTitle = applyResult?.message;
+    applyBtnClasses =
+      "cursor-default border-success/40 bg-success/10 text-success";
+  } else if (isObserved) {
+    applyBtnLabel = "Gözlemde";
+    applyBtnDisabled = true;
+    applyBtnTitle = applyResult?.message;
+    applyBtnClasses =
+      "cursor-default border-warning/30 bg-warning/10 text-warning";
+  } else {
+    applyBtnLabel = "Uygula";
+    applyBtnDisabled = false;
+    applyBtnClasses =
+      "border-success/40 bg-success/10 text-success hover:border-success/70";
+  }
 
   return (
     <div
       className={`rounded-lg border px-3 py-3 ${
         blocked
           ? "border-rose-500/30 bg-bg-soft"
+          : isApplied
+          ? "border-success/30 bg-success/5"
           : isObserved
           ? "border-warning/30 bg-warning/5"
           : "border-border bg-bg-soft"
@@ -707,6 +829,11 @@ function PlanRow({
             <span className="rounded-full border border-border bg-bg-card px-2 py-0.5 font-mono text-[10px] tracking-wider text-muted">
               {plan.type}
             </span>
+            {isApplied && (
+              <span className="rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-success">
+                Uygulandı
+              </span>
+            )}
             {isObserved && (
               <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
                 Gözlemde
@@ -736,6 +863,23 @@ function PlanRow({
               </span>
             </div>
           )}
+
+          {applyFailed && (
+            <p className="mt-2 rounded-md border border-rose-500/30 bg-bg-card px-2 py-1 text-[11px] text-danger">
+              Aksiyon uygulanamadı: {applyResult.message}
+            </p>
+          )}
+          {(isApplied || isObserved) && applyResult?.message && (
+            <p
+              className={`mt-2 rounded-md border px-2 py-1 text-[11px] ${
+                isApplied
+                  ? "border-success/30 bg-success/10 text-success"
+                  : "border-warning/30 bg-warning/10 text-warning"
+              }`}
+            >
+              {applyResult.message}
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-1.5">
@@ -745,13 +889,6 @@ function PlanRow({
             className="rounded-md border border-border bg-bg-card px-2.5 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-accent/40 hover:text-accent"
           >
             {isOpen ? "Detayı Gizle" : "Detay"}
-          </button>
-          <button
-            type="button"
-            onClick={onObserve}
-            className="rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1 text-[11px] font-semibold text-warning transition hover:border-warning/60"
-          >
-            {isObserved ? "Gözlemi Kaldır" : "Gözlem"}
           </button>
           <button
             type="button"
@@ -769,11 +906,12 @@ function PlanRow({
           </button>
           <button
             type="button"
-            disabled
-            title="Faz 3'te onaylı uygulama aktif olacak."
-            className="cursor-not-allowed rounded-md border border-border bg-bg-card px-2.5 py-1 text-[11px] font-semibold text-muted opacity-60"
+            onClick={applyBtnDisabled ? undefined : onApplyClick}
+            disabled={applyBtnDisabled}
+            title={applyBtnTitle}
+            className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold transition ${applyBtnClasses}`}
           >
-            Uygula (Faz 3)
+            {applyBtnLabel}
           </button>
         </div>
       </div>
@@ -791,7 +929,7 @@ function PlanRow({
           )}
           <DetailPanel
             title="Kaynak / Onay"
-            body={`Kaynak: ${plan.source} · Onay gerekir: evet · Bu fazda otomatik uygulama yok.`}
+            body={`Kaynak: ${plan.source} · Onay gerekir: evet · Apply ikinci onay sonrası DB'ye yazılır.`}
           />
         </div>
       )}
@@ -823,10 +961,118 @@ function DetailPanel({
 function SnapItem({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex items-baseline justify-between gap-2">
-      <span className="text-[10px] uppercase tracking-wider text-muted">
-        {k}
-      </span>
+      <span className="text-[10px] uppercase tracking-wider text-muted">{k}</span>
       <span className="font-mono text-[11px] text-slate-200">{v}</span>
+    </div>
+  );
+}
+
+function ApplyModal({
+  plan,
+  applying,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  plan: ActionPlan;
+  applying: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const isObservation = plan.type === "SET_OBSERVATION_MODE";
+  const isPositionsChange = plan.type === "UPDATE_MAX_OPEN_POSITIONS_DOWN";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-bg-soft shadow-2xl">
+        <div className="border-b border-border px-5 py-4">
+          <h3 className="text-base font-semibold text-slate-100">
+            Aksiyonu Uygula
+          </h3>
+          <p className="mt-1 text-[11px] text-muted">
+            Bu işlem ikinci onay gerektirir. Uygulama sadece risk ayarını
+            düşürür; canlı emir AÇILMAZ.
+          </p>
+        </div>
+
+        <div className="space-y-3 px-5 py-4 text-sm">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+              Aksiyon
+            </div>
+            <div className="text-sm font-semibold text-slate-100">{plan.title}</div>
+            <div className="mt-0.5 font-mono text-[10px] text-muted">{plan.type}</div>
+          </div>
+
+          {!isObservation && (plan.currentValue || plan.recommendedValue) && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-md border border-border bg-bg-card px-2.5 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-muted">
+                  Eski Değer
+                </div>
+                <div className="font-mono text-sm text-slate-200">
+                  {plan.currentValue ?? "—"}
+                </div>
+              </div>
+              <div className="rounded-md border border-success/30 bg-success/10 px-2.5 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-success">
+                  Yeni Değer
+                </div>
+                <div className="font-mono text-sm text-success">
+                  {plan.recommendedValue ?? "—"}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+              Beklenen Etki
+            </div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-slate-200">
+              {plan.impact}
+            </p>
+          </div>
+
+          {isPositionsChange && (
+            <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning">
+              Bu değişiklik mevcut açık pozisyonları zorla kapatmaz; yalnızca
+              yeni pozisyon açma davranışını etkiler.
+            </div>
+          )}
+
+          <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-[11px] text-success">
+            Bu işlem canlı emir açmaz. Sadece risk ayarını düşürür ve audit
+            log&apos;a yazılır.
+          </div>
+
+          {error && (
+            <div className="rounded-md border border-rose-500/30 bg-bg-card px-3 py-2 text-[11px] text-danger">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={applying}
+            className="rounded-lg border border-border bg-bg-card px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500 disabled:opacity-50"
+          >
+            Vazgeç
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={applying}
+            className="rounded-lg border border-success/40 bg-success/15 px-3 py-1.5 text-xs font-semibold text-success transition hover:border-success/70 disabled:opacity-50"
+          >
+            {applying ? "Uygulanıyor…" : "Onayla ve Uygula"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

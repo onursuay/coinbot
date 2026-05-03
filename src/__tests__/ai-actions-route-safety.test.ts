@@ -47,21 +47,26 @@ describe("ai-actions/route — safety invariants", () => {
   });
 });
 
-describe("ai-actions/page — UI safety invariants", () => {
+describe("ai-actions/page — UI safety invariants (Faz 3)", () => {
   const page = read("src/app/ai-actions/page.tsx");
 
-  it("Uygula butonu disabled olarak render edilir", () => {
-    // Buton "Uygula" metnini içerir ve `disabled` attribute'una sahiptir.
-    expect(page).toMatch(/disabled[^>]*>\s*Uygula \(Faz 3\)/);
+  it("Apply butonu APPLICABLE_TYPES için aktif, diğer tipler için disabled", () => {
+    expect(page).toMatch(/APPLICABLE_TYPES/);
+    expect(page).toMatch(/Sadece İnceleme/);
+    expect(page).toMatch(/Engelli/);
   });
 
-  it("Faz 3 banner disabled tooltip içerir", () => {
-    expect(page).toMatch(/Faz 3'te onaylı uygulama aktif olacak/);
+  it("ikinci onay modalı zorunlu (confirmApply: true literal)", () => {
+    expect(page).toMatch(/confirmApply:\s*true/);
   });
 
   it("Binance private endpoint referansı yok", () => {
     expect(page).not.toMatch(/\/fapi\/v1\/order/);
     expect(page).not.toMatch(/\/fapi\/v1\/leverage/);
+  });
+
+  it("HARD_LIVE_TRADING_ALLOWED=true ataması yok", () => {
+    expect(page).not.toMatch(/HARD_LIVE_TRADING_ALLOWED\s*=\s*true/);
   });
 });
 

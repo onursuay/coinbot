@@ -1,4 +1,4 @@
-// AI Aksiyon Merkezi — Faz 2: barrel export.
+// AI Aksiyon Merkezi — barrel export.
 
 export type {
   ActionPlan,
@@ -19,3 +19,12 @@ export {
 
 export { generateActionPlans } from "./generator";
 export { buildActionPrompt } from "./prompt-builder";
+export { buildAIActionsResult, PHASE_BANNER } from "./snapshot";
+export {
+  executeAction,
+  APPLICABLE_ACTION_TYPES,
+  type ExecutorRequest,
+  type ExecutorResult,
+  type ApplyErrorCode,
+  type ApplySuccessCode,
+} from "./executor";

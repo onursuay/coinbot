@@ -17,7 +17,16 @@ import type {
   ActionPlan,
   ActionPlanResult,
   ActionPlanRiskLevel,
+  ActionPlanType,
 } from "@/lib/ai-actions";
+
+const APPLICABLE_TYPES: readonly ActionPlanType[] = [
+  "UPDATE_RISK_PER_TRADE_DOWN",
+  "UPDATE_MAX_DAILY_LOSS_DOWN",
+  "UPDATE_MAX_OPEN_POSITIONS_DOWN",
+  "UPDATE_MAX_DAILY_TRADES_DOWN",
+  "SET_OBSERVATION_MODE",
+] as const;
 
 const RISK_RANK: Record<ActionPlanRiskLevel, number> = {
   low: 1,
@@ -73,6 +82,10 @@ export function AIActionCenterCard() {
   }, []);
 
   const planCount = data?.plans?.length ?? 0;
+  const applicableCount =
+    data?.plans?.filter(
+      (p) => p.allowed && (APPLICABLE_TYPES as readonly string[]).includes(p.type),
+    ).length ?? 0;
   const highest = data ? topRisk(data.plans) : null;
 
   return (
@@ -87,7 +100,7 @@ export function AIActionCenterCard() {
               AI Aksiyon Merkezi
             </h3>
             <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
-              Faz 2 · Öneri
+              Faz 3 · Onaylı Uygulama
             </span>
           </div>
           <p className="mt-1.5 text-xs text-muted">
@@ -109,7 +122,12 @@ export function AIActionCenterCard() {
 
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <SummaryTile
-          label="Aktif Öneri"
+          label="Uygulanabilir"
+          value={loaded ? String(applicableCount) : "—"}
+          tone="success"
+        />
+        <SummaryTile
+          label="Toplam Öneri"
           value={loaded ? String(planCount) : "—"}
           tone="accent"
         />
@@ -118,7 +136,6 @@ export function AIActionCenterCard() {
           value={highest ? RISK_LABEL[highest] : "—"}
           customClass={highest ? RISK_CLASS[highest] : "text-slate-200"}
         />
-        <SummaryTile label="Yetki Modu" value="Prompt Only" tone="accent" />
         <SummaryTile label="Canlı İşlem" value="Kapalı" tone="success" />
       </div>
     </section>
