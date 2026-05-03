@@ -55,6 +55,20 @@ describe("/api/ai-actions/history route — safety invariants", () => {
     expect(route).toMatch(/VALID_STATUSES/);
   });
 
+  it("created_at cutoff (sinceDays) timeout koruması var — default 30, max 180", () => {
+    // bot_logs büyüdükçe IN(event_type) + ORDER BY created_at DESC sorgusu
+    // timeout veriyordu. .gte("created_at", cutoff) zorunlu.
+    expect(route).toMatch(/\.gte\(["']created_at["']/);
+    expect(route).toMatch(/DEFAULT_SINCE_DAYS/);
+    expect(route).toMatch(/MAX_SINCE_DAYS/);
+    expect(route).toMatch(/clampSinceDays/);
+    expect(route).toMatch(/sinceDays/);
+  });
+
+  it("meta response'unda sinceDays döndürülüyor", () => {
+    expect(route).toMatch(/sinceDays/);
+  });
+
   it("sanitizeMetadata mapper içinde uygulanır (mapHistoryItems üzerinden)", () => {
     expect(route).toMatch(/mapHistoryItems/);
   });

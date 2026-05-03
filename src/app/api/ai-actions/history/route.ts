@@ -5,9 +5,13 @@
 //
 // Query:
 //   • limit (default 50, max 200)
-//   • category: action | decision | safety | observation
+//   • sinceDays (default 30, max 180) — created_at >= now - sinceDays.
+//     bot_logs büyüdükçe IN(event_type) + ORDER BY created_at sorgusu
+//     timeout veriyordu; tarih cutoff'u sıralama yükünü azaltıyor ve
+//     filtreleme öncesi taranan satır sayısını sınırlıyor.
+//   • category: action | decision | safety | observation | prompt
 //   • status: applied | blocked | failed | observed | requested | refreshed |
-//             cache_hit | cache_miss | fallback
+//             cache_hit | cache_miss | fallback | rollback_* | prompt_*
 //
 // MUTLAK KURALLAR:
 //   • DB write yok (insert/update/upsert/delete/rpc set_).
@@ -34,6 +38,8 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const DEFAULT_SINCE_DAYS = 30;
+const MAX_SINCE_DAYS = 180;
 
 const VALID_CATEGORIES: readonly HistoryCategory[] = [
   "action",
@@ -67,6 +73,9 @@ export async function GET(req: Request) {
 
     const limitRaw = url.searchParams.get("limit");
     const limit = clampLimit(limitRaw);
+    const sinceDaysRaw = url.searchParams.get("sinceDays");
+    const sinceDays = clampSinceDays(sinceDaysRaw);
+    const sinceCutoff = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
     const categoryRaw = url.searchParams.get("category");
     const category =
       categoryRaw && (VALID_CATEGORIES as readonly string[]).includes(categoryRaw)
@@ -85,17 +94,20 @@ export async function GET(req: Request) {
         items: [] as HistoryItem[],
         count: 0,
         generatedAt,
-        meta: { limit, category, status, supabaseConfigured: false },
+        meta: { limit, sinceDays, category, status, supabaseConfigured: false },
       });
     }
 
     const sb = supabaseAdmin();
     // Mevcut kullanıcı için AI event'leri çek. event_type IN (..) filtresi ile
-    // diğer event'leri (kill switch, scanner vb.) hariç tut.
+    // diğer event'leri (kill switch, scanner vb.) hariç tut. Tarih cutoff'u
+    // (created_at >= sinceCutoff) timeout'u önlemek için zorunlu — bot_logs
+    // tablosu büyüdükçe filtre olmadan ORDER BY çok yavaşlıyordu.
     const { data, error } = await sb
       .from("bot_logs")
       .select("id, event_type, message, metadata, created_at, level")
       .eq("user_id", userId)
+      .gte("created_at", sinceCutoff)
       .in("event_type", AI_ACTION_EVENT_TYPES as unknown as string[])
       .order("created_at", { ascending: false })
       .limit(limit);
@@ -115,7 +127,7 @@ export async function GET(req: Request) {
       items,
       count: items.length,
       generatedAt,
-      meta: { limit, category, status, supabaseConfigured: true },
+      meta: { limit, sinceDays, category, status, supabaseConfigured: true },
     });
   } catch (e) {
     return fail(
@@ -130,4 +142,11 @@ function clampLimit(raw: string | null): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_LIMIT;
   return Math.min(MAX_LIMIT, Math.max(1, Math.trunc(n)));
+}
+
+function clampSinceDays(raw: string | null): number {
+  if (!raw) return DEFAULT_SINCE_DAYS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_SINCE_DAYS;
+  return Math.min(MAX_SINCE_DAYS, Math.max(1, Math.trunc(n)));
 }
