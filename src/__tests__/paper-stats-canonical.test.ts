@@ -1,7 +1,7 @@
 // Canonical PnL helper — invariant tests that lock the formula used by:
-//   • /api/paper-trades/performance (Panel KPI: Toplam K/Z, Günlük K/Z, ...)
+//   • /api/paper-trades/performance (Genel Bakış KPI: Toplam K/Z, Günlük K/Z, ...)
 //   • /api/bot/status -> daily.realizedPnlUsd (Günlük K/Z fallback)
-//   • Sanal İşlemler > Kapanan İşlemler tablosu (per-row Kâr/Zarar column)
+//   • Pozisyonlar > Kapanan İşlemler tablosu (per-row Kâr/Zarar column)
 //
 // Stored `paper_trades.pnl` IS the net pnl (closePaperTrade subtracts fees +
 // slippage + funding before persisting). The helper sums the stored value as-is
@@ -119,7 +119,7 @@ describe("paper-stats canonical helper", () => {
     expect(s.losingTrades).toBe(1);
   });
 
-  it("Panel KPI invariant: row sum equals totalPnl", () => {
+  it("Genel Bakış KPI invariant: row sum equals totalPnl", () => {
     const rows = [
       { pnl: 1.1, status: "closed", closed_at: todayUtc },
       { pnl: -2.2, status: "closed", closed_at: todayUtc },
@@ -134,7 +134,7 @@ describe("paper-stats canonical helper", () => {
     expect(s.totalPnl).toBeCloseTo(rowSum, 6);
   });
 
-  it("Panel daily invariant: today-row sum equals dailyPnl", () => {
+  it("Genel Bakış daily invariant: today-row sum equals dailyPnl", () => {
     const rows = [
       { pnl: 1.5, status: "closed", closed_at: todayUtc },
       { pnl: -0.5, status: "closed", closed_at: todayUtc },
@@ -164,13 +164,12 @@ describe("paper-stats canonical helper", () => {
     expect(s.totalPnl).toBe(0);
   });
 
-  // ── Panel ↔ Sanal İşlemler parity invariants ──────────────────────────
-  // The Panel "TOPLAM KÂR/ZARAR" KPI tile and the new "Toplam" footer row at
-  // the bottom of the Sanal İşlemler > Kapanan İşlemler table must surface
-  // the SAME number, because both render the value coming out of this
-  // helper. These tests pin that invariant.
+  // ── Genel Bakış ↔ Pozisyonlar parity invariants ───────────────────────
+  // The Genel Bakış "TOPLAM KÂR/ZARAR" KPI tile and Pozisyonlar table rows
+  // derive from the same closed paper_trade pnl values. The positions page no
+  // longer renders a footer row, but this invariant still protects the KPI.
 
-  it("Panel KPI ↔ Kapanan İşlemler footer parity: totalPnl = Σ row.pnl (closed)", () => {
+  it("Genel Bakış KPI ↔ Kapanan İşlemler rows parity: totalPnl = Σ row.pnl (closed)", () => {
     const rows = [
       { pnl: 10.87, status: "closed", closed_at: todayUtc },
       { pnl: 11.07, status: "closed", closed_at: todayUtc },
@@ -178,7 +177,7 @@ describe("paper-stats canonical helper", () => {
       { pnl: -16.94, status: "closed", closed_at: todayUtc },
       { pnl: 11.06, status: "closed", closed_at: yesterdayUtc },
       { pnl: -5.23, status: "closed", closed_at: yesterdayUtc },
-      // Open positions: must NEVER bleed into Panel KPI total.
+      // Open positions: must NEVER bleed into Genel Bakış KPI total.
       { pnl: 999, status: "open", closed_at: null },
       { pnl: -888, status: "open", closed_at: null },
     ];
@@ -186,8 +185,8 @@ describe("paper-stats canonical helper", () => {
       .filter((r) => r.status === "closed")
       .reduce((acc, r) => acc + Number(r.pnl ?? 0), 0);
     const stats = computeStats(rows);
-    // Panel KPI tile reads stats.totalPnl; Kapanan İşlemler footer also
-    // reads stats.totalPnl (same /api/paper-trades/performance response).
+    // Genel Bakış KPI tile reads stats.totalPnl from
+    // /api/paper-trades/performance.
     expect(stats.totalPnl).toBeCloseTo(closedRowSum, 6);
     expect(stats.openTrades).toBe(2);
     expect(stats.totalTrades).toBe(6);

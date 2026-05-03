@@ -8,8 +8,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Copy, Eye, MessageSquare, RefreshCw } from "lucide-react";
+import { Activity, BarChart3, Bot, Copy, Eye, MessageSquare, RefreshCw } from "lucide-react";
 import { fmtNum, fmtUsd } from "@/lib/format";
+import { DashboardSectionTitle } from "@/components/dashboard/SectionTitle";
 import {
   mapDirectionLabel,
   mapDecisionLabel,
@@ -92,7 +93,7 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
       isRunning ? "border-success/30" : "border-border"
     }`}>
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-        <h2 className="font-semibold tracking-wide">BOT DURUMU</h2>
+        <DashboardSectionTitle icon={Bot} title="BOT DURUMU" />
         <div className="flex items-center gap-2">
           <Pill tone={statusTone}>BOT: {statusLabel}</Pill>
           <Pill tone="muted">BORSA: {exchange} FUTURES</Pill>
@@ -174,7 +175,7 @@ export function MarketPulseCard({ rows, scanned, signals, rejected, btcVeto }: {
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="font-semibold tracking-wide">PİYASA NABZI</h2>
+        <DashboardSectionTitle icon={Activity} title="PİYASA NABZI" />
         <span className="text-[10px] uppercase tracking-wider text-muted">
           {pulse.sampleSize > 0 ? `${pulse.sampleSize} coin` : "veri bekleniyor"}
         </span>
@@ -212,13 +213,13 @@ export function OpportunityRadarCard({ rows }: { rows: RadarRow[] }) {
       </div>
 
       <div className="flex items-center gap-4 flex-wrap">
-        {/* Sade radar görseli — pulse animasyonlu daire, oyuncak değil */}
-        <div className="relative h-28 w-28 shrink-0 hidden sm:block" aria-hidden>
-          <span className="absolute inset-0 rounded-full border border-accent/30" />
-          <span className="absolute inset-2 rounded-full border border-accent/20" />
-          <span className="absolute inset-4 rounded-full border border-accent/10" />
-          <span className="absolute inset-0 rounded-full border-t-2 border-accent/60 animate-[spin_6s_linear_infinite]" />
-          <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent" />
+        <div className="radar-disc h-24 w-24 shrink-0 sm:h-28 sm:w-28" aria-hidden>
+          <span className="radar-sweep" />
+          <span className="radar-dot left-[64%] top-[24%]" style={{ animationDelay: "-0.4s" }} />
+          <span className="radar-dot left-[31%] top-[38%]" style={{ animationDelay: "-1.5s" }} />
+          <span className="radar-dot left-[72%] top-[62%]" style={{ animationDelay: "-2.4s" }} />
+          <span className="radar-dot left-[43%] top-[74%]" style={{ animationDelay: "-3.1s" }} />
+          <span className="radar-dot left-[52%] top-[50%]" style={{ animationDelay: "-0.9s" }} />
         </div>
 
         <div className="flex-1 grid grid-cols-2 gap-2 min-w-[220px]">
@@ -840,7 +841,7 @@ export function PerformanceDecisionCard({
   return (
     <div className="card">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-        <h2 className="font-semibold tracking-wide">PERFORMANS KARAR ÖZETİ</h2>
+        <DashboardSectionTitle icon={BarChart3} title="PERFORMANS KARAR ÖZETİ" />
         <div className="flex items-center gap-2">
           <Pill tone="muted">MOD: {tradeModeLabel}</Pill>
           <Pill tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Pill>

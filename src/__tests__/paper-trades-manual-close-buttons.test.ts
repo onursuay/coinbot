@@ -192,7 +192,7 @@ describe("paper-trades — visible label renamed to Pozisyonlar", () => {
     expect(PAGE_SRC).toMatch(/<h1[^>]*>\s*Pozisyonlar\s*<\/h1>/);
   });
   it("dashboard reference text uses 'Pozisyonlar' not 'Sanal İşlemler'", () => {
-    expect(DASH_SRC).toMatch(/Pozisyonlar ▸ Kapanan İşlemler/);
+    expect(DASH_SRC).toMatch(/Pozisyonlar sayfasındaki satır değerleriyle aynı canonical hesaplamayı kullanır/);
     expect(DASH_SRC).not.toMatch(/Sanal İşlemler ▸ Kapanan İşlemler/);
   });
 });

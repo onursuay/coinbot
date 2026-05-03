@@ -13,6 +13,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Sparkles, ArrowRight } from "lucide-react";
+import { DashboardSectionTitle } from "@/components/dashboard/SectionTitle";
 import type {
   ActionPlan,
   ActionPlanResult,
@@ -92,13 +93,8 @@ export function AIActionCenterCard() {
     <section className="card">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/30 bg-accent/10 text-accent">
-              <Sparkles className="h-4 w-4" />
-            </span>
-            <h3 className="text-sm font-semibold text-accent">
-              AI Aksiyon Merkezi
-            </h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <DashboardSectionTitle icon={Sparkles} title="AI AKSİYON MERKEZİ" />
             <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
               Faz 3 · Onaylı Uygulama
             </span>

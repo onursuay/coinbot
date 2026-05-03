@@ -1,11 +1,21 @@
 "use client";
 import { useEffect, useState } from "react";
 import { fmtNum, fmtUsd, fmtPct } from "@/lib/format";
+import { mapExitReasonLabel, mapExitReasonTone } from "@/lib/dashboard/exit-reasons";
 
 interface CloseNotice {
   level: "error" | "warning" | "success";
   text: string;
 }
+
+type ClosedDateFilter = "today" | "7d" | "30d" | "all";
+
+const CLOSED_DATE_FILTERS: { key: ClosedDateFilter; label: string }[] = [
+  { key: "today", label: "Bugün" },
+  { key: "7d", label: "Son 7 Gün" },
+  { key: "30d", label: "Son 30 Gün" },
+  { key: "all", label: "Tümü" },
+];
 
 // Backend `code` → human-readable Turkish message. We never surface raw HTTP
 // statuses (e.g. "HTTP 451") to the user — those come from the exchange edge
@@ -82,6 +92,21 @@ function buttonClassFor(pnl: PnlBucket, disabled: boolean, priceUnavailable: boo
   return `${base} ${palette}`;
 }
 
+function closedTradeMatchesFilter(closedAt: string | null | undefined, filter: ClosedDateFilter): boolean {
+  if (filter === "all") return true;
+  if (!closedAt) return false;
+  const ts = new Date(closedAt).getTime();
+  if (!Number.isFinite(ts)) return false;
+  const now = new Date();
+  if (filter === "today") {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    return ts >= start.getTime();
+  }
+  const days = filter === "7d" ? 7 : 30;
+  return ts >= now.getTime() - days * 24 * 60 * 60 * 1000;
+}
+
 interface LossModalState {
   trade: any;
   netPnl: number;
@@ -93,7 +118,7 @@ interface LossModalState {
 export default function PaperTradesPage() {
   const [open, setOpen] = useState<any[]>([]);
   const [closed, setClosed] = useState<any[]>([]);
-  const [perf, setPerf] = useState<{ totalPnl: number; dailyPnl: number; totalTrades: number; closedToday: number } | null>(null);
+  const [closedFilter, setClosedFilter] = useState<ClosedDateFilter>("all");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [closeNotice, setCloseNotice] = useState<CloseNotice | null>(null);
   const [closingId, setClosingId] = useState<string | null>(null);
@@ -103,19 +128,10 @@ export default function PaperTradesPage() {
   const [lossModal, setLossModal] = useState<LossModalState | null>(null);
 
   const refresh = async () => {
-    const [r, p] = await Promise.all([
+    const [r] = await Promise.all([
       fetch("/api/paper-trades?limit=200", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
-      fetch("/api/paper-trades/performance", { cache: "no-store" }).then((r) => r.json()).catch(() => null),
     ]);
     if (r?.ok) { setOpen(r.data.open); setClosed(r.data.closed); }
-    if (p?.ok) {
-      setPerf({
-        totalPnl: Number(p.data?.totalPnl ?? 0),
-        dailyPnl: Number(p.data?.dailyPnl ?? 0),
-        totalTrades: Number(p.data?.totalTrades ?? 0),
-        closedToday: Number(p.data?.closedToday ?? 0),
-      });
-    }
   };
 
   useEffect(() => {
@@ -217,6 +233,8 @@ export default function PaperTradesPage() {
     }
   };
 
+  const filteredClosed = closed.filter((t) => closedTradeMatchesFilter(t.closed_at, closedFilter));
+
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">Pozisyonlar</h1>
@@ -251,13 +269,13 @@ export default function PaperTradesPage() {
 
       <section className="card overflow-x-auto">
         <h2 className="font-semibold mb-2">Açık Pozisyonlar</h2>
-        <table className="t">
+        <table className="t min-w-[1120px]">
           <thead><tr>
-            <th>Sembol</th><th>Yön</th><th>Kaldıraç</th><th>Marjin</th><th>Boyut</th>
-            <th>Giriş</th><th>Zarar Durdur</th><th>Kâr Al</th><th>Tahmini Likidasyon</th><th>Risk/Ödül</th><th>Skor</th><th>Açılış</th><th></th><th></th>
+            <th className="whitespace-nowrap">Sembol</th><th className="whitespace-nowrap">Yön</th><th className="whitespace-nowrap">Kaldıraç</th><th className="whitespace-nowrap">Marjin</th><th className="whitespace-nowrap">Boyut</th>
+            <th className="whitespace-nowrap">Giriş</th><th className="whitespace-nowrap">Stop</th><th className="whitespace-nowrap">Kâr Al</th><th className="whitespace-nowrap">Likidasyon</th><th className="whitespace-nowrap">R/R</th><th className="whitespace-nowrap">Skor</th><th className="whitespace-nowrap">Açılış</th><th className="whitespace-nowrap">Aksiyon</th>
           </tr></thead>
           <tbody>
-            {open.length === 0 && <tr><td colSpan={14} className="text-muted">Açık pozisyon yok</td></tr>}
+            {open.length === 0 && <tr><td colSpan={13} className="text-muted">Açık pozisyon yok</td></tr>}
             {open.map((t) => {
               const age = ageBucketFor(t.opened_at);
               const pnl = pnlBucketFor(t.net_unrealized_pnl);
@@ -288,19 +306,90 @@ export default function PaperTradesPage() {
                   <td>{t.estimated_liquidation_price ? fmtNum(t.estimated_liquidation_price, 4) : "—"}</td>
                   <td>1:{fmtNum(t.risk_reward_ratio)}</td>
                   <td>{fmtNum(t.signal_score, 0)}</td>
-                  <td className="text-xs text-muted">{new Date(t.opened_at).toLocaleString()}</td>
-                  <td>
-                    <button
-                      className={cls}
-                      onClick={() => onCloseClick(t)}
-                      disabled={disabled}
-                      aria-busy={closingId === t.id}
-                      aria-disabled={disabled}
-                      title={title}
-                    >
-                      {label}
-                    </button>
+                  <td className="whitespace-nowrap text-xs text-muted">{new Date(t.opened_at).toLocaleString()}</td>
+                  <td className="whitespace-nowrap">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        className={cls}
+                        onClick={() => onCloseClick(t)}
+                        disabled={disabled}
+                        aria-busy={closingId === t.id}
+                        aria-disabled={disabled}
+                        title={title}
+                      >
+                        {label}
+                      </button>
+                      <button
+                        className="text-muted hover:text-danger transition-colors p-1"
+                        title="Kaydı sil"
+                        onClick={() => deleteTrade(t.id)}
+                        aria-label="Kaydı sil"
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
                   </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="card overflow-x-auto">
+        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="font-semibold">Kapanan İşlemler</h2>
+          <div className="inline-flex w-full gap-1 overflow-x-auto rounded-lg border border-border bg-bg-soft p-1 sm:w-auto" aria-label="Kapanan işlemler tarih filtresi">
+            {CLOSED_DATE_FILTERS.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setClosedFilter(option.key)}
+                className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  closedFilter === option.key
+                    ? "bg-accent text-black"
+                    : "text-slate-300 hover:bg-bg-card hover:text-slate-100"
+                }`}
+                aria-pressed={closedFilter === option.key}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <table className="t min-w-[980px]">
+          <thead><tr>
+            <th className="whitespace-nowrap">Sembol</th><th className="whitespace-nowrap">Yön</th><th className="whitespace-nowrap">Kaldıraç</th><th className="whitespace-nowrap">Giriş</th><th className="whitespace-nowrap">Çıkış</th><th className="whitespace-nowrap">Kâr/Zarar</th><th className="whitespace-nowrap">%</th>
+            <th className="whitespace-nowrap">Ücretler</th><th className="whitespace-nowrap">Kayma</th><th className="whitespace-nowrap">Fonlama</th><th className="whitespace-nowrap">Sebep</th><th className="whitespace-nowrap">Kapanış</th><th className="whitespace-nowrap"></th>
+          </tr></thead>
+          <tbody>
+            {filteredClosed.length === 0 && <tr><td colSpan={13} className="text-muted">Seçili aralıkta kapanan işlem yok</td></tr>}
+            {filteredClosed.map((t) => {
+              const reasonTone = mapExitReasonTone(t.exit_reason);
+              return (
+                <tr key={t.id}>
+                  <td className="font-medium">{t.symbol}</td>
+                  <td><span className={`tag-${t.direction === "LONG" ? "success" : "danger"}`}>{t.direction}</span></td>
+                  <td>{t.leverage}x</td>
+                  <td>{fmtNum(t.entry_price, 4)}</td>
+                  <td>{fmtNum(t.exit_price, 4)}</td>
+                  <td className={Number(t.pnl) >= 0 ? "value-positive" : "value-negative"}>{fmtUsd(t.pnl)}</td>
+                  <td>{fmtPct(t.pnl_percent)}</td>
+                  <td>{fmtUsd(t.fees_estimated, 4)}</td>
+                  <td>{fmtUsd(t.slippage_estimated, 4)}</td>
+                  <td>{fmtUsd(t.funding_estimated, 4)}</td>
+                  <td className="whitespace-nowrap">
+                    <span className={`tag ${
+                      reasonTone === "success"
+                        ? "border-emerald-400/20 bg-emerald-400/5 text-success"
+                        : reasonTone === "danger"
+                          ? "border-rose-500/25 bg-rose-500/5 text-danger"
+                          : "border-slate-600/50 bg-slate-700/25 text-slate-300"
+                    }`}>
+                      {mapExitReasonLabel(t.exit_reason)}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap text-xs text-muted">{t.closed_at ? new Date(t.closed_at).toLocaleString() : "—"}</td>
                   <td>
                     <button
                       className="text-muted hover:text-danger transition-colors p-1"
@@ -314,63 +403,6 @@ export default function PaperTradesPage() {
                 </tr>
               );
             })}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="card overflow-x-auto">
-        <h2 className="font-semibold mb-2">Kapanan İşlemler</h2>
-        <table className="t">
-          <thead><tr>
-            <th>Sembol</th><th>Yön</th><th>Kaldıraç</th><th>Giriş</th><th>Çıkış</th><th>Kâr/Zarar</th><th>%</th>
-            <th>Ücretler</th><th>Kayma</th><th>Fonlama</th><th>Sebep</th><th>Kapanış</th><th></th>
-          </tr></thead>
-          {/* Toplam satırı — Panel KPI'ları ile aynı canonical kaynaktan
-              (/api/paper-trades/performance → getPaperTradeStats). Burada
-              gösterilen değer ile Panel "Toplam Kâr/Zarar" KPI'sı bire bir
-              eşit olmalıdır; aksi durumda invariant testi (paper-stats-canonical)
-              kırılır. */}
-          {perf && (
-            <tfoot>
-              <tr className="font-medium">
-                <td colSpan={5} className="text-right text-muted">
-                  Toplam ({perf.totalTrades} kapalı işlem, bugün {perf.closedToday})
-                </td>
-                <td className={perf.totalPnl >= 0 ? "value-positive" : "value-negative"}>{fmtUsd(perf.totalPnl)}</td>
-                <td colSpan={7} className="text-xs text-muted">
-                  Günlük: <span className={perf.dailyPnl >= 0 ? "value-positive" : "value-negative"}>{fmtUsd(perf.dailyPnl)}</span> — Panel KPI ile birebir aynıdır (canonical paper-stats helper).
-                </td>
-              </tr>
-            </tfoot>
-          )}
-          <tbody>
-            {closed.length === 0 && <tr><td colSpan={13} className="text-muted">Henüz kapanan işlem yok</td></tr>}
-            {closed.map((t) => (
-              <tr key={t.id}>
-                <td className="font-medium">{t.symbol}</td>
-                <td><span className={`tag-${t.direction === "LONG" ? "success" : "danger"}`}>{t.direction}</span></td>
-                <td>{t.leverage}x</td>
-                <td>{fmtNum(t.entry_price, 4)}</td>
-                <td>{fmtNum(t.exit_price, 4)}</td>
-                <td className={Number(t.pnl) >= 0 ? "value-positive" : "value-negative"}>{fmtUsd(t.pnl)}</td>
-                <td>{fmtPct(t.pnl_percent)}</td>
-                <td>{fmtUsd(t.fees_estimated, 4)}</td>
-                <td>{fmtUsd(t.slippage_estimated, 4)}</td>
-                <td>{fmtUsd(t.funding_estimated, 4)}</td>
-                <td>{t.exit_reason}</td>
-                <td className="text-xs text-muted">{t.closed_at ? new Date(t.closed_at).toLocaleString() : "—"}</td>
-                <td>
-                  <button
-                    className="text-muted hover:text-danger transition-colors p-1"
-                    title="Kaydı sil"
-                    onClick={() => deleteTrade(t.id)}
-                    aria-label="Kaydı sil"
-                  >
-                    <TrashIcon />
-                  </button>
-                </td>
-              </tr>
-            ))}
           </tbody>
         </table>
       </section>

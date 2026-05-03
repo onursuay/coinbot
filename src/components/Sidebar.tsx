@@ -20,7 +20,7 @@ import {
 import { useState, useEffect, useLayoutEffect } from 'react'
 
 const NAV = [
-  { href: '/', label: 'Panel', icon: LayoutDashboard },
+  { href: '/', label: 'Genel Bakış', icon: LayoutDashboard },
   { href: '/scanner', label: 'Piyasa Tarayıcı', icon: ScanLine },
   { href: '/scan-modes', label: 'Tarama Modları', icon: Layers },
   // Coin Detayı: piyasa/mum/sinyal verisi güvenilir hâle gelene kadar

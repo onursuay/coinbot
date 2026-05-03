@@ -267,7 +267,7 @@ export default function HomePage() {
       </div>
       <p className="text-[11px] text-muted -mt-2">
         Sadece kapanmış paper işlemler dahildir. Açık pozisyonların gerçekleşmemiş PnL&apos;i bu toplamlara katılmaz; değerler{" "}
-        <span className="font-mono">paper_trades.pnl</span> sütununun toplamıdır ve Pozisyonlar ▸ Kapanan İşlemler tablosunun alt &quot;Toplam&quot; satırı ile birebir aynıdır.
+        <span className="font-mono">paper_trades.pnl</span> sütununun toplamıdır; Pozisyonlar sayfasındaki satır değerleriyle aynı canonical hesaplamayı kullanır.
       </p>
 
       {/* Açık Pozisyonlar */}

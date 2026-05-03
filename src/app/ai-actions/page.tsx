@@ -550,7 +550,7 @@ export default function AIActionCenterPage() {
           href="/"
           className="rounded-lg border border-border bg-bg-soft px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-accent/40 hover:text-accent"
         >
-          ← Panel&apos;e dön
+          ← Genel Bakış&apos;a dön
         </Link>
       </div>
 
