@@ -247,7 +247,7 @@ export default function HomePage() {
         {toasts.map((t) => (
           <div key={t.id} className={`pointer-events-auto rounded-xl px-4 py-3 shadow-lg border text-sm transition-all ${
             t.type === "success" ? "bg-success/20 border-success/40 text-success"
-            : t.type === "error"   ? "bg-danger/20 border-danger/40 text-danger"
+            : t.type === "error"   ? "bg-bg-soft border-rose-500/30 text-danger"
             :                        "bg-accent/10 border-accent/30 text-accent"
           }`}>
             <div className="font-medium">{t.message}</div>
@@ -387,7 +387,7 @@ export default function HomePage() {
 }
 
 function KpiTile({ label, value, tone }: { label: string; value: string; tone: "success" | "danger" | "muted" }) {
-  const cls = tone === "success" ? "text-success" : tone === "danger" ? "text-danger" : "text-slate-200";
+  const cls = tone === "success" ? "value-positive" : tone === "danger" ? "value-negative" : "text-slate-200";
   return (
     <div className="card text-center">
       <div className="text-[10px] uppercase tracking-wider text-muted">{label}</div>

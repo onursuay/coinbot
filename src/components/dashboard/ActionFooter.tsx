@@ -47,7 +47,7 @@ function btnClass(kind: CardAction, selected: CardAction | null): string {
   const base = "text-[11px] font-medium px-3 py-1.5 rounded-md border transition-colors";
   if (isSelected) {
     if (kind === "APPROVE") return `${base} border-success bg-success/20 text-success`;
-    if (kind === "REJECT")  return `${base} border-danger bg-danger/20 text-danger`;
+    if (kind === "REJECT")  return `${base} border-rose-500/35 bg-bg-soft text-danger`;
     if (kind === "OBSERVE") return `${base} border-warning bg-warning/15 text-warning`;
     if (kind === "PROMPT")  return `${base} border-accent bg-accent/15 text-accent`;
   }

@@ -127,7 +127,7 @@ export default function ScanModesPage() {
       <div className="space-y-4">
         <h1 className="text-xl font-semibold">Tarama Modları</h1>
         <div className="text-muted">Yükleniyor…</div>
-        {error && <div className="text-danger text-sm">{error}</div>}
+        {error && <div className="alert-danger px-3 py-2 text-sm">{error}</div>}
       </div>
     );
   }
@@ -147,7 +147,7 @@ export default function ScanModesPage() {
       </header>
 
       {error && (
-        <div className="card border-danger/40 text-danger text-sm">{error}</div>
+        <div className="card alert-danger text-sm">{error}</div>
       )}
 
       <div className="grid gap-4 md:grid-cols-3">

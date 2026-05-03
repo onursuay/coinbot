@@ -16,7 +16,7 @@ export default function KillSwitch() {
     <button
       onClick={fire}
       disabled={busy}
-      className="h-6 px-2.5 inline-flex items-center text-[11px] font-semibold leading-none rounded-md whitespace-nowrap bg-danger text-white hover:opacity-90 disabled:opacity-60 transition-opacity"
+      className="danger-action h-6 px-2.5 inline-flex items-center text-[11px] font-semibold leading-none rounded-md whitespace-nowrap disabled:opacity-60 transition-colors"
       title="Bot'u acil olarak durdurur (Kill Switch)"
     >
       {busy ? "..." : "ACİL DURDUR"}

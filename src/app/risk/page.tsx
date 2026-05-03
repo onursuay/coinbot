@@ -199,7 +199,7 @@ export default function RiskPage() {
 
       {/* Persistence fallback uyarısı — DB okunamadıysa kullanıcı bilsin */}
       {persistenceStatus === "fallback" && (
-        <div className="card border border-warning/40 bg-warning/10 text-warning">
+        <div className="card alert-warning">
           <div className="text-xs font-semibold uppercase tracking-wider mb-1">RİSK AYARLARI KALICI KAYITTAN OKUNAMADI</div>
           <div className="text-xs">
             Varsayılan değerler gösteriliyor; kaydetme yine denenecek.
@@ -213,14 +213,14 @@ export default function RiskPage() {
 
       {/* Kritik uyarılar — sayfanın üstünde özet */}
       {warnings.length > 0 && (
-        <div className="card border border-danger/40 bg-danger/5">
+        <div className="card alert-warning">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-danger">YÜKSEK RİSK UYARILARI</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-warning">YÜKSEK RİSK UYARILARI</span>
             <span className="text-[10px] uppercase text-muted">{warnings.length} uyarı</span>
           </div>
           <ul className="space-y-1">
             {warnings.map((w) => (
-              <li key={w.code + w.message} className="text-xs text-danger flex items-start gap-2">
+              <li key={w.code + w.message} className="text-xs text-warning flex items-start gap-2">
                 <span className="font-bold mt-0.5">!</span>
                 <span>{w.message}</span>
               </li>
@@ -454,8 +454,8 @@ export default function RiskPage() {
               <li key={w.code + w.message}
                 className={`rounded-lg border px-3 py-2 text-xs ${
                   w.severity === "critical"
-                    ? "border-danger/40 bg-danger/5 text-danger"
-                    : "border-warning/40 bg-warning/5 text-warning"
+                    ? "border-rose-500/30 bg-bg-soft text-danger"
+                    : "border-amber-500/30 bg-bg-soft text-warning"
                 }`}>
                 <div className="text-[10px] uppercase tracking-wider opacity-80">{w.code}</div>
                 <div className="font-medium">{w.message}</div>
@@ -499,7 +499,7 @@ export default function RiskPage() {
       </div>
 
       {errors.length > 0 && (
-        <div className="card border border-danger/50 bg-danger/10 text-danger">
+        <div className="card alert-danger">
           <div className="text-xs font-semibold uppercase tracking-wider mb-1">Doğrulama Hataları</div>
           <ul className="space-y-1">
             {errors.map((e, i) => (
@@ -518,8 +518,8 @@ type Tone = "success" | "warning" | "danger" | "muted" | "accent";
 function Chip({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   const cls =
     tone === "success" ? "bg-success/15 text-success" :
-    tone === "warning" ? "bg-warning/15 text-warning" :
-    tone === "danger"  ? "bg-danger/15 text-danger" :
+    tone === "warning" ? "warning-pill" :
+    tone === "danger"  ? "danger-pill" :
     tone === "accent"  ? "bg-accent/15 text-accent" :
                          "bg-bg-soft text-slate-300";
   return (
@@ -574,7 +574,7 @@ function NumberField({
   };
 
   return (
-    <div className={`rounded-lg border px-3 py-2.5 ${danger ? "border-danger/50 bg-danger/5" : "border-border bg-bg-soft"}`}>
+    <div className={`rounded-lg border px-3 py-2.5 ${danger ? "border-amber-500/40 bg-bg-soft" : "border-border bg-bg-soft"}`}>
       <label className="text-[10px] uppercase tracking-wider text-muted">{label}</label>
       <input
         type="text"
@@ -586,7 +586,7 @@ function NumberField({
         onFocus={(e) => e.target.select()}
         onBlur={handleBlur}
       />
-      {hint && <div className={`mt-1 text-[10px] ${danger ? "text-danger" : "text-muted"}`}>{hint}</div>}
+      {hint && <div className={`mt-1 text-[10px] ${danger ? "text-warning" : "text-muted"}`}>{hint}</div>}
     </div>
   );
 }
@@ -636,7 +636,7 @@ function LeverageBox({
     range.max > POLICY.warnings.leverageMaxWarn;
   const reachedExtreme = range.max >= POLICY.warnings.leverageMaxCritical;
   return (
-    <div className={`rounded-lg border px-3 py-3 ${danger ? "border-danger/50 bg-danger/5" : "border-border bg-bg-soft"}`}>
+    <div className={`rounded-lg border px-3 py-3 ${danger ? "border-rose-500/30 bg-bg-soft" : "border-border bg-bg-soft"}`}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm font-semibold">{label}</span>
         {reachedExtreme && <Chip tone="danger">30x — YÜKSEK RİSK</Chip>}
@@ -704,7 +704,7 @@ function ToggleRow({ label, on, onToggle, hint, locked }: {
         onClick={() => onToggle?.(!on)}
         className={`text-[10px] font-semibold uppercase tracking-wider px-3 py-1 rounded-md border transition-colors ${
           locked
-            ? "border-danger/40 bg-danger/10 text-danger cursor-not-allowed"
+            ? "border-rose-500/30 bg-bg-soft text-danger cursor-not-allowed"
             : on
               ? "border-success/40 bg-success/10 text-success"
               : "border-border bg-bg-soft text-slate-300 hover:border-accent"

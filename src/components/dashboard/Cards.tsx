@@ -87,7 +87,7 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
 
   return (
     <div className={`card border ${
-      isKillSwitch ? "border-danger/50" :
+      isKillSwitch ? "border-rose-500/35" :
       isRunning ? "border-success/30" : "border-border"
     }`}>
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
@@ -124,7 +124,7 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
                 Taramayı Çalıştır
               </button>
               <button
-                className="h-8 whitespace-nowrap rounded-lg border border-danger/60 px-2.5 text-xs font-medium text-danger transition-colors hover:bg-danger/10"
+                className="danger-action h-8 whitespace-nowrap rounded-lg px-2.5 text-xs font-medium transition-colors"
                 onClick={actions.onKillSwitch}
                 disabled={data.busy}
                 aria-label="ACİL DURDUR"
@@ -137,7 +137,7 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
       </div>
 
       {isKillSwitch && data.kill_switch_reason && (
-        <div className="mt-3 rounded-lg border border-danger/50 bg-danger/10 px-3 py-2 text-xs text-danger">
+        <div className="alert-danger mt-3 px-3 py-2 text-xs">
           Kill switch sebebi: {data.kill_switch_reason}
         </div>
       )}
@@ -145,8 +145,8 @@ export function BotStatusCard({ data, actions }: { data: BotStatusInput; actions
       {tickRuntimeNotice && (
         <div className={`mt-3 rounded-lg px-3 py-2 text-xs ${
           tickRuntimeNotice.tone === "danger"
-            ? "border border-danger/40 bg-danger/10 text-danger"
-            : "border border-warning/30 bg-warning/10 text-warning"
+            ? "alert-danger"
+            : "alert-warning"
         }`}>
           {tickRuntimeNotice.message}
         </div>
@@ -234,9 +234,9 @@ export function OpportunityRadarCard({ rows }: { rows: RadarRow[] }) {
               <div className="mt-1 h-1 w-full rounded-full bg-bg-soft overflow-hidden border border-border/60">
                 <div
                   className={`h-1 rounded-full ${
-                    it.tone === "success" ? "bg-success" :
-                    it.tone === "warning" ? "bg-warning" :
-                    it.tone === "danger"  ? "bg-danger"  : "bg-slate-500"
+                    it.tone === "success" ? "bar-success" :
+                    it.tone === "warning" ? "bar-warning" :
+                    it.tone === "danger"  ? "bar-danger"  : "bg-slate-500"
                   }`}
                   style={{ width: `${Math.round((it.value / max) * 100)}%` }}
                 />
@@ -485,7 +485,7 @@ export function OpenPositionsCard({ rows }: { rows: OpenPositionRow[] }) {
               <td className="tabular-nums">{fmtNum(t.entry_price, 4)}</td>
               <td className="tabular-nums">{fmtNum(t.stop_loss, 4)}</td>
               <td className="tabular-nums">{fmtNum(t.take_profit, 4)}</td>
-              <td className={`tabular-nums ${t.unrealized_pnl != null && t.unrealized_pnl < 0 ? "text-danger" : "text-success"}`}>
+              <td className={`tabular-nums ${t.unrealized_pnl != null && t.unrealized_pnl < 0 ? "value-negative" : "value-positive"}`}>
                 {t.unrealized_pnl != null ? fmtUsd(t.unrealized_pnl) : "—"}
               </td>
               <td>
@@ -616,7 +616,7 @@ export function PaperValidationCard({ data, hardLiveAllowed }: {
     <div className={`card border ${
       allPassed ? "border-success/30" :
       firstTradeMissing ? "border-border" :
-      failed.length > 0 ? "border-danger/40" : "border-border"
+      failed.length > 0 ? "border-rose-500/30" : "border-border"
     }`}>
       <div className="flex items-center justify-between mb-3">
         <h2 className="font-semibold tracking-wide">PAPER İŞLEM DOĞRULAMASI</h2>
@@ -626,7 +626,7 @@ export function PaperValidationCard({ data, hardLiveAllowed }: {
           ) : firstTradeMissing ? (
             <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full bg-bg-soft text-muted">Bekleniyor</span>
           ) : failed.length > 0 ? (
-            <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full bg-danger/20 text-danger">{failed.length} Başarısız</span>
+            <span className="danger-pill text-[10px] tracking-wider px-2 py-0.5 rounded-full">{failed.length} Başarısız</span>
           ) : null}
           {skipped.length > 0 && (
             <span className="text-[10px] tracking-wider px-2 py-0.5 rounded-full bg-bg-soft text-muted">{skipped.length} Atlandı</span>
@@ -677,8 +677,8 @@ type Tone = "success" | "warning" | "danger" | "muted" | "accent";
 function pillTone(tone: Tone): string {
   switch (tone) {
     case "success": return "bg-success/15 text-success";
-    case "warning": return "bg-warning/15 text-warning";
-    case "danger":  return "bg-danger/15 text-danger";
+    case "warning": return "warning-pill";
+    case "danger":  return "danger-pill";
     case "accent":  return "bg-accent/15 text-accent";
     default:         return "bg-bg-soft text-slate-300";
   }
@@ -867,9 +867,9 @@ function Gauge({ label, value, hint, tone }: {
     tone === "warning" ? "text-warning" :
     tone === "danger"  ? "text-danger"  : "text-slate-200";
   const barCls =
-    tone === "success" ? "bg-success" :
-    tone === "warning" ? "bg-warning" :
-    tone === "danger"  ? "bg-danger"  : "bg-slate-500";
+    tone === "success" ? "bar-success" :
+    tone === "warning" ? "bar-warning" :
+    tone === "danger"  ? "bar-danger"  : "bg-slate-500";
   return (
     <div className="rounded-lg border border-border bg-bg-soft px-3 py-3">
       <div className="flex items-baseline justify-between">
@@ -959,8 +959,8 @@ function AuditSection({ id, data }: { id: string; data: TradeAuditSectionData })
       <div className="mt-0.5 text-[10px] text-muted leading-snug">{data.recommendation}</div>
       {data.tag && (
         <span className={`mt-1 inline-block text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded ${
-          tone === "danger" ? "bg-danger/10 text-danger" :
-          tone === "warning" ? "bg-warning/10 text-warning" : "bg-bg-soft text-muted"
+          tone === "danger" ? "border border-rose-500/25 bg-bg-soft text-danger" :
+          tone === "warning" ? "border border-amber-500/25 bg-bg-soft text-warning" : "bg-bg-soft text-muted"
         }`}>{data.tag}</span>
       )}
     </div>
@@ -1148,7 +1148,7 @@ export function LiveReadinessCard({
   return (
     <div className={`card border ${
       status === "READY" ? "border-success/40" :
-      status === "OBSERVE" ? "border-warning/30" : "border-danger/40"
+      status === "OBSERVE" ? "border-warning/30" : "border-rose-500/30"
     }`}>
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
         <h2 className="font-semibold tracking-wide">CANLIYA GEÇİŞ KONTROLÜ</h2>
@@ -1165,7 +1165,7 @@ export function LiveReadinessCard({
       ) : (
         <>
           {isNotReady && (
-            <div className="mb-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+            <div className="alert-danger mb-3 px-3 py-2 text-xs">
               <div className="font-semibold mb-0.5">Canlıya geçiş için hazır değil.</div>
               <div className="text-[11px]">{data!.mainBlockingReason}</div>
             </div>
@@ -1554,7 +1554,7 @@ export function AIDecisionAssistantCard({
         <div className={`mt-3 rounded-md border px-3 py-2 text-xs ${
           actionNotice.tone === "success" ? "border-success/30 bg-success/10 text-success" :
           actionNotice.tone === "warning" ? "border-warning/30 bg-warning/10 text-warning" :
-          actionNotice.tone === "danger" ? "border-danger/30 bg-danger/10 text-danger" :
+          actionNotice.tone === "danger" ? "border-rose-500/30 bg-bg-soft text-danger" :
           "border-accent/30 bg-accent/10 text-accent"
         }`}>
           {actionNotice.text}

@@ -9,17 +9,29 @@ html, body { background: #0b0e13; color: #e2e8f0; overflow-x: hidden; }
 .card { @apply bg-bg-card border border-border rounded-xl p-4; }
 .btn { @apply inline-flex items-center justify-center px-3 py-2 rounded-lg text-sm font-medium transition-colors; }
 .btn-primary { @apply btn bg-accent text-black hover:bg-accent-strong; }
-.btn-danger { @apply btn bg-danger text-white hover:opacity-90; }
+.btn-danger { @apply btn border border-rose-500/45 bg-rose-900/80 text-rose-50 hover:bg-rose-800/90; }
 .btn-ghost { @apply btn bg-bg-soft border border-border text-slate-200 hover:border-accent; }
 .input { @apply w-full bg-bg-soft border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent; }
 .label { @apply block text-xs uppercase tracking-wider text-muted mb-1; }
 .kpi { @apply text-2xl font-semibold text-slate-100; }
 .tag { @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium; }
-.tag-success { @apply tag bg-success/15 text-success; }
-.tag-danger { @apply tag bg-danger/15 text-danger; }
-.tag-warning { @apply tag bg-warning/15 text-warning; }
+.tag-success { @apply tag border border-emerald-400/20 bg-bg-soft text-success; }
+.tag-danger { @apply tag border border-rose-500/25 bg-bg-soft text-danger; }
+.tag-warning { @apply tag border border-amber-500/25 bg-bg-soft text-warning; }
 .tag-muted { @apply tag bg-slate-700/40 text-slate-300; }
 .tag-accent { @apply tag bg-accent/15 text-accent; }
+.alert-danger { @apply rounded-lg border border-rose-500/30 bg-bg-soft text-danger; }
+.alert-warning { @apply rounded-lg border border-amber-500/30 bg-bg-soft text-warning; }
+.alert-success { @apply rounded-lg border border-emerald-400/25 bg-bg-soft text-success; }
+.danger-action { @apply border border-rose-500/45 bg-rose-900/80 text-rose-50 hover:bg-rose-800/90; }
+.danger-pill { @apply border border-rose-500/25 bg-bg-soft text-danger; }
+.warning-pill { @apply border border-amber-500/25 bg-bg-soft text-warning; }
+.success-pill { @apply border border-emerald-400/20 bg-bg-soft text-success; }
+.value-negative { @apply text-danger; }
+.value-positive { @apply text-success; }
+.bar-danger { @apply bg-rose-400/70; }
+.bar-warning { @apply bg-amber-400/70; }
+.bar-success { @apply bg-emerald-300/70; }
 table.t { @apply w-full text-sm; }
 table.t th { @apply text-left text-muted font-normal py-2 px-2 border-b border-border; }
 table.t td { @apply py-2 px-2 border-b border-border/60; }

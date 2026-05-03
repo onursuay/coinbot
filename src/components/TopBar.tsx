@@ -91,7 +91,7 @@ export default function TopBar() {
   const statusClass = status === "running"
     ? "bg-success/15 text-success"
     : status === "kill_switch"
-      ? "bg-danger/15 text-danger"
+      ? "danger-pill"
       : "bg-slate-700/40 text-slate-300";
 
   const notificationLabel =
@@ -132,7 +132,7 @@ export default function TopBar() {
           </span>
         )}
         {workerOnline !== null && (
-          <span className={`${PILL} ${workerOnline ? "bg-success/15 text-success" : "bg-danger/15 text-danger"}`}>
+          <span className={`${PILL} ${workerOnline ? "success-pill" : "danger-pill"}`}>
             SUNUCU: {workerOnline ? "ÇEVRİMİÇİ" : "ÇEVRİMDIŞI"}
           </span>
         )}
@@ -161,7 +161,7 @@ export default function TopBar() {
         {s && (
           <span className={`${PILL} bg-slate-700/40 text-slate-300`}>
             K/Z:&nbsp;
-            <span className={s.daily.realizedPnlUsd >= 0 ? "text-success" : "text-danger"}>
+            <span className={s.daily.realizedPnlUsd >= 0 ? "value-positive" : "value-negative"}>
               ${s.daily.realizedPnlUsd.toFixed(2)}
             </span>
             <span className="text-muted">&nbsp;/&nbsp;${s.daily.dailyTargetUsd}</span>

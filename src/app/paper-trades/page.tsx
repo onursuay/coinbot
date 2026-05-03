@@ -119,7 +119,7 @@ export default function PaperTradesPage() {
   return (
     <div className="space-y-6">
       {deleteError && (
-        <div className="text-sm text-danger bg-danger/10 border border-danger/30 rounded-lg px-3 py-2">
+        <div className="alert-danger px-3 py-2 text-sm">
           {deleteError}
         </div>
       )}
@@ -128,10 +128,10 @@ export default function PaperTradesPage() {
         <div
           className={
             closeNotice.level === "error"
-              ? "text-sm text-danger bg-danger/10 border border-danger/30 rounded-lg px-3 py-2 flex items-start justify-between gap-3"
+              ? "alert-danger px-3 py-2 text-sm flex items-start justify-between gap-3"
               : closeNotice.level === "warning"
-                ? "text-sm text-warning bg-warning/10 border border-warning/30 rounded-lg px-3 py-2 flex items-start justify-between gap-3"
-                : "text-sm text-success bg-success/10 border border-success/30 rounded-lg px-3 py-2 flex items-start justify-between gap-3"
+                ? "alert-warning px-3 py-2 text-sm flex items-start justify-between gap-3"
+                : "alert-success px-3 py-2 text-sm flex items-start justify-between gap-3"
           }
           role="status"
         >
@@ -213,9 +213,9 @@ export default function PaperTradesPage() {
                 <td colSpan={5} className="text-right text-muted">
                   Toplam ({perf.totalTrades} kapalı işlem, bugün {perf.closedToday})
                 </td>
-                <td className={perf.totalPnl >= 0 ? "text-success" : "text-danger"}>{fmtUsd(perf.totalPnl)}</td>
+                <td className={perf.totalPnl >= 0 ? "value-positive" : "value-negative"}>{fmtUsd(perf.totalPnl)}</td>
                 <td colSpan={7} className="text-xs text-muted">
-                  Günlük: <span className={perf.dailyPnl >= 0 ? "text-success" : "text-danger"}>{fmtUsd(perf.dailyPnl)}</span> — Panel KPI ile birebir aynıdır (canonical paper-stats helper).
+                  Günlük: <span className={perf.dailyPnl >= 0 ? "value-positive" : "value-negative"}>{fmtUsd(perf.dailyPnl)}</span> — Panel KPI ile birebir aynıdır (canonical paper-stats helper).
                 </td>
               </tr>
             </tfoot>
@@ -229,7 +229,7 @@ export default function PaperTradesPage() {
                 <td>{t.leverage}x</td>
                 <td>{fmtNum(t.entry_price, 4)}</td>
                 <td>{fmtNum(t.exit_price, 4)}</td>
-                <td className={Number(t.pnl) >= 0 ? "text-success" : "text-danger"}>{fmtUsd(t.pnl)}</td>
+                <td className={Number(t.pnl) >= 0 ? "value-positive" : "value-negative"}>{fmtUsd(t.pnl)}</td>
                 <td>{fmtPct(t.pnl_percent)}</td>
                 <td>{fmtUsd(t.fees_estimated, 4)}</td>
                 <td>{fmtUsd(t.slippage_estimated, 4)}</td>
