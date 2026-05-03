@@ -28,3 +28,15 @@ export {
   type ApplyErrorCode,
   type ApplySuccessCode,
 } from "./executor";
+export {
+  hashSnapshot,
+  evaluateCache,
+  getCached,
+  setCached,
+  clearCachedForTests,
+  DECISION_CACHE_TTL_MS,
+  CACHE_STATUS_LABEL,
+  type DecisionSnapshot,
+  type CachedDecisionEntry,
+  type CacheStatus,
+} from "./decision-cache";

@@ -99,6 +99,81 @@ interface ApplyResult {
   newValue?: string | null;
 }
 
+interface AIDecisionSnapshot {
+  status:
+    | "NO_ACTION"
+    | "OBSERVE"
+    | "REVIEW_REQUIRED"
+    | "CRITICAL_BLOCKER"
+    | "DATA_INSUFFICIENT";
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  mainFinding: string;
+  systemInterpretation: string;
+  recommendation: string;
+  actionType: string;
+  confidence: number;
+  observeDays: number;
+  blockedBy: string[];
+  fallbackReason?: string | null;
+}
+
+interface AIDecisionEnvelope {
+  decision: AIDecisionSnapshot;
+  generatedAt: string;
+  ageSec: number;
+  ttlSec: number;
+  /** "cache" | "ai" | "ai_fallback" */
+  source: string;
+  sourceLabel: string;
+  /** "fresh" | "stale_data" | "stale_ttl" | "no_cache" | "force_refresh" */
+  cacheStatus: string;
+  cacheStatusLabel: string;
+  snapshotHash: string;
+  fallbackReason?: string | null;
+}
+
+interface SystemHealth {
+  workerOnline: boolean | null;
+  workerStatus: string | null;
+  binanceApiStatus: string | null;
+  websocketStatus: string | null;
+  lastHeartbeatAt: string | null;
+  envOk: boolean | null;
+  hardLiveTradingAllowed: boolean | null;
+  enableLiveTrading: boolean | null;
+  tradingMode: string | null;
+}
+
+const DECISION_LABEL: Record<AIDecisionSnapshot["status"], string> = {
+  NO_ACTION: "Aksiyon Gerekmiyor",
+  OBSERVE: "İnceleme Devam Ediyor",
+  REVIEW_REQUIRED: "Manuel İnceleme Gerekli",
+  CRITICAL_BLOCKER: "Kritik · Manuel İnceleme",
+  DATA_INSUFFICIENT: "Veri Yetersiz",
+};
+
+const DECISION_TONE: Record<AIDecisionSnapshot["status"], StatusTone> = {
+  NO_ACTION: "success",
+  OBSERVE: "warning",
+  REVIEW_REQUIRED: "warning",
+  CRITICAL_BLOCKER: "danger",
+  DATA_INSUFFICIENT: "muted",
+};
+
+const RISK_LEVEL_LABEL: Record<AIDecisionSnapshot["riskLevel"], string> = {
+  LOW: "Düşük",
+  MEDIUM: "Orta",
+  HIGH: "Yüksek",
+  CRITICAL: "Kritik",
+};
+
+const RISK_LEVEL_TONE: Record<AIDecisionSnapshot["riskLevel"], StatusTone> = {
+  LOW: "success",
+  MEDIUM: "warning",
+  HIGH: "danger",
+  CRITICAL: "danger",
+};
+
 export default function AIActionCenterPage() {
   const [data, setData] = useState<ActionPlanResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,10 +187,91 @@ export default function AIActionCenterPage() {
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applyResults, setApplyResults] = useState<Record<string, ApplyResult>>({});
+  // Pasif entegrasyon — sistem sağlığı OTOMATİK fetch (LLM çağrısı yok).
+  const [health, setHealth] = useState<SystemHealth | null>(null);
+  // AI Karar Özeti — sayfa açıldığında otomatik /api/ai-actions/decision
+  // çağrılır. Cache mantığı: snapshot hash değişmediyse ve TTL içindeyse
+  // OpenAI çağrılmaz, cache'den döner. "Analizi Yenile" force=true ile
+  // cache'i bypass eder.
+  const [aiEnvelope, setAiEnvelope] = useState<AIDecisionEnvelope | null>(null);
+  const [aiDecisionLoading, setAiDecisionLoading] = useState(false);
+  const [aiDecisionError, setAiDecisionError] = useState<string | null>(null);
+  const aiDecision = aiEnvelope?.decision ?? null;
 
   useEffect(() => {
     setDismissed(loadIdSet(DISMISS_KEY));
   }, []);
+
+  // Sistem sağlığı — sayfa açıldığında lightweight endpoint'lerden okur.
+  const fetchHealth = useCallback(async () => {
+    try {
+      const [statusRes, hbRes, envRes] = await Promise.all([
+        fetch("/api/bot/status", { cache: "no-store" })
+          .then((r) => r.json())
+          .catch(() => null),
+        fetch("/api/bot/heartbeat", { cache: "no-store" })
+          .then((r) => r.json())
+          .catch(() => null),
+        fetch("/api/system/env-check", { cache: "no-store" })
+          .then((r) => r.json())
+          .catch(() => null),
+      ]);
+      const next: SystemHealth = {
+        workerOnline: hbRes?.data?.online ?? null,
+        workerStatus: hbRes?.data?.status ?? null,
+        binanceApiStatus: hbRes?.data?.binanceApiStatus ?? null,
+        websocketStatus: hbRes?.data?.websocketStatus ?? null,
+        lastHeartbeatAt: hbRes?.data?.lastHeartbeat ?? null,
+        envOk: envRes?.data?.ok ?? null,
+        hardLiveTradingAllowed:
+          statusRes?.data?.hardLiveTradingAllowed ?? null,
+        enableLiveTrading: statusRes?.data?.liveTrading ?? null,
+        tradingMode: statusRes?.data?.debug?.tradingMode ?? null,
+      };
+      setHealth(next);
+    } catch {
+      setHealth(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchHealth();
+  }, [fetchHealth]);
+
+  // AI karar — otomatik (cache + TTL) veya manuel override.
+  // Sayfa açılışında ve plan refresh sonrası otomatik çağrılır.
+  // OpenAI YALNIZCA snapshot değiştiyse veya TTL doldu ise tetiklenir.
+  const refreshAIDecision = useCallback(
+    async (opts?: { force?: boolean }) => {
+      setAiDecisionLoading(true);
+      setAiDecisionError(null);
+      try {
+        const url = opts?.force
+          ? "/api/ai-actions/decision?force=true"
+          : "/api/ai-actions/decision";
+        const res = await fetch(url, { cache: "no-store" });
+        const json = await res.json();
+        if (!json.ok) {
+          setAiDecisionError(json.error ?? "AI karar özeti alınamadı.");
+          return;
+        }
+        setAiEnvelope(json.data as AIDecisionEnvelope);
+      } catch (e) {
+        setAiDecisionError(
+          e instanceof Error ? e.message : "AI karar özeti alınamadı.",
+        );
+      } finally {
+        setAiDecisionLoading(false);
+      }
+    },
+    [],
+  );
+
+  // Otomatik fetch — sayfa açıldığında bir kez. Cache hit ise OpenAI çağrısı
+  // yapılmaz; backend hash + TTL kontrolünü kendisi yönetir.
+  useEffect(() => {
+    void refreshAIDecision();
+  }, [refreshAIDecision]);
 
   const fetchPlans = useCallback(async () => {
     setLoading(true);
@@ -286,6 +442,22 @@ export default function AIActionCenterPage() {
           tone="accent"
         />
       </div>
+
+      {/* Sistem Sağlığı / Karar Durumu */}
+      <SystemHealthSection
+        health={health}
+        decision={aiDecision}
+        decisionLoading={aiDecisionLoading}
+        decisionEnvelope={aiEnvelope}
+      />
+
+      {/* Son AI Karar Özeti — otomatik cache + manuel override */}
+      <LatestAIDecisionSection
+        envelope={aiEnvelope}
+        loading={aiDecisionLoading}
+        error={aiDecisionError}
+        onForceRefresh={() => refreshAIDecision({ force: true })}
+      />
 
       {/* Aktif Aksiyonlar (canlı) */}
       <section className="card">
@@ -544,6 +716,9 @@ export default function AIActionCenterPage() {
         </div>
       </section>
 
+      {/* F · Güvenlik Sınırları */}
+      <SafetyBoundsCard />
+
       {/* Geri linki */}
       <div className="flex items-center justify-end gap-2 pt-1">
         <Link
@@ -587,6 +762,316 @@ function SectionHeader({
       <div className="text-sm font-semibold text-slate-100">{title}</div>
       {subtitle && <div className="text-xs text-muted">{subtitle}</div>}
     </div>
+  );
+}
+
+function SystemHealthSection({
+  health,
+  decision,
+  decisionLoading,
+  decisionEnvelope,
+}: {
+  health: SystemHealth | null;
+  decision: AIDecisionSnapshot | null;
+  decisionLoading: boolean;
+  decisionEnvelope?: AIDecisionEnvelope | null;
+}) {
+  const liveOff =
+    health?.hardLiveTradingAllowed === false ||
+    health?.enableLiveTrading === false;
+
+  const decisionStatus = decision?.status ?? null;
+  const decisionTone: StatusTone = decisionStatus
+    ? DECISION_TONE[decisionStatus]
+    : "muted";
+  const decisionLabel = decisionLoading
+    ? "Yükleniyor…"
+    : decisionStatus
+    ? DECISION_LABEL[decisionStatus]
+    : "Henüz analiz çalıştırılmadı";
+
+  return (
+    <section className="card">
+      <SectionHeader
+        eyebrow="Sistem Sağlığı"
+        title="Bot durumu, paper modu ve güvenlik kilitleri"
+        subtitle="Bu bilgiler dahili durum endpoint'lerinden okunur; LLM çağrısı yapmaz."
+      />
+      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatusTile
+          label="Bot Durumu"
+          value={
+            health?.workerStatus
+              ? statusLabel(health.workerStatus)
+              : health?.workerOnline === false
+              ? "Çevrimdışı"
+              : "Bekleniyor"
+          }
+          hint={
+            health?.workerOnline
+              ? `Worker online · last hb ${
+                  health.lastHeartbeatAt
+                    ? new Date(health.lastHeartbeatAt).toLocaleTimeString("tr-TR")
+                    : "—"
+                }`
+              : "Heartbeat verisi yok"
+          }
+          tone={
+            health?.workerOnline
+              ? health?.workerStatus === "running_paper"
+                ? "success"
+                : "warning"
+              : "muted"
+          }
+        />
+        <StatusTile
+          label="Trading Modu"
+          value={(health?.tradingMode ?? "paper").toUpperCase()}
+          hint="DEFAULT_TRADING_MODE=paper"
+          tone="success"
+        />
+        <StatusTile
+          label="Canlı İşlem Kilidi"
+          value={liveOff ? "KAPALI" : health == null ? "—" : "AÇIK"}
+          hint="HARD_LIVE_TRADING_ALLOWED=false"
+          tone={liveOff ? "success" : health == null ? "muted" : "danger"}
+        />
+        <StatusTile
+          label="Karar Durumu"
+          value={decisionLabel}
+          hint={
+            decision?.fallbackReason
+              ? `Fallback: ${decision.fallbackReason}`
+              : decisionEnvelope?.generatedAt
+              ? `Son analiz: ${new Date(decisionEnvelope.generatedAt).toLocaleTimeString("tr-TR")} (${decisionEnvelope.sourceLabel})`
+              : "Otomatik kontrol bekleniyor"
+          }
+          tone={decisionTone}
+        />
+      </div>
+    </section>
+  );
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case "running_paper":
+      return "Paper · Aktif";
+    case "running_live":
+      return "Live · Aktif";
+    case "paused":
+      return "Duraklatıldı";
+    case "kill_switch":
+      return "Kill Switch";
+    case "stopped":
+      return "Durdu";
+    default:
+      return status.toUpperCase();
+  }
+}
+
+function LatestAIDecisionSection({
+  envelope,
+  loading,
+  error,
+  onForceRefresh,
+}: {
+  envelope: AIDecisionEnvelope | null;
+  loading: boolean;
+  error: string | null;
+  onForceRefresh: () => void;
+}) {
+  const decision = envelope?.decision ?? null;
+  const isCache = envelope?.source === "cache";
+  const isFallback =
+    envelope?.source === "ai_fallback" || decision?.fallbackReason;
+
+  // Kaynak rozeti tonu
+  const sourceTone: StatusTone = isCache
+    ? "muted"
+    : isFallback
+    ? "warning"
+    : "success";
+
+  return (
+    <section className="card">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <SectionHeader
+          eyebrow="Son AI Karar Özeti"
+          title="Yorumlayıcı analiz (cache + TTL)"
+          subtitle="Sayfa otomatik kontrol eder; OpenAI yalnızca veri değiştiyse veya TTL doldu ise tetiklenir. 'Analizi Yenile' manuel override'dır."
+        />
+        <button
+          type="button"
+          onClick={onForceRefresh}
+          disabled={loading}
+          className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent transition hover:border-accent/70 hover:bg-accent/15 disabled:opacity-50"
+        >
+          {loading ? "Analiz çalışıyor…" : "Analizi Yenile"}
+        </button>
+      </div>
+
+      {!envelope && !loading && !error && (
+        <p className="mt-3 rounded-md border border-dashed border-border bg-bg-soft px-3 py-3 text-xs text-muted">
+          Henüz AI karar özeti üretilmedi.
+        </p>
+      )}
+
+      {error && (
+        <p className="mt-3 rounded-md border border-rose-500/30 bg-bg-soft px-3 py-2 text-xs text-danger">
+          {error}
+        </p>
+      )}
+
+      {envelope && decision && (
+        <div className="mt-3 space-y-3">
+          {/* Cache / kaynak meta bandı */}
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-bg-soft px-3 py-2">
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${TONE_BORDER[sourceTone]} ${TONE_CLASSES[sourceTone]}`}
+            >
+              Kaynak: {envelope.sourceLabel}
+            </span>
+            <span className="rounded-full border border-border bg-bg-card px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+              Durum: {envelope.cacheStatusLabel}
+            </span>
+            <span className="text-[11px] text-muted">
+              Son analiz: {fmtRelativeAge(envelope.ageSec)} ·{" "}
+              {new Date(envelope.generatedAt).toLocaleTimeString("tr-TR")}
+            </span>
+            <span className="text-[11px] text-muted">
+              TTL: {Math.round(envelope.ttlSec / 60)} dk
+            </span>
+            <span className="font-mono text-[10px] text-muted">
+              hash: {envelope.snapshotHash.slice(0, 10)}…
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${TONE_BORDER[DECISION_TONE[decision.status]]} ${TONE_CLASSES[DECISION_TONE[decision.status]]}`}
+            >
+              {DECISION_LABEL[decision.status]}
+            </span>
+            <span
+              className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${TONE_BORDER[RISK_LEVEL_TONE[decision.riskLevel]]} ${TONE_CLASSES[RISK_LEVEL_TONE[decision.riskLevel]]}`}
+            >
+              Risk: {RISK_LEVEL_LABEL[decision.riskLevel]}
+            </span>
+            <span className="rounded-full border border-border bg-bg-card px-2 py-0.5 font-mono text-[10px] text-muted">
+              {decision.actionType}
+            </span>
+            <span className="rounded-full border border-border bg-bg-card px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+              Güven: %{decision.confidence}
+            </span>
+            {decision.observeDays > 0 && (
+              <span className="rounded-full border border-border bg-bg-card px-2 py-0.5 text-[10px] font-semibold text-muted">
+                Gözlem önerisi: {decision.observeDays} gün
+              </span>
+            )}
+            {isFallback && (
+              <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
+                Fallback
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-3">
+            <DecisionPanel title="Ana Bulgu" body={decision.mainFinding} />
+            <DecisionPanel
+              title="Sistem Yorumu"
+              body={decision.systemInterpretation}
+            />
+            <DecisionPanel title="Öneri" body={decision.recommendation} />
+          </div>
+          {decision.blockedBy.length > 0 && (
+            <div className="rounded-md border border-rose-500/30 bg-bg-card px-3 py-2 text-[11px] text-danger">
+              <span className="font-semibold">Bloke nedenleri: </span>
+              {decision.blockedBy.join(", ")}
+            </div>
+          )}
+          <p className="text-[11px] text-muted">
+            Not: Bu özet pasif analiz çıktısıdır. Prompt üretimi ve uygulanabilir
+            kararlar &quot;Aktif Aksiyonlar&quot; bölümünde listelenir.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function fmtRelativeAge(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "—";
+  if (sec < 60) return `${sec} sn önce`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} dk önce`;
+  const h = Math.round(min / 60);
+  return `${h} sa önce`;
+}
+
+function DecisionPanel({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-md border border-border bg-bg-card/50 px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">
+        {title}
+      </div>
+      <p className="mt-1 text-[12px] leading-relaxed text-slate-200">
+        {body || "—"}
+      </p>
+    </div>
+  );
+}
+
+function SafetyBoundsCard() {
+  const items: { label: string; tone: StatusTone; detail: string }[] = [
+    {
+      label: "Live trading",
+      tone: "danger",
+      detail: "Blocked. HARD_LIVE_TRADING_ALLOWED=false korunur; toggle açılamaz.",
+    },
+    {
+      label: "Risk parametreleri",
+      tone: "warning",
+      detail:
+        "Yalnızca kullanıcı onayıyla, yalnızca düşürme yönünde değişebilir; otomatik artırma yoktur.",
+    },
+    {
+      label: "Worker / trade engine",
+      tone: "warning",
+      detail:
+        "AI Aksiyon Merkezi worker'a, signal-engine'e veya risk-engine'e doğrudan dokunmaz.",
+    },
+    {
+      label: "Pasif analiz",
+      tone: "muted",
+      detail:
+        "Son AI Karar Özeti yalnızca yorum üretir; ayar uygulamaz, emir göndermez.",
+    },
+  ];
+  return (
+    <section className="card">
+      <SectionHeader
+        eyebrow="F · Güvenlik Sınırları"
+        title="Bu fazda neler yapılmaz"
+        subtitle="Aksiyon Merkezi'nin uyduğu sıkı kurallar — kod ve test'lerle korunur."
+      />
+      <ul className="mt-3 space-y-2">
+        {items.map((it) => (
+          <li
+            key={it.label}
+            className={`rounded-md border px-3 py-2 ${TONE_BORDER[it.tone]}`}
+          >
+            <div
+              className={`text-[11px] font-semibold uppercase tracking-wider ${TONE_CLASSES[it.tone]}`}
+            >
+              {it.label}
+            </div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-slate-200">
+              {it.detail}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
