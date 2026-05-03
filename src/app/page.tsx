@@ -20,11 +20,7 @@ import {
   BotStatusCard,
   MarketPulseCard,
   OpportunityRadarCard,
-  DecisionCenterCard,
-  NearThresholdCoinsCard,
   OpenPositionsCard,
-  TodaysSummaryCard,
-  PaperValidationCard,
   PerformanceDecisionCard,
   AIDecisionAssistantCard,
   type DecisionRow,
@@ -62,9 +58,7 @@ export default function HomePage() {
   const [, setLastTick] = useState<TickResult | null>(null);
   const [envCheck, setEnvCheck] = useState<any>(null);
   const [workerHealth, setWorkerHealth] = useState<any>(null);
-  const [hardLiveAllowed, setHardLiveAllowed] = useState<boolean>(false);
   const [diagnostics, setDiagnostics] = useState<any>(null);
-  const [e2eStatus, setE2eStatus] = useState<any>(null);
   const [perfDecision, setPerfDecision] = useState<PerformanceDecisionInput | null>(null);
   // Faz 21 — position management recommendations (advisory, display-only)
   const [pmRecs, setPmRecs] = useState<any[]>([]);
@@ -79,28 +73,23 @@ export default function HomePage() {
 
   const refresh = useCallback(async () => {
     const noCache: RequestInit = { cache: "no-store" };
-    const [a, b, c, d, e, h, i, j, k] = await Promise.all([
+    const [a, b, c, d, e, h, j, k] = await Promise.all([
       fetch("/api/bot/status", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades/performance", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/paper-trades?limit=20", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/system/env-check", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/heartbeat", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/bot/diagnostics", noCache).then((r) => r.json()).catch(() => null),
-      fetch("/api/paper-trades/e2e-status", noCache).then((r) => r.json()).catch(() => null),
       fetch("/api/trade-performance/decision-summary", noCache).then((r) => r.json()).catch(() => null),
       // Faz 21 — position management advisory (read-only, no orders)
       fetch("/api/position-management/recommendations?mode=paper", noCache).then((r) => r.json()).catch(() => null),
     ]);
-    if (a?.ok) {
-      setStatus(a.data);
-      setHardLiveAllowed(a.data?.hardLiveTradingAllowed ?? false);
-    }
+    if (a?.ok) setStatus(a.data);
     if (b?.ok) setPerf(b.data);
     if (c?.ok) setPaper(c.data);
     if (d?.ok) setEnvCheck(d.data);
     if (e?.ok) setWorkerHealth(e.data);
     if (h?.ok) setDiagnostics(h.data);
-    if (i?.ok) setE2eStatus(i.data);
     if (j?.ok && j.data?.decision) setPerfDecision(j.data.decision as PerformanceDecisionInput);
     if (k?.ok && Array.isArray(k.data?.recommendations)) setPmRecs(k.data.recommendations);
   }, []);
@@ -234,12 +223,6 @@ export default function HomePage() {
   const tickStats = diagnostics?.tick_stats ?? {};
   const daily = status?.daily ?? {};
 
-  // Eşiğe yakın sayımı: tradeSignalScore 50-69
-  const nearThreshold = scanRows.filter((r) => {
-    const s = r.tradeSignalScore ?? r.signalScore ?? 0;
-    return s >= 50 && s < 70 && !r.opened;
-  }).length;
-
   return (
     <div className="space-y-4">
       {/* Toasts */}
@@ -314,33 +297,10 @@ export default function HomePage() {
         <span className="font-mono">paper_trades.pnl</span> sütununun toplamıdır ve Sanal İşlemler ▸ Kapanan İşlemler tablosunun alt &quot;Toplam&quot; satırı ile birebir aynıdır.
       </p>
 
-      {/* 4. POZİSYON KARAR MERKEZİ */}
-      <DecisionCenterCard rows={scanRows} exchange={status?.bot?.active_exchange ?? "binance"} />
-
-      {/* 5. POZİSYONA EN YAKIN COİNLER */}
-      <NearThresholdCoinsCard rows={scanRows} />
-
-      {/* 6. AÇIK POZİSYONLAR */}
+      {/* Açık Pozisyonlar */}
       <OpenPositionsCard rows={openPositions} />
 
-      {/* 8 + 9 — Bugünkü Özet + Paper Doğrulaması */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <TodaysSummaryCard
-          data={{
-            scanned: typeof tickStats.scanned === "number" ? tickStats.scanned : undefined,
-            candidatePool: typeof tickStats.dynamicCandidates === "number" ? tickStats.dynamicCandidates : undefined,
-            nearThreshold,
-            openedToday: typeof tickStats.opened === "number" ? tickStats.opened : undefined,
-            closedToday: typeof perf?.closedToday === "number" ? perf.closedToday : undefined,
-            realizedPnlUsd: typeof perf?.dailyPnl === "number"
-              ? perf.dailyPnl
-              : (typeof daily.realizedPnlUsd === "number" ? daily.realizedPnlUsd : undefined),
-          }}
-        />
-        <PaperValidationCard data={e2eStatus} hardLiveAllowed={hardLiveAllowed} />
-      </div>
-
-      {/* Phase 13 — Performans Karar Özeti (paper/live ortak motor) */}
+      {/* Performans Karar Özeti */}
       <PerformanceDecisionCard
         data={perfDecision}
         onAction={(kind, actionId) => {
