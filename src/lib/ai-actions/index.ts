@@ -40,3 +40,15 @@ export {
   type CachedDecisionEntry,
   type CacheStatus,
 } from "./decision-cache";
+export {
+  AI_ACTION_EVENT_TYPES,
+  HISTORY_STATUS_LABEL,
+  HISTORY_CATEGORY_LABEL,
+  mapHistoryItem,
+  mapHistoryItems,
+  sanitizeMetadata,
+  type HistoryItem,
+  type HistoryCategory,
+  type HistoryStatus,
+  type BotLogRow,
+} from "./history";

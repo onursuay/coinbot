@@ -22,8 +22,17 @@ import type {
   ActionPlanResult,
   ActionPlanRiskLevel,
   ActionPlanType,
+  HistoryItem,
+  HistoryCategory,
+  HistoryStatus,
 } from "@/lib/ai-actions";
 import { buildActionPrompt } from "@/lib/ai-actions/prompt-builder";
+// Runtime label'ları doğrudan history modülünden al — index üzerinden
+// gitmek decision-cache'in node:crypto bağımlılığını client bundle'a sızdırır.
+import {
+  HISTORY_STATUS_LABEL,
+  HISTORY_CATEGORY_LABEL,
+} from "@/lib/ai-actions/history";
 
 type StatusTone = "success" | "warning" | "danger" | "muted" | "accent";
 
@@ -272,6 +281,42 @@ export default function AIActionCenterPage() {
   useEffect(() => {
     void refreshAIDecision();
   }, [refreshAIDecision]);
+
+  // ── Karar ve Aksiyon Geçmişi ──────────────────────────────────────────
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyFilter, setHistoryFilter] = useState<
+    "all" | "applied" | "blocked" | "observation" | "decision"
+  >("all");
+
+  const fetchHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const res = await fetch("/api/ai-actions/history?limit=50", {
+        cache: "no-store",
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        setHistoryError(json.error ?? "Aksiyon geçmişi alınamadı.");
+        setHistoryItems([]);
+        return;
+      }
+      setHistoryItems((json.data?.items ?? []) as HistoryItem[]);
+    } catch (e) {
+      setHistoryError(
+        e instanceof Error ? e.message : "Aksiyon geçmişi alınamadı.",
+      );
+      setHistoryItems([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchHistory();
+  }, [fetchHistory]);
 
   const fetchPlans = useCallback(async () => {
     setLoading(true);
@@ -580,6 +625,16 @@ export default function AIActionCenterPage() {
           </div>
         )}
       </section>
+
+      {/* Karar ve Aksiyon Geçmişi */}
+      <HistorySection
+        items={historyItems}
+        loading={historyLoading}
+        error={historyError}
+        filter={historyFilter}
+        onFilterChange={setHistoryFilter}
+        onRefresh={fetchHistory}
+      />
 
       {/* B) Proje Kaynakları */}
       <section className="card">
@@ -996,6 +1051,183 @@ function LatestAIDecisionSection({
         </div>
       )}
     </section>
+  );
+}
+
+type HistoryFilterKey =
+  | "all"
+  | "applied"
+  | "blocked"
+  | "observation"
+  | "decision";
+
+const HISTORY_STATUS_TONE: Record<HistoryStatus, StatusTone> = {
+  applied: "success",
+  blocked: "danger",
+  failed: "danger",
+  observed: "warning",
+  requested: "muted",
+  refreshed: "accent",
+  cache_hit: "muted",
+  cache_miss: "muted",
+  fallback: "warning",
+};
+
+function applyHistoryFilter(items: HistoryItem[], f: HistoryFilterKey): HistoryItem[] {
+  if (f === "all") return items;
+  if (f === "applied") return items.filter((i) => i.status === "applied");
+  if (f === "blocked")
+    return items.filter((i) => i.status === "blocked" || i.status === "failed");
+  if (f === "observation")
+    return items.filter((i) => i.category === "observation");
+  if (f === "decision") return items.filter((i) => i.category === "decision");
+  return items;
+}
+
+function HistorySection({
+  items,
+  loading,
+  error,
+  filter,
+  onFilterChange,
+  onRefresh,
+}: {
+  items: HistoryItem[];
+  loading: boolean;
+  error: string | null;
+  filter: HistoryFilterKey;
+  onFilterChange: (f: HistoryFilterKey) => void;
+  onRefresh: () => void;
+}) {
+  const filtered = applyHistoryFilter(items, filter).slice(0, 20);
+  const filters: { key: HistoryFilterKey; label: string }[] = [
+    { key: "all", label: "Tümü" },
+    { key: "applied", label: "Uygulanan" },
+    { key: "blocked", label: "Engellenen" },
+    { key: "observation", label: "Gözlem" },
+    { key: "decision", label: "AI Yorum" },
+  ];
+
+  return (
+    <section className="card" data-testid="ai-action-history">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <SectionHeader
+          eyebrow="Karar ve Aksiyon Geçmişi"
+          title="Son kayıtlar (bot_logs üzerinden)"
+          subtitle="Apply / observation / AI yorum cache event'leri kronolojik sıralanır. Read-only; secret'lar redacted."
+        />
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent transition hover:border-accent/60 disabled:opacity-50"
+        >
+          {loading ? "Yükleniyor…" : "Yenile"}
+        </button>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {filters.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            onClick={() => onFilterChange(f.key)}
+            className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+              filter === f.key
+                ? "border-accent/60 bg-accent/15 text-accent"
+                : "border-border bg-bg-soft text-slate-300 hover:border-accent/40 hover:text-accent"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <p className="mt-3 rounded-md border border-rose-500/30 bg-bg-soft px-3 py-2 text-xs text-danger">
+          Aksiyon geçmişi alınamadı: {error}
+        </p>
+      )}
+
+      {!error && filtered.length === 0 && !loading && (
+        <p className="mt-3 rounded-md border border-dashed border-border bg-bg-soft px-3 py-3 text-center text-xs text-muted">
+          Henüz aksiyon geçmişi yok.
+        </p>
+      )}
+
+      {!error && filtered.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {filtered.map((it) => (
+            <HistoryRow key={it.id} item={it} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function HistoryRow({ item }: { item: HistoryItem }) {
+  const tone = HISTORY_STATUS_TONE[item.status] ?? "muted";
+  const time = new Date(item.createdAt);
+  const timeStr = isNaN(time.getTime())
+    ? item.createdAt
+    : time.toLocaleString("tr-TR");
+  return (
+    <li className="rounded-lg border border-border bg-bg-soft px-3 py-2.5">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-slate-100">
+              {item.title}
+            </span>
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${TONE_BORDER[tone]} ${TONE_CLASSES[tone]}`}
+            >
+              {HISTORY_STATUS_LABEL[item.status]}
+            </span>
+            <span className="rounded-full border border-border bg-bg-card px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+              {HISTORY_CATEGORY_LABEL[item.category]}
+            </span>
+            {item.actionType && (
+              <span className="rounded-full border border-border bg-bg-card px-2 py-0.5 font-mono text-[10px] tracking-wider text-muted">
+                {item.actionType}
+              </span>
+            )}
+          </div>
+          {item.summary && (
+            <p className="mt-1 truncate text-[12px] text-slate-300">
+              {item.summary}
+            </p>
+          )}
+          {(item.oldValue || item.newValue) && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="rounded border border-border bg-bg-card px-2 py-0.5 font-mono text-slate-300">
+                {item.oldValue ?? "—"}
+              </span>
+              <span className="text-muted">→</span>
+              <span
+                className={`rounded border px-2 py-0.5 font-mono ${TONE_BORDER[tone]} ${TONE_CLASSES[tone]}`}
+              >
+                {item.newValue ?? "—"}
+              </span>
+              {typeof item.confidence === "number" && (
+                <span className="text-muted">Güven: %{item.confidence}</span>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-col items-end text-right">
+          <span className="text-[10px] uppercase tracking-wider text-muted">
+            {timeStr}
+          </span>
+          {item.source && (
+            <span className="mt-0.5 font-mono text-[10px] text-muted">
+              {item.source}
+            </span>
+          )}
+        </div>
+      </div>
+    </li>
   );
 }
 
