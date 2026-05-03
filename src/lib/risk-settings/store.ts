@@ -128,26 +128,21 @@ async function readFromDb(): Promise<{
     const userId = resolveUserId();
     const sb = supabaseAdmin();
 
-    // Use read_risk_settings RPC — bypasses PostgREST per-instance column cache.
-    // get_risk_settings adı PostgREST cache'inde eski stub'a kilitli kaldığından
-    // read_risk_settings kullanılıyor (yeni isim, temiz cache).
-    const { data: rpcData, error: rpcError } = await sb.rpc("read_risk_settings", {
-      p_user_id: userId,
-    });
-
-    if (rpcError) throw rpcError;
-
-    // Determine row existence via a lightweight direct SELECT on non-JSONB column.
-    // This is just for diagnostics (rowFound flag) and uses a column that has
-    // been in the schema from the start, so its cache is always fresh.
-    const rowCheck = await sb
+    // SOURCE OF TRUTH: bot_settings.risk_settings JSONB. Direct table SELECT —
+    // RPC bypass'ine güvenmiyoruz çünkü RPC RETURNING geçmişte transaction
+    // commit edilmediğinde de "başarılı" görünüyordu. Direct read hem
+    // rowExists hem de stored değeri tek call'da verir.
+    const { data, error } = await sb
       .from("bot_settings")
-      .select("user_id")
+      .select("user_id, risk_settings")
       .eq("user_id", userId)
       .maybeSingle();
 
-    const rowFound = rowCheck.data != null;
-    const stored = rpcData ?? null;
+    if (error) throw error;
+
+    const rowFound = data != null;
+    const stored =
+      (data as { risk_settings?: unknown } | null)?.risk_settings ?? null;
     const riskSettingsPresent = stored != null;
 
     if (stored) {
@@ -230,10 +225,12 @@ export async function forceReloadFromDb(): Promise<{
  *     forced to return the actually-stored row (catches phantom drops).
  *  3. Independent verify SELECT on the same column — must echo what we sent.
  */
+type PersistVia = "direct_update" | "direct_insert";
+
 async function persistToDb(
   s: RiskSettings,
 ): Promise<
-  | { ok: true; savedAt: number; via: "rpc_write_risk_settings" }
+  | { ok: true; savedAt: number; via: PersistVia }
   | { ok: false; errorSafe: string }
 > {
   if (!supabaseConfigured()) {
@@ -243,49 +240,87 @@ async function persistToDb(
   const userId = resolveUserId();
 
   try {
-    // Write via write_risk_settings RPC — bypasses PostgREST's per-column
-    // schema cache for write paths, which silently drops updates to the
-    // freshly-added risk_settings JSONB column even after NOTIFY reload.
-    // set_risk_settings adı PostgREST cache'inde eski stub'a kilitli kaldığından
-    // write_risk_settings kullanılıyor (yeni isim, temiz cache).
-    const rpcResult = await sb.rpc("write_risk_settings", {
-      p_user_id: userId,
-      p_settings: s as unknown as Record<string, unknown>,
-    });
+    // Önce row var mı? Bu hem mantıksal yolu (direct_update vs direct_insert)
+    // belirlemek hem de diagnostics için.
+    const rowCheck = await sb
+      .from("bot_settings")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
 
-    if (rpcResult.error) {
-      throw Object.assign(rpcResult.error, {
-        _context: `write_risk_settings RPC error`,
-      });
+    if (rowCheck.error) throw rowCheck.error;
+    const rowExists = rowCheck.data != null;
+
+    let via: PersistVia;
+    if (rowExists) {
+      // direct_update: mevcut row'u güncelle.
+      const upd = await sb
+        .from("bot_settings")
+        .update({ risk_settings: s as unknown as Record<string, unknown> })
+        .eq("user_id", userId);
+      if (upd.error) throw upd.error;
+      via = "direct_update";
+    } else {
+      // direct_insert: yeni row gerekir; upsert + onConflict, idempotent.
+      const ins = await sb
+        .from("bot_settings")
+        .upsert(
+          {
+            user_id: userId,
+            risk_settings: s as unknown as Record<string, unknown>,
+          },
+          { onConflict: "user_id" },
+        );
+      if (ins.error) throw ins.error;
+      via = "direct_insert";
     }
 
-    // Verify via RETURNING data from write_risk_settings — NOT a separate read.
-    // Separate read_risk_settings calls hit read replicas that lag behind the
-    // primary, causing false verify failures even when the write succeeded.
-    // RETURNING executes inside the same primary transaction, always reliable.
-    const stored = rpcResult.data as {
-      profile?: string;
-      capital?: { totalCapitalUsdt?: number };
-      updatedAt?: number;
-    } | null;
+    // Bağımsız verify: write sonrası DB'den DOĞRUDAN risk_settings kolonunu
+    // okuyup gönderilenle karşılaştır. RPC RETURNING'e güvenmiyoruz —
+    // ayrı bir transaction'da primary'den okuyoruz.
+    const verify = await sb
+      .from("bot_settings")
+      .select("risk_settings")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (verify.error) throw verify.error;
+
+    const stored = (verify.data as { risk_settings?: unknown } | null)
+      ?.risk_settings as
+      | {
+          profile?: string;
+          capital?: { totalCapitalUsdt?: number };
+          updatedAt?: number;
+        }
+      | null
+      | undefined;
 
     if (!stored) {
-      return {
-        ok: false,
-        errorSafe: "write_risk_settings RETURNING null — satır yok veya risk_settings null.",
-      };
+      const errorSafe = `DB verify boş: bot_settings.risk_settings null veya satır yok (via=${via}).`;
+      setStatus({
+        state: "fallback",
+        errorSafe,
+        lastSavedAt: persistenceStatus.lastSavedAt,
+        lastHydratedAt: persistenceStatus.lastHydratedAt,
+      });
+      return { ok: false, errorSafe };
     }
 
     const expectedCap = s.capital.totalCapitalUsdt;
     const expectedUpdatedAt = s.updatedAt;
+    const expectedProfile = s.profile;
     const verifiedCap = stored.capital?.totalCapitalUsdt;
     const verifiedUpdatedAt = stored.updatedAt;
+    const verifiedProfile = stored.profile;
 
-    const capOk = typeof verifiedCap === "number" && verifiedCap === expectedCap;
+    const capOk =
+      typeof verifiedCap === "number" && verifiedCap === expectedCap;
     const tsOk = verifiedUpdatedAt === expectedUpdatedAt;
+    const profileOk = verifiedProfile === expectedProfile;
 
-    if (!capOk || !tsOk) {
-      const errorSafe = `RETURNING mismatch: sent cap=${expectedCap} ts=${expectedUpdatedAt} got cap=${verifiedCap ?? "null"} ts=${verifiedUpdatedAt ?? "null"}`;
+    if (!capOk || !tsOk || !profileOk) {
+      const errorSafe = `DB verify mismatch (via=${via}): sent profile=${expectedProfile} cap=${expectedCap} ts=${expectedUpdatedAt} got profile=${verifiedProfile ?? "null"} cap=${verifiedCap ?? "null"} ts=${verifiedUpdatedAt ?? "null"}`;
       setStatus({
         state: "fallback",
         errorSafe,
@@ -301,7 +336,7 @@ async function persistToDb(
       lastSavedAt: savedAt,
       lastHydratedAt: persistenceStatus.lastHydratedAt,
     });
-    return { ok: true, savedAt, via: "rpc_write_risk_settings" };
+    return { ok: true, savedAt, via };
   } catch (e) {
     const errorSafe = safeErr(e);
     setStatus({
@@ -525,7 +560,7 @@ export function updateRiskSettings(
 export async function updateAndPersistRiskSettings(
   patch: RiskSettingsPatch,
 ): Promise<
-  | { ok: true; data: RiskSettings; savedAt: number; via: "rpc_write_risk_settings" }
+  | { ok: true; data: RiskSettings; savedAt: number; via: PersistVia }
   | { ok: false; stage: "validation"; errors: string[] }
   | { ok: false; stage: "persistence"; errorSafe: string; data: RiskSettings }
 > {
